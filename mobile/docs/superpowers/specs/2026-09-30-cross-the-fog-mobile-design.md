@@ -41,7 +41,7 @@ Branch: `cross-the-fog` on `leonardoazeredo/defog` (fork of `szalapak/defog`)
 | D8 | Tooling: pnpm (`minimumReleaseAge`, `trustPolicy: no-downgrade`), strict TypeScript, Biome, Vitest, Stryker, lefthook, knip, Playwright (build-time contract check) and Maestro | Matches the owner's other projects. |
 | D9 | expo-router with the routes `index` (the map) and `about` (a modal), plus `+native-intent` for files arriving from other apps | Expo's default router. |
 | D10 | `mobile/` is a standalone package that reads `../app` only at build time | Nothing to link, and no Metro setup across folders. |
-| D11 | Storage origin (`ORIGIN`): **open decision for the owner**, see §12. Whichever is chosen is permanent, like D6. | The origin decides where the page's own storage lives. Because of D4, changing it later would lose only display settings and the cache, not the fog. |
+| D11 | The storage origin (`ORIGIN`) is `https://crossfog.madera.codes/`, chosen by the owner. It is permanent, like D6. **Nothing is ever hosted at `crossfog.madera.codes`, and `madera.codes` never gets a wildcard DNS record.** The app's public website goes at `madera.codes/crossfog`. | The page is bundled and never downloaded, but its storage has to belong to a web address. With nothing served there, nothing from the network can reach the page that holds the user's location history. Because of D4, changing the origin later would lose only display settings and the cache, not the fog. |
 | D12 | The generated page carries a strict Content Security Policy that lists the only hosts it may contact | Upstream code runs next to the user's location history, and the policy limits where any code in the page can send data. |
 | D13 | All imports go through native code. The page's "…or a .zip" button opens the native document picker, and shared files arrive natively. | Native code must hold the durable copy (D4), so the zip never has to travel from the page to native. |
 | D14 | Share-to-app on iOS registers the app for `.zip` documents (`CFBundleDocumentTypes`, no share extension). On Android it uses `expo-share-intent` with `disableIOS`. | iOS document types need no extension target and no App Group, so they work without a paid account. Android needs native code to receive shared files, and expo-share-intent provides it. |
@@ -206,7 +206,7 @@ Links opened externally (Google Maps, the Drive and OneDrive help links) are nav
   - A commercial or self-hosted tile provider.
   - EAS Update for fixes without a store release.
   - Crash reporting.
-- **Listing:** say "works with Fog of World data" without implying any affiliation. Run a trademark search for "Cross the Fog", and publish a privacy policy on `madera.codes`.
+- **Listing:** say "works with Fog of World data" without implying any affiliation. Run a trademark search for "Cross the Fog", and publish a privacy policy at `madera.codes/crossfog`, never at `crossfog.madera.codes` (D11).
 
 ## 6. Out of the MVP
 Location and the "you are here" dot; folder import inside the WebView (`webkitdirectory`); onboarding screens; dark mode; analytics; OTA updates; and any native reimplementation of defog's logic.
@@ -288,8 +288,3 @@ If S5 passes on a platform, the MVP gains a **Link Sync folder** action there. I
 - What "traction" means and how it's measured. Analytics are out of the MVP on purpose.
 - Crash reporting, EAS Update and a tile provider (§5).
 - Whether to keep the wrapper or start a native rewrite, based on what using the MVP revealed.
-
-## 12. Open decisions (owner)
-- **D11, the storage origin.** The page is bundled inside the app and never downloaded, but its browser storage has to belong to some web address. Candidates:
-  - `https://app.crossfog.madera.codes/`, a subdomain of the owner's domain. That domain has no DNS records today (checked 2026-10-01, Cloudflare nameservers), so nothing is served there. It must stay that way: never add a wildcard record or host anything on that subdomain.
-  - `https://crossfog.invalid/`, a name reserved by RFC 6761 that can never exist on the internet, so no DNS change can ever affect it.
