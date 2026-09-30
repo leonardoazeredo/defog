@@ -41,7 +41,7 @@ Branch: `cross-the-fog` on `leonardoazeredo/defog` (fork of `szalapak/defog`)
 | D8 | Tooling: pnpm (`minimumReleaseAge`, `trustPolicy: no-downgrade`), strict TypeScript, Biome, Vitest, Stryker, lefthook, knip, Playwright (build-time contract check) and Maestro | Matches the owner's other projects. |
 | D9 | expo-router with the routes `index` (the map) and `about` (a modal), plus `+native-intent` for files arriving from other apps | Expo's default router. |
 | D10 | `mobile/` is a standalone package that reads `../app` only at build time | Nothing to link, and no Metro setup across folders. |
-| D11 | The storage origin is `https://crossfog.invalid/`. It is permanent, like D6. | `.invalid` is reserved (RFC 6761) and can never resolve, so nothing from the network can ever be served into the page that holds the user's location history. The origin keys the WebView's storage; because of D4, changing it later would lose only display settings and the cache. |
+| D11 | Storage origin (`ORIGIN`): **open decision for the owner**, see §12. Whichever is chosen is permanent, like D6. | The origin decides where the page's own storage lives. Because of D4, changing it later would lose only display settings and the cache, not the fog. |
 | D12 | The generated page carries a strict Content Security Policy that lists the only hosts it may contact | Upstream code runs next to the user's location history, and the policy limits where any code in the page can send data. |
 | D13 | All imports go through native code. The page's "…or a .zip" button opens the native document picker, and shared files arrive natively. | Native code must hold the durable copy (D4), so the zip never has to travel from the page to native. |
 | D14 | Share-to-app on iOS registers the app for `.zip` documents (`CFBundleDocumentTypes`, no share extension). On Android it uses `expo-share-intent` with `disableIOS`. | iOS document types need no extension target and no App Group, so they work without a paid account. Android needs native code to receive shared files, and expo-share-intent provides it. |
@@ -96,7 +96,7 @@ defog/
   - the fixture load reports success with the expected tile count.
 
 ### 3.2 Native shell
-- `WebShell` renders `<WebView source={{ html: WEB_HTML, baseUrl: "https://crossfog.invalid/" }} />`.
+- `WebShell` renders `<WebView source={{ html: WEB_HTML, baseUrl: ORIGIN }} />` (ORIGIN per D11).
 - **Navigation:** only the initial load is allowed. Every other navigation or new window is cancelled, and http(s) URLs go to `Linking.openURL`.
 - **User agent:** ends in `CrossTheFog/<version> (+https://madera.codes)`, as the OSM tile policy requires.
 - **Safe areas:** edge to edge, with the WebView padded by `react-native-safe-area-context` insets.
@@ -216,7 +216,7 @@ These questions are answered on a real Android device and a real iPhone:
 
 | # | Question | Pass | Fallback if it fails |
 |---|---|---|---|
-| S1 | Do `localStorage` and IndexedDB work under `https://crossfog.invalid/`, and survive a force-quit and a reinstall-over-update? | The same records are present after both | Display settings reset on every launch and the cache is skipped, so every launch uses the transfer. The fog stays safe (D4). File a follow-up. |
+| S1 | Do `localStorage` and IndexedDB work under `ORIGIN` (D11), and survive a force-quit and a reinstall-over-update? | The same records are present after both | Display settings reset on every launch and the cache is skipped, so every launch uses the transfer. The fog stays safe (D4). File a follow-up. |
 | S2 | With a 50 MB zip, is (a) a cached restore plus load under 10 s, and (b) a chunked transfer plus load under 30 s, on a mid-range Android phone and an iPhone? | Both within limits | (a) Skip the cache and always transfer. (b) Tune the chunk size. If a transfer still takes more than 60 s, stop and revisit the transfer design with the owner. |
 | S3 | Does tapping "…or a .zip" open only the native picker? | The WebView's own chooser never appears | Intercept the input's `click` instead of the label's |
 | S4 | Does a `.zip` shared from Files, Google Drive and Dropbox reach the import flow? On iOS, does this work through "Open in" without a paid account? | It arrives on both platforms | iOS: expo-share-intent's share extension, which needs an App Group and possibly a paid account. Android: a `VIEW` intent filter only ("Open with"). |
@@ -288,3 +288,8 @@ If S5 passes on a platform, the MVP gains a **Link Sync folder** action there. I
 - What "traction" means and how it's measured. Analytics are out of the MVP on purpose.
 - Crash reporting, EAS Update and a tile provider (§5).
 - Whether to keep the wrapper or start a native rewrite, based on what using the MVP revealed.
+
+## 12. Open decisions (owner)
+- **D11, the storage origin.** The page is bundled inside the app and never downloaded, but its browser storage has to belong to some web address. Candidates:
+  - `https://app.crossfog.madera.codes/`, a subdomain of the owner's domain. That domain has no DNS records today (checked 2026-10-01, Cloudflare nameservers), so nothing is served there. It must stay that way: never add a wildcard record or host anything on that subdomain.
+  - `https://crossfog.invalid/`, a name reserved by RFC 6761 that can never exist on the internet, so no DNS change can ever affect it.
