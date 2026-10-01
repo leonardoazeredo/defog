@@ -9,15 +9,16 @@
     "node": ">=26"
   },
   "scripts": {
-    "start": "expo start",
-    "android": "expo run:android",
-    "ios": "expo run:ios",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p web-adapter && tsc --noEmit -p test/adapter",
+    "start": "pnpm generate && expo start",
+    "android": "pnpm generate && expo run:android",
+    "ios": "pnpm generate && expo run:ios",
+    "typecheck": "pnpm generate && tsc --noEmit && tsc --noEmit -p web-adapter && tsc --noEmit -p test/adapter",
     "lint": "biome check .",
     "test": "vitest run --project unit --project adapter",
     "verify": "pnpm typecheck && pnpm lint && pnpm test",
     "fixture": "tsx test/fixtures/cli.ts",
     "generate": "tsx scripts/build-web.ts",
+    "eas-build-post-install": "pnpm generate",
     "licenses": "tsx scripts/licenses.ts"
   },
   "dependencies": {
