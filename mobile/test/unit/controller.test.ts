@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { beforeEach, expect, it, vi } from "vitest";
+import { expect, it, vi } from "vitest";
 import type { NativeToWeb, WebToNative } from "../../src/bridge/protocol.js";
 import type { Controller } from "../../src/controller.js";
 import { createController } from "../../src/controller.js";
