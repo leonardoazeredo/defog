@@ -73,8 +73,6 @@ const nativeToWebSchema = z.union([
   z.object({ v: z.literal(1), type: z.literal("back") }),
 ]);
 
-type LoadFailure = "unzip" | "noTiles" | "memory" | "checksum" | "unknown";
-type CopyRole = "current" | "pending";
 export type WebToNative = z.infer<typeof webToNativeSchema>;
 export type NativeToWeb = z.infer<typeof nativeToWebSchema>;
 export type ChunkMessage = Extract<NativeToWeb, { type: "chunk" }>;
