@@ -21,3 +21,15 @@
 | 12 | **Real backup:** owner's own multi-MB backup loads; a relaunch restores it | |
 | 13 | **User agent:** in `chrome://inspect` / Safari Web Inspector a tile request's User-Agent ends with `CrossTheFog/0.1.0 (+https://madera.codes)` | |
 | 14 | **Process death (Android emulator only):** `adb root` + `kill -9` sandboxed_process during large restore (twice); retry panel shows "Your saved fog couldn't be opened. The last attempt ran out of memory." | |
+
+## Share-to-app
+
+| # | Step | Result |
+|---|------|--------|
+| S1a | **From Files (nothing saved):** share `standard.zip` from Files to Cross the Fog; imports immediately | |
+| S1b | **From Files (saved fog):** share `standard.zip` again; app asks "Replace your saved fog with standard.zip?"; Replace imports; Cancel changes nothing | |
+| S2 | **Other apps:** same flow from Google Drive and Dropbox, on both platforms | |
+| S3a | **Cold start:** share a zip with the app closed; app opens and imports | |
+| S3b | **Warm start:** share a zip with the app open; imports without relaunching | |
+| S4 | **Non-zip share:** a non-zip offered as `application/octet-stream` shows "Cross the Fog can only import .zip backups." | |
+| S5 | **iOS cleanup:** after an import, app's `Documents/Inbox` is empty (verify in Xcode → Devices → container) | |

@@ -1,4 +1,5 @@
 import type { ConfigContext, ExpoConfig } from "expo/config";
+import shareMime from "./src/import/share-mime.json";
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
@@ -25,7 +26,23 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // React Navigation needs to handle back presses in JS; predictive back would let Android consume the gesture first.
     predictiveBackGestureEnabled: false,
   },
-  ios: { bundleIdentifier: "codes.madera.crossfog" },
-  plugins: ["expo-router"],
+  ios: {
+    bundleIdentifier: "codes.madera.crossfog",
+    infoPlist: {
+      CFBundleDocumentTypes: [
+        {
+          CFBundleTypeName: "Zip archive",
+          CFBundleTypeRole: "Viewer",
+          LSHandlerRank: "Alternate",
+          LSItemContentTypes: ["public.zip-archive"],
+        },
+      ],
+      LSSupportsOpeningDocumentsInPlace: false,
+    },
+  },
+  plugins: [
+    "expo-router",
+    ["expo-share-intent", { disableIOS: true, androidIntentFilters: shareMime }],
+  ],
   experiments: { typedRoutes: true },
 });
