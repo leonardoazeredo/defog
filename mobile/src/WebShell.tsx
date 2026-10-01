@@ -11,6 +11,7 @@ import { decideNavigation } from "./bridge/navigationPolicy.js";
 import { encode, isTrustedSource, ORIGIN, parseWebToNative } from "./bridge/protocol.js";
 import { type Controller, createController } from "./controller.js";
 import { COPY } from "./copy.js";
+import { pickE2eFixture } from "./e2e/fixturePicker.js";
 import { createRestoreGuard } from "./fog/restoreGuard.js";
 import { createFogStore } from "./fog/store.js";
 import { CHUNK_BYTES } from "./fog/transfer.js";
@@ -68,7 +69,7 @@ function buildController(
       initialLoadDone.current = false;
       setWebKey((k) => k + 1);
     },
-    pickFile: pickBackupFile,
+    pickFile: Constants.expoConfig?.extra?.e2e === true ? pickE2eFixture : pickBackupFile,
     confirmReplace: (name) => confirmAlert(COPY.replaceTitle(name), undefined, COPY.replace),
     confirmClear: () => confirmAlert(COPY.clearTitle, COPY.clearMessage, COPY.clear),
     notify,

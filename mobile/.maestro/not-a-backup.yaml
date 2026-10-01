@@ -1,0 +1,6 @@
+appId: codes.madera.crossfog
+---
+- tapOn: "Update"
+- tapOn: "Not a backup"
+- assertVisible: "That file isn't a Fog of World backup. Your saved fog is unchanged."
+- assertVisible: "2 tiles loaded ✓"

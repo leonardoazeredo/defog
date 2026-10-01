@@ -1,0 +1,13 @@
+appId: codes.madera.crossfog
+---
+- tapOn: "Plan"
+- tapOn: "Start drawing"
+- tapOn:
+    point: "20%, 40%"
+- tapOn:
+    point: "40%, 60%"
+- extendedWaitUntil:
+    visible: "GPX"
+    timeout: 10000
+- tapOn: "GPX"
+- assertVisible: "fogtomaps-route.gpx"

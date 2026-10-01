@@ -44,5 +44,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     "expo-router",
     ["expo-share-intent", { disableIOS: true, androidIntentFilters: shareMime }],
   ],
+  extra: { e2e: process.env.CROSSFOG_E2E === "1" },
   experiments: { typedRoutes: true },
 });

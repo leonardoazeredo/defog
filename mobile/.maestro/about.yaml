@@ -1,0 +1,4 @@
+appId: codes.madera.crossfog
+---
+- tapOn: "About"
+- assertVisible: "Cross the Fog is based on defog by szalapak"

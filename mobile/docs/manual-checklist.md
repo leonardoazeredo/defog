@@ -54,3 +54,16 @@
 | B4 | **16 KB ELF pages:** `check-apk.sh` prints `OK 16k-elf` on API 35+ device or AVD | |
 | B5 | **iOS privacy manifest:** `privacy-union.ts` output pasted into `app.config.ts`; generated `PrivacyInfo.xcprivacy` lists all categories | |
 | B6 | **EAS preview APK:** `eas build -p android --profile preview` produces a download link; `check-apk.sh` passes on that APK | |
+
+## Maestro e2e flows
+
+Run with `CROSSFOG_E2E=1 pnpm android` (or `ios`) to build, then `pnpm e2e`.
+
+| Flow | Expected |
+|------|----------|
+| import | "2 tiles loaded ✓" and "Saved backup standard.zip" after picking Standard backup |
+| restart | "2 tiles loaded ✓" on cold start |
+| eviction | "2 tiles loaded ✓" after dropping the cache and restarting |
+| not-a-backup | "That file isn't a Fog of World backup." stays visible |
+| export | "fogtomaps-route.gpx" visible in the share sheet |
+| about | "Cross the Fog is based on defog by szalapak" visible |
