@@ -21,7 +21,6 @@ export default defineConfig({
           environment: "jsdom",
           include: ["test/adapter/**/*.test.ts"],
           passWithNoTests: true,
-          setupFiles: ["fake-indexeddb/auto"],
         },
       },
     ],
