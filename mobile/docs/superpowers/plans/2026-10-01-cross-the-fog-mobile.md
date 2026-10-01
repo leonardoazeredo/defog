@@ -56,7 +56,7 @@
 
 ## Plan decisions that need the owner's OK
 
-The spec leaves these open, or this plan changes them. **None is approved yet.** Execution starts only after the owner approves or vetoes each one.
+The spec leaves these open, or this plan changes them. Reviewed by the adversarial council (2026-10-01) and approved with the amendments noted in each item. Execution method: owner's choice; see the Execution Handoff at the bottom of this file.
 
 1. **Protocol additions** (§3.3):
    - `retryRestore` (web → native), sent by the retry panel's Retry.
@@ -73,6 +73,7 @@ The spec leaves these open, or this plan changes them. **None is approved yet.**
    - An attempt counts when a restore starts and no `loaded` follows. So a crash of the whole app trips the guard too, not only a WebView process death.
    - A restore interrupted twice in a row (for example, the system killing the app in the background) also shows the retry panel.
    - A pending import found at launch means the app died mid-import. It is discarded, with the import-failed notice.
+   - The suspended retry panel has three buttons: "Retry" (`guard.reset()` then remount), "Choose another backup" (opens the picker without restoring), and "Clear saved fog" (clears the store without restoring). These are the escape hatches when the guard trips from OS kills.
 4. **Clear asks first, and the cache follows native** (§3.4, §3.6):
    - "Clear saved fog" shows a native confirmation.
    - The adapter empties IndexedDB whenever native sends `none`, instead of emptying it before sending `clearSavedFog`.
@@ -159,6 +160,7 @@ mobile/
   src/import/pick.ts                native document picker
   src/platform/expoFileStore.ts     (+) FileStore over expo-file-system
   src/platform/sha256.ts            (+) expo-crypto digest
+  src/platform/crashLog.ts          (+) appends timestamped lines to crash.log in documentDirectory
   src/e2e/fixturePicker.ts          (+) e2e-only picker (decision 6)
   web-adapter/                      index, importButtons, links, downloads, back, fogCache,
                                     receive, loader, status, and (+) bridge, session, devTools,
@@ -278,7 +280,7 @@ pnpm exec expo run:android --variant release --device
 pnpm exec expo run:ios --configuration Release --device
 ```
 
-iOS signs with the owner's free personal team.
+iOS signs with the owner's free personal team. For the S2 timings, a mid-range Android phone suffices. For the 16 KB page-alignment check (`check-apk.sh`), at least one Android device must be API 35+ (Pixel 9 or equivalent); an API 35 AVD (Pixel 9 profile in Android Studio) is acceptable if no physical device is available.
 
 - [ ] **Step 6: Hand the owner this checklist, then stop until the results come back**
 
@@ -371,7 +373,10 @@ Copy chase-cashew's `pnpm-workspace.yaml` settings: `minimumReleaseAge: 1440`, `
 cd mobile
 pnpm install
 pnpm exec expo install expo-router expo-linking expo-constants expo-status-bar react-native-safe-area-context react-native-screens
-pnpm add zod@^4
+pnpm add zod@^4.3.0
+# Pin to the minimum Zod 4.x patch that shipped z.config({ jitless: true }). Check the Zod
+# CHANGELOG when running this; if a later patch is available, pin to it with "=4.x.y" in
+# package.json to avoid a CSP-breaking new Function() call under the strict adapter CSP.
 pnpm add -D typescript@~7.0.2 @types/node @biomejs/biome vitest@^5 jsdom fake-indexeddb \
   @stryker-mutator/core@^10 @stryker-mutator/vitest-runner@^10 @stryker-mutator/api@^10 \
   knip lefthook tsx esbuild linkedom playwright fflate
@@ -624,8 +629,10 @@ Expected: FAIL, because the modules don't exist yet.
 - [ ] **Step 3: Implement**
 
 - `isTrustedSource` and `decideNavigation` compare strings and don't use `URL`, because Hermes only partly supports `URL`.
+  - `isTrustedSource(url)` receives `event.nativeEvent.url` from React Native WebView's `onMessage` callback — react-native-webview does not expose `event.origin`. Returns `true` only if `url` is `ORIGIN` exactly or starts with `ORIGIN` followed immediately by `#` or `?`.
   - A trusted URL is `ORIGIN` exactly, or `ORIGIN` followed by `#` or `?`.
   - Anything starting with `https://crossfog.madera.codes/` other than the initial load is blocked.
+  - If `MESSAGE_SOURCE_URL` from the spike differs from `ORIGIN` on either platform, add that URL as an additional trusted value and note which platform reports it.
 - The parse functions run `JSON.parse` inside try/catch, then `safeParse`. Any failure returns `null`.
 - If the findings show a different initial-load or message-source URL on a platform, add it here with a comment saying which platform reports it.
 
@@ -2017,6 +2024,7 @@ Start only after `mobile/docs/spike-findings.md` is committed.
 **Files:**
 - Create:
   - `mobile/src/platform/expoFileStore.ts`, `mobile/src/platform/sha256.ts`
+  - `mobile/src/platform/crashLog.ts`
   - `mobile/src/import/pick.ts`, `mobile/src/import/share-mime.json`
   - `mobile/src/bridge/exportFile.ts`, `mobile/src/bridge/nativeHandlers.ts`
   - `mobile/src/WebShell.tsx`
@@ -2037,6 +2045,11 @@ Start only after `mobile/docs/spike-findings.md` is committed.
 ```ts
 export function createExpoFileStore(dir: Directory): FileStore; // dir = new Directory(Paths.document, "fog"), created if missing
 export function sha256Hex(bytes: Uint8Array): Promise<string>;  // expo-crypto digest(SHA256) + toHex
+// crashLog.ts
+export function logCrash(error: unknown): Promise<void>;
+// Appends "<ISO timestamp>\t<error message>\n" to crash.log in Paths.document.
+// Registered as ErrorUtils.setGlobalHandler in app/_layout.tsx.
+// No UI; the developer reads it via Xcode/ADB. Never throws.
 export function pickBackupFile(): Promise<SourceFile | null>;
 // pickBackupFile: getDocumentAsync({ type: SHARE_MIME, copyToCacheDirectory: true, multiple: false })
 export function utiFor(filename: string): string | undefined;  // .gpx → "com.topografix.gpx", .kml → "com.google.earth.kml"
@@ -2284,9 +2297,10 @@ Add a "Share-to-app" section to the checklist and go through it:
 4. **Non-zip shares:** a non-zip file that Android offers to the app (sent as `application/octet-stream`) shows "Cross the Fog can only import .zip backups."
 5. **iOS cleanup:** after an import, the app's `Documents/Inbox` is empty. Check by downloading the container in Xcode → Devices.
 
+**iOS import scope:** iOS import is "Open With" from the Files app (`CFBundleDocumentTypes`) only. The iOS share sheet is out of scope for this MVP. `disableIOS: true` on expo-share-intent stays permanent for this version. If `IOS_OPEN_IN` from the spike is `fail`, **stop and ask the owner** before proceeding.
+
 **Fallbacks:**
 - If iOS file URLs never reach `redirectSystemPath`, also feed `fileFromSystemPath` from `Linking.getInitialURL()` and `Linking.addEventListener("url")` inside `ShareIntentBridge`, and note this in the checklist.
-- If `IOS_OPEN_IN` is `fail`, **stop and ask the owner** before adding expo-share-intent's iOS share extension. It needs an App Group and may need a paid account.
 
 - [ ] **Step 5: Commit**
 
@@ -2403,6 +2417,8 @@ git commit -m "feat(mobile): About screen with credits and licenses"
 | `e2e` | `"extends": "preview"`, `"env": { "CROSSFOG_E2E": "1" }` |
 
 Also set `cli.appVersionSource: "remote"`.
+
+Under `build.production`, add `"android": { "ndk": "27" }` to pin NDK r27+. This is required for 16 KB-aligned ELF LOAD segments; earlier NDK versions produce `.so` files that crash silently on Pixel 9 and API 35+ devices.
 
 **`check-apk.sh`** uses the newest `$ANDROID_HOME/build-tools/*` and the NDK's `llvm-readelf`. It checks (§4):
 1. **Permissions:** the `android.permission.*` entries from `aapt2 dump permissions` are exactly `android.permission.INTERNET`. App-defined permissions are ignored.
@@ -2625,3 +2641,14 @@ Steps follow the same pattern as Tasks 10 and 11: failing tests, implementation,
 ```bash
 git commit -m "feat(mobile): link a Sync folder where the platform keeps access"
 ```
+
+---
+
+## Execution Handoff
+
+Council review complete (2026-10-01). Conditional Go conditions resolved. Choose an execution method and tell the implementer which to use:
+
+- **Subagent-driven** (`superpowers:subagent-driven-development`): a fresh subagent per task, independent reviewer before the next task, whole-branch review at the end.
+- **Native** (`superpowers:executing-plans`): one session implements all tasks, one reviewer checks the whole branch at the end.
+
+Recommended: subagent-driven. The fog store and controller share interfaces that, if wrong, corrupt a user's saved fog; per-task reviews catch that before later tasks build on it.
