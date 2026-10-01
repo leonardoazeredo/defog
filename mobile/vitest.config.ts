@@ -11,6 +11,8 @@ export default defineConfig({
           include: ["test/unit/**/*.test.ts"],
           passWithNoTests: true,
           setupFiles: ["test/setup/stryker-activator.ts"],
+          // large Uint8Array toEqual in fixtures.test.ts takes ~5s due to vitest's iterator-based comparison
+          testTimeout: 30_000,
         },
       },
       {
