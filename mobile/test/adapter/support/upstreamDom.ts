@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 function findAppIndex(): string {
-  // Walk up until we find the sibling app/ dir. Works in both normal and
-  // stryker sandbox layouts (sandbox adds extra nesting under .stryker-tmp/).
+  // Walk up from this test file to the repo root, where app/ and mobile/ sit
+  // side-by-side. The extra levels handle Stryker's .stryker-tmp/ sandbox nesting.
   let dir = __dirname;
   for (let i = 0; i < 10; i++) {
     dir = resolve(dir, "..");

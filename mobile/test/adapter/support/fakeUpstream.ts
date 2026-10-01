@@ -31,8 +31,8 @@ export function installFakeUpstream(win: Window, doc: Document): void {
     inflate: (data: Uint8Array) => fflate.unzlibSync(data),
   };
 
-  win.eval(readFileSync(resolve(APP_SRC, "unzip.js"), "utf-8"));
-  win.eval(readFileSync(resolve(APP_SRC, "parser.js"), "utf-8"));
+  (winAny.eval as (code: string) => void)(readFileSync(resolve(APP_SRC, "unzip.js"), "utf-8"));
+  (winAny.eval as (code: string) => void)(readFileSync(resolve(APP_SRC, "parser.js"), "utf-8"));
 
   const FogParser = winAny.FogParser as {
     FogMap: new () => { addTile(name: string, data: Uint8Array): boolean };

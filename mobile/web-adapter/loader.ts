@@ -111,7 +111,10 @@ export function loadCopy(
   },
 ): Promise<LoadOutcome> {
   const p = deps.hooks.arm();
-  deps.assignFiles(deps.zipInput, new File([bytes], name, { type: "application/zip" }));
+  deps.assignFiles(
+    deps.zipInput,
+    new File([bytes as Uint8Array<ArrayBuffer>], name, { type: "application/zip" }),
+  );
   deps.zipInput.dispatchEvent(new Event("change", { bubbles: true }));
   return p;
 }

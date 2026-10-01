@@ -27,19 +27,19 @@ export function decodeBase64(text: string): Uint8Array {
   let p = 0;
   for (let i = 0; i < text.length - (pad > 0 ? 4 : 0); i += 4) {
     const n =
-      (LOOKUP[text.charCodeAt(i)] << 18) |
-      (LOOKUP[text.charCodeAt(i + 1)] << 12) |
-      (LOOKUP[text.charCodeAt(i + 2)] << 6) |
-      LOOKUP[text.charCodeAt(i + 3)];
+      ((LOOKUP[text.charCodeAt(i)] ?? 255) << 18) |
+      ((LOOKUP[text.charCodeAt(i + 1)] ?? 255) << 12) |
+      ((LOOKUP[text.charCodeAt(i + 2)] ?? 255) << 6) |
+      (LOOKUP[text.charCodeAt(i + 3)] ?? 255);
     out[p++] = (n >> 16) & 255;
     if (p < len) out[p++] = (n >> 8) & 255;
     if (p < len) out[p++] = n & 255;
   }
   if (pad > 0) {
     const i = text.length - 4;
-    const c0 = LOOKUP[text.charCodeAt(i)];
-    const c1 = LOOKUP[text.charCodeAt(i + 1)];
-    const c2 = pad < 2 ? LOOKUP[text.charCodeAt(i + 2)] : 0;
+    const c0 = LOOKUP[text.charCodeAt(i)] ?? 255;
+    const c1 = LOOKUP[text.charCodeAt(i + 1)] ?? 255;
+    const c2 = pad < 2 ? (LOOKUP[text.charCodeAt(i + 2)] ?? 255) : 0;
     if (c0 === 255 || c1 === 255 || (pad < 2 && c2 === 255)) {
       throw new Error("Invalid base64");
     }

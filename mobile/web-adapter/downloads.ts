@@ -3,9 +3,10 @@ import type { Send } from "./bridge.js";
 export function installDownloads(win: Window, doc: Document, send: Send): void {
   const blobMap = new Map<string, Blob>();
 
+  const g = win as unknown as typeof globalThis;
   // biome-ignore lint/suspicious/noExplicitAny: patching static method requires bypassing type constraints
-  const urlCtor = win.URL as any;
-  const origCreate: (obj: Blob | MediaSource) => string = urlCtor.createObjectURL?.bind(win.URL);
+  const urlCtor = g.URL as any;
+  const origCreate: (obj: Blob | MediaSource) => string = urlCtor.createObjectURL?.bind(g.URL);
   urlCtor.createObjectURL = (obj: Blob | MediaSource): string => {
     const url = origCreate(obj);
     if (obj instanceof Blob) blobMap.set(url, obj);

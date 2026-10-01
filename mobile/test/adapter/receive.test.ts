@@ -29,7 +29,7 @@ function chunksOf(bytes: Uint8Array, size: number): ChunkMessage[] {
 }
 
 it("reassembles chunks in order", async () => {
-  const [c0, c1, c2] = chunksOf(bytes9, 3);
+  const [c0, c1, c2] = chunksOf(bytes9, 3) as [ChunkMessage, ChunkMessage, ChunkMessage];
   const r = createReceiver(fp9, sha256Hex);
   expect(await r.accept(c0)).toEqual({ kind: "partial", receivedBytes: 3 });
   expect(await r.accept(c1)).toEqual({ kind: "partial", receivedBytes: 6 });
@@ -37,7 +37,7 @@ it("reassembles chunks in order", async () => {
 });
 
 it("reassembles chunks out of order", async () => {
-  const [c0, c1, c2] = chunksOf(bytes9, 3);
+  const [c0, c1, c2] = chunksOf(bytes9, 3) as [ChunkMessage, ChunkMessage, ChunkMessage];
   const r = createReceiver(fp9, sha256Hex);
   await r.accept(c2);
   await r.accept(c0);
@@ -46,7 +46,7 @@ it("reassembles chunks out of order", async () => {
 });
 
 it("ignores a duplicate chunk", async () => {
-  const [c0] = chunksOf(bytes9, 3);
+  const [c0] = chunksOf(bytes9, 3) as [ChunkMessage];
   const r = createReceiver(fp9, sha256Hex);
   await r.accept(c0);
   const result = await r.accept(c0);
@@ -54,7 +54,7 @@ it("ignores a duplicate chunk", async () => {
 });
 
 it("reports a mismatch when the bytes don't match the fingerprint", async () => {
-  const chunks = chunksOf(bytes9, 3);
+  const chunks = chunksOf(bytes9, 3) as [ChunkMessage, ChunkMessage, ChunkMessage];
   const badFp = "b".repeat(64);
   const r = createReceiver(badFp, sha256Hex);
   await r.accept({ ...chunks[0], fingerprint: badFp });
@@ -64,7 +64,7 @@ it("reports a mismatch when the bytes don't match the fingerprint", async () => 
 });
 
 it("ignores a corrupted duplicate and completes with the original data", async () => {
-  const [c0, c1, c2] = chunksOf(bytes9, 3);
+  const [c0, c1, c2] = chunksOf(bytes9, 3) as [ChunkMessage, ChunkMessage, ChunkMessage];
   const r = createReceiver(fp9, sha256Hex);
   await r.accept(c0);
   // corrupted duplicate: same index but different data
