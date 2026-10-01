@@ -10,6 +10,7 @@ export default defineConfig({
           environment: "node",
           include: ["test/unit/**/*.test.ts"],
           passWithNoTests: true,
+          setupFiles: ["test/setup/stryker-activator.ts"],
         },
       },
       {
