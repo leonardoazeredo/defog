@@ -1,0 +1,10 @@
+/android
+/ios
+generated/
+test/fixtures/out/
+reports/
+.stryker-tmp/
+node_modules/
+.expo/
+dist/
+web-build/

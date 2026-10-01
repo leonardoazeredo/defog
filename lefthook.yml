@@ -1,0 +1,12 @@
+pre-commit:
+  commands:
+    biome:
+      root: "mobile/"
+      glob: "*.{ts,tsx,js,mjs,cjs,json}"
+      run: pnpm exec biome check --write --no-errors-on-unmatched {staged_files}
+      stage_fixed: true
+pre-push:
+  commands:
+    verify:
+      root: "mobile/"
+      run: pnpm verify
