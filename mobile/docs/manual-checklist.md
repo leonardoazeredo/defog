@@ -33,3 +33,13 @@
 | S3b | **Warm start:** share a zip with the app open; imports without relaunching | |
 | S4 | **Non-zip share:** a non-zip offered as `application/octet-stream` shows "Cross the Fog can only import .zip backups." | |
 | S5 | **iOS cleanup:** after an import, app's `Documents/Inbox` is empty (verify in Xcode → Devices → container) | |
+
+## About screen
+
+| # | Step | Result |
+|---|------|--------|
+| A1 | **Open:** tap About (modal); version number is `0.1.0` (hardcoded in `about.tsx` — confirm it matches the `version` field in `package.json`); app name shows correctly | |
+| A2 | **defog credit:** szalapak credit and MIT licence text visible | |
+| A3 | **Map tiles:** OpenStreetMap attribution and ODbL reference visible | |
+| A4 | **Leaflet / pako:** BSD-2 and MIT licence blocks visible | |
+| A5 | **Dep list:** scrollable table shows ≥ 500 rows; name, version and SPDX identifier columns | |

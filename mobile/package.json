@@ -17,7 +17,7 @@
     "test": "vitest run --project unit --project adapter",
     "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm test:contract && pnpm build:web",
     "fixture": "tsx test/fixtures/cli.ts",
-    "generate": "tsx scripts/build-web.ts",
+    "generate": "tsx scripts/build-web.ts && tsx scripts/licenses.ts",
     "contract": "playwright install chromium && tsx scripts/contract-check.ts",
     "build:web": "pnpm generate && pnpm contract",
     "test:contract": "playwright install chromium && vitest run -c vitest.contract.config.ts",
