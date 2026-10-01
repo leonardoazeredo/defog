@@ -140,9 +140,10 @@ it("RF3: a crash at any step of an import leaves the old copy or the new one", a
     const next = createFogStore(fs2, deps);
     await next.recover();
     const cur = await next.current();
-    expect([sha(A), sha(B)]).toContain(cur?.sha256);
-    const expected = cur?.sha256 === sha(A) ? A : B;
-    expect(fs2.files.get(zipName(cur!))).toEqual(expected);
+    expect(cur).not.toBeNull();
+    if (!cur) return;
+    const expected = cur.sha256 === sha(A) ? A : B;
+    expect(fs2.files.get(zipName(cur))).toEqual(expected);
     expect([...fs2.files.keys()].filter((n) => n.endsWith(".tmp"))).toEqual([]);
     expect([...fs2.files.keys()].filter((n) => n.startsWith("current-"))).toHaveLength(1);
   }

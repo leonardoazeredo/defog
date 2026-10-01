@@ -1,6 +1,5 @@
 import { z } from "zod";
 import type { FileStore } from "./fileStore.js";
-import { FileExistsError } from "./fileStore.js";
 
 export interface SourceFile {
   uri: string;
