@@ -60,6 +60,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     "expo-router",
     ["expo-share-intent", { disableIOS: true, androidIntentFilters: shareMime }],
   ],
-  extra: { e2e: process.env.CROSSFOG_E2E === "1" },
+  extra: {
+    eas: { projectId: "caaa478d-1167-481c-bbb5-0339a7fbfadb" },
+    e2e: process.env.CROSSFOG_E2E === "1",
+  },
   experiments: { typedRoutes: true },
 });

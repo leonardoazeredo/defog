@@ -21,7 +21,7 @@
       "autoIncrement": true,
       "android": {
         "buildType": "app-bundle",
-        "ndk": "27"
+        "ndk": "27.1.12297006"
       }
     },
     "e2e": {
