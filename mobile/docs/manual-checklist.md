@@ -24,15 +24,17 @@
 
 ## Share-to-app
 
+_Tested on: Android emulator (API 36). iOS run pending._
+
 | # | Step | Result |
 |---|------|--------|
-| S1a | **From Files (nothing saved):** share `standard.zip` from Files to Cross the Fog; imports immediately | |
-| S1b | **From Files (saved fog):** share `standard.zip` again; app asks "Replace your saved fog with standard.zip?"; Replace imports; Cancel changes nothing | |
-| S2 | **Other apps:** same flow from Google Drive and Dropbox, on both platforms | |
-| S3a | **Cold start:** share a zip with the app closed; app opens and imports | |
-| S3b | **Warm start:** share a zip with the app open; imports without relaunching | |
-| S4 | **Non-zip share:** a non-zip offered as `application/octet-stream` shows "Cross the Fog can only import .zip backups." | |
-| S5 | **iOS cleanup:** after an import, app's `Documents/Inbox` is empty (verify in Xcode → Devices → container) | |
+| S1a | **From Files (nothing saved):** share `standard.zip` from Files to Cross the Fog; imports immediately | ✓ |
+| S1b | **From Files (saved fog):** share `standard.zip` again; app asks "Replace your saved fog with standard.zip?"; Replace imports; Cancel changes nothing | ✓ |
+| S2 | **Other apps:** same flow from Google Drive and Dropbox, on both platforms | skip — no cloud apps on emulator |
+| S3a | **Cold start:** share a zip with the app closed; app opens and imports | ✓ |
+| S3b | **Warm start:** share a zip with the app open; imports without relaunching | ✓ |
+| S4 | **Non-zip share:** a non-zip offered as `application/octet-stream` shows "Cross the Fog can only import .zip backups." | ✓ |
+| S5 | **iOS cleanup:** after an import, app's `Documents/Inbox` is empty (verify in Xcode → Devices → container) | skip — iOS not tested in this run (requires device + Xcode); Android: cache copy deleted after each import ✓ |
 
 ## About screen
 
