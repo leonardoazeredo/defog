@@ -53,7 +53,7 @@
 | B3 | **Zip alignment:** `check-apk.sh` prints `OK zipalign` | ✓ |
 | B4 | **16 KB ELF pages:** `check-apk.sh` prints `OK 16k-elf` on API 35+ device or AVD | ✓ |
 | B5 | **iOS privacy manifest:** `privacy-union.ts` output pasted into `app.config.ts`; generated `PrivacyInfo.xcprivacy` lists all categories | ✓ |
-| B6 | **EAS preview APK:** `eas build -p android --profile preview` produces a download link; `check-apk.sh` passes on that APK | |
+| B6 | **EAS preview APK:** `eas build -p android --profile preview` produces a download link; `check-apk.sh` passes on that APK | ✓ |
 
 ## Maestro e2e flows
 
