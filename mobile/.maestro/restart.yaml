@@ -1,0 +1,5 @@
+appId: codes.madera.crossfog
+---
+- stopApp
+- launchApp
+- assertVisible: "2 tiles loaded ✓"

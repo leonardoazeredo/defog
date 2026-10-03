@@ -1,0 +1,10 @@
+appId: codes.madera.crossfog
+---
+- launchApp:
+    clearState: true
+- tapOn: "…or a .zip"
+- tapOn: "Standard backup"
+- assertVisible: "2 tiles loaded ✓"
+- assertVisible:
+    text: "Saved backup standard.zip.*"
+    regexp: true

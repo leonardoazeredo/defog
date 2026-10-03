@@ -1,0 +1,7 @@
+{
+  "extends": "../../web-adapter/tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": [".", "../fixtures", "../../web-adapter"]
+}
