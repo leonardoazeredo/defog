@@ -18,7 +18,7 @@
 | 10b | **Android back (sheet closed):** back shows "Press back again to exit"; two presses within 2 s exit | ✓ |
 | 11a | **Clear:** "Clear saved fog" asks "Clear saved fog?"; choosing Clear brings back defog's first-run text | ✓ |
 | 11b | **Clear restart:** a relaunch restores nothing | ✓ |
-| 12 | **Real backup:** owner's own multi-MB backup loads; a relaunch restores it | |
+| 12 | **Real backup:** owner's own multi-MB backup loads; a relaunch restores it | ✓ (Sync.zip — 246 tiles, 0.00014% defogged) |
 | 13 | **User agent:** in `chrome://inspect` / Safari Web Inspector a tile request's User-Agent ends with `CrossTheFog/0.1.0 (+https://madera.codes)` | ✓ |
 | 14 | **Process death (Android emulator only):** `adb root` + `kill -9` sandboxed_process during large restore (twice); retry panel shows "Your saved fog couldn't be opened. The last attempt ran out of memory." | ✓ |
 
