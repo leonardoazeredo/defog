@@ -36,7 +36,17 @@ unzip -q "$APK" "lib/arm64-v8a/*.so" "lib/x86_64/*.so" -d "$TMPDIR_EXTRACT" 2>/d
 
 for so in "$TMPDIR_EXTRACT"/lib/*/*.so; do
   [[ -f "$so" ]] || continue
-  BAD_SEGS="$("$LLVM_READELF" -lW "$so" | awk '/LOAD/{if (NF>=6) { align=$NF; sub(/^0x/,"",align); if (strtonum("0x"align) < strtonum("0x4000")) print FILENAME": "align}}')"
+  # strtonum is GNU awk only; use python3 for portable hex comparison.
+  BAD_SEGS="$("$LLVM_READELF" -lW "$so" | awk '/LOAD/{if (NF>=6) print FILENAME" "$NF}' | \
+    python3 -c '
+import sys
+for line in sys.stdin:
+  parts = line.strip().split()
+  if len(parts) == 2:
+    fname, align = parts
+    if int(align, 16) < 0x4000:
+      print(fname + ": " + align)
+')"
   [[ -z "$BAD_SEGS" ]] || fail "16k-elf ($BAD_SEGS)"
 done
 echo "OK 16k-elf"

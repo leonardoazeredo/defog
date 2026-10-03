@@ -48,11 +48,11 @@
 
 | # | Step | Result |
 |---|------|--------|
-| B1 | **Permissions:** `check-apk.sh` prints `OK permissions` (only `INTERNET`) | |
-| B2 | **Target SDK:** `check-apk.sh` prints `OK targetSdk` (36) | |
-| B3 | **Zip alignment:** `check-apk.sh` prints `OK zipalign` | |
-| B4 | **16 KB ELF pages:** `check-apk.sh` prints `OK 16k-elf` on API 35+ device or AVD | |
-| B5 | **iOS privacy manifest:** `privacy-union.ts` output pasted into `app.config.ts`; generated `PrivacyInfo.xcprivacy` lists all categories | |
+| B1 | **Permissions:** `check-apk.sh` prints `OK permissions` (only `INTERNET`) | ✓ |
+| B2 | **Target SDK:** `check-apk.sh` prints `OK targetSdk` (36) | ✓ |
+| B3 | **Zip alignment:** `check-apk.sh` prints `OK zipalign` | ✓ |
+| B4 | **16 KB ELF pages:** `check-apk.sh` prints `OK 16k-elf` on API 35+ device or AVD | ✓ |
+| B5 | **iOS privacy manifest:** `privacy-union.ts` output pasted into `app.config.ts`; generated `PrivacyInfo.xcprivacy` lists all categories | ✓ |
 | B6 | **EAS preview APK:** `eas build -p android --profile preview` produces a download link; `check-apk.sh` passes on that APK | |
 
 ## Maestro e2e flows
