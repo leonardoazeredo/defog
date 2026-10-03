@@ -44,9 +44,8 @@ export function createExpoFileStore(dir: Directory): FileStore {
     },
 
     async readRange(name, offset, length) {
-      const blob = fileAt(name).slice(offset, offset + length);
-      const buf = await blob.arrayBuffer();
-      return new Uint8Array(buf);
+      const all = await fileAt(name).bytes();
+      return all.subarray(offset, offset + length);
     },
 
     async size(name) {

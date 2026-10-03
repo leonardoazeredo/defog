@@ -99,9 +99,11 @@ export function parseNativeToWeb(raw: string): NativeToWeb | null {
   }
 }
 
+// Android WebView reports the baseUrl without its trailing slash in onMessage events.
 export function isTrustedSource(url: string): boolean {
   return (
     url === ORIGIN ||
+    url === ORIGIN.slice(0, -1) ||
     (url.startsWith(ORIGIN) && (url[ORIGIN.length] === "#" || url[ORIGIN.length] === "?"))
   );
 }

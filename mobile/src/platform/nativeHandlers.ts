@@ -1,4 +1,4 @@
-import { File, Paths } from "expo-file-system";
+import { Directory, File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { safeExportName, utiFor } from "../bridge/exportFile.js";
 import { isDisposableCopy } from "../import/incoming.js";
@@ -9,7 +9,9 @@ export async function shareExport(file: {
   text: string;
 }): Promise<void> {
   const safe = safeExportName(file.filename);
-  const dest = new File(Paths.cache, "exports", safe);
+  const exportsDir = new Directory(Paths.cache, "exports");
+  if (!exportsDir.exists) exportsDir.create();
+  const dest = new File(exportsDir, safe);
   dest.write(file.text);
   const uti = utiFor(file.filename);
   await Sharing.shareAsync(dest.uri, {
