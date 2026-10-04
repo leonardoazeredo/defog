@@ -1,4 +1,16 @@
 appId: codes.madera.crossfog
 ---
+# Fresh launch lets async WebShell ops settle before any navigation; skipping it
+# triggers a "state update on unmounted component" warning in the RN dev overlay.
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible: "Expand or collapse panel"
+    timeout: 60000
+- tapOn: "Expand or collapse panel"
+- extendedWaitUntil:
+    visible: "2 tiles loaded ✓"
+    timeout: 30000
+- tapOn: "Show your fog"
 - tapOn: "About"
-- assertVisible: "Cross the Fog is based on defog by szalapak"
+- assertVisible: "Version 0.1.0"

@@ -1,13 +1,33 @@
 appId: codes.madera.crossfog
 ---
-- tapOn: "Plan"
-- tapOn: "Start drawing"
-- tapOn:
-    point: "20%, 40%"
-- tapOn:
-    point: "40%, 60%"
+# Fresh start avoids inheriting animation state from the prior flow
+- stopApp
+- launchApp
 - extendedWaitUntil:
-    visible: "GPX"
+    visible: "Expand or collapse panel"
+    timeout: 60000
+- tapOn: "Expand or collapse panel"
+- extendedWaitUntil:
+    visible: "2 tiles loaded ✓"
+    timeout: 30000
+- tapOn: "Plan"
+# Wait for the Plan pane content to finish rendering after tapping Plan
+- extendedWaitUntil:
+    visible: "Start drawing"
     timeout: 10000
+- tapOn: "Start drawing"
+# Start drawing collapses the panel to free map space; re-expand so the GPX button
+# is in the accessibility tree and tappable once BRouter finishes.
+- tapOn: "Expand or collapse panel"
+# Tap two map points to define the route BRouter will compute.
+- tapOn:
+    point: "25%, 15%"
+- tapOn:
+    point: "55%, 25%"
+# BRouter route computation fires an accessibility event when GPX becomes enabled.
+- waitForAnimationToEnd:
+    timeout: 30000
 - tapOn: "GPX"
 - assertVisible: "fogtomaps-route.gpx"
+# Dismiss the share sheet so about.yaml starts on the main screen
+- pressKey: "Back"

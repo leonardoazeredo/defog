@@ -2,4 +2,11 @@ appId: codes.madera.crossfog
 ---
 - stopApp
 - launchApp
-- assertVisible: "2 tiles loaded ✓"
+# The WebView can take 30+ s from cold start; wait for the grabber before tapping.
+- extendedWaitUntil:
+    visible: "Expand or collapse panel"
+    timeout: 60000
+- tapOn: "Expand or collapse panel"
+- extendedWaitUntil:
+    visible: "2 tiles loaded ✓"
+    timeout: 30000

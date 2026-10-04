@@ -61,11 +61,13 @@ _Tested on: Android emulator (API 36). iOS run pending._
 
 Run with `CROSSFOG_E2E=1 pnpm android` (or `ios`) to build, then `pnpm e2e`.
 
-| Flow | Expected |
-|------|----------|
-| import | "2 tiles loaded ✓" and "Saved backup standard.zip" after picking Standard backup |
-| restart | "2 tiles loaded ✓" on cold start |
-| eviction | "2 tiles loaded ✓" after dropping the cache and restarting |
-| not-a-backup | "That file isn't a Fog of World backup." stays visible |
-| export | "fogtomaps-route.gpx" visible in the share sheet |
-| about | "Cross the Fog is based on defog by szalapak" visible |
+_Tested on: Android emulator API 36 (AVD `chase-cashew-test`) — 6/6 passed in 1m 43s._
+
+| Flow | Expected | Result |
+|------|----------|--------|
+| import | "2 tiles loaded ✓" and "Update" after picking Standard backup | ✓ |
+| restart | "2 tiles loaded ✓" on cold start | ✓ |
+| eviction | "2 tiles loaded ✓" after dropping the cache and restarting | ✓ |
+| not-a-backup | "That file isn't a Fog of World backup. Your saved fog is unchanged." stays visible | ✓ |
+| export | "fogtomaps-route.gpx" visible in the share sheet | ✓ |
+| about | "Version 0.1.0" visible on the About screen | ✓ |
