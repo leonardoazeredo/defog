@@ -1,0 +1,18 @@
+appId: codes.madera.crossfog
+---
+- launchApp:
+    clearState: true
+- tapOn: "Expand or collapse panel"
+- tapOn: "…or a .zip"
+# Android Alert buttons render ALL CAPS
+- extendedWaitUntil:
+    visible: "STANDARD BACKUP"
+    timeout: 15000
+- tapOn: "STANDARD BACKUP"
+# doImport() triggers a WebView remount which collapses the panel.
+# waitForAnimationToEnd waits for both the remount and fog-load to settle.
+- waitForAnimationToEnd:
+    timeout: 30000
+- tapOn: "Expand or collapse panel"
+- assertVisible: "2 tiles loaded ✓"
+- assertVisible: "Update"

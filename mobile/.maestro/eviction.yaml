@@ -1,0 +1,14 @@
+appId: codes.madera.crossfog
+---
+# Runs after restart.yaml, which leaves the panel expanded.
+# Dev button sits at y=2338; tapped by accessibility label to avoid coordinate fragility.
+- tapOn: "Dev: drop fog cache"
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible: "Expand or collapse panel"
+    timeout: 60000
+- tapOn: "Expand or collapse panel"
+- extendedWaitUntil:
+    visible: "2 tiles loaded ✓"
+    timeout: 30000
