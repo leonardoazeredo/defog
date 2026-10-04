@@ -26,6 +26,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     predictiveBackGestureEnabled: false,
   },
   ios: { bundleIdentifier: "codes.madera.crossfog" },
-  plugins: ["expo-router"],
+  plugins: ["expo-router", "./plugins/withExpoSceneDelegate"],
   experiments: { typedRoutes: true },
 });
