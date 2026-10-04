@@ -58,6 +58,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   plugins: [
     "expo-router",
+    "./plugins/withExpoSceneDelegate",
     ["expo-share-intent", { disableIOS: true, androidIntentFilters: shareMime }],
   ],
   extra: {
