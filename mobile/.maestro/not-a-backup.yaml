@@ -1,0 +1,25 @@
+appId: codes.madera.crossfog
+---
+# Fresh launch gives a known state: fog persists in native storage, no stale UI
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible: "Expand or collapse panel"
+    timeout: 60000
+- tapOn: "Expand or collapse panel"
+- extendedWaitUntil:
+    visible: "2 tiles loaded ✓"
+    timeout: 30000
+- tapOn: "Update"
+# Android Alert buttons render ALL CAPS
+- extendedWaitUntil:
+    visible: "NOT A BACKUP"
+    timeout: 15000
+- tapOn: "NOT A BACKUP"
+# Two WebView remounts follow: (1) load the bad zip, (2) reject and restore fog.
+# waitForAnimationToEnd waits for both remounts and the final fog-load to settle.
+- waitForAnimationToEnd:
+    timeout: 40000
+- tapOn: "Expand or collapse panel"
+- assertVisible: "2 tiles loaded ✓"
+- assertVisible: "That file isn't a Fog of World backup. Your saved fog is unchanged."
