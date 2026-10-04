@@ -1,4 +1,5 @@
 import type { ConfigContext, ExpoConfig } from "expo/config";
+import shareMime from "./src/import/share-mime.json";
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
@@ -15,6 +16,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "android.permission.ACCESS_FINE_LOCATION",
       "android.permission.ACCESS_COARSE_LOCATION",
       "android.permission.ACCESS_BACKGROUND_LOCATION",
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.WRITE_EXTERNAL_STORAGE",
+      "android.permission.SYSTEM_ALERT_WINDOW",
+      "android.permission.VIBRATE",
     ],
     adaptiveIcon: {
       foregroundImage: "./assets/android-icon-foreground.png",
@@ -25,7 +30,40 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // React Navigation needs to handle back presses in JS; predictive back would let Android consume the gesture first.
     predictiveBackGestureEnabled: false,
   },
-  ios: { bundleIdentifier: "codes.madera.crossfog" },
-  plugins: ["expo-router", "./plugins/withExpoSceneDelegate"],
+  ios: {
+    bundleIdentifier: "codes.madera.crossfog",
+    privacyManifests: {
+      NSPrivacyAccessedAPITypes: [
+        {
+          NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategoryFileTimestamp",
+          NSPrivacyAccessedAPITypeReasons: ["C617.1"],
+        },
+        {
+          NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategorySystemBootTime",
+          NSPrivacyAccessedAPITypeReasons: ["35F9.1"],
+        },
+      ],
+    },
+    infoPlist: {
+      CFBundleDocumentTypes: [
+        {
+          CFBundleTypeName: "Zip archive",
+          CFBundleTypeRole: "Viewer",
+          LSHandlerRank: "Alternate",
+          LSItemContentTypes: ["public.zip-archive"],
+        },
+      ],
+      LSSupportsOpeningDocumentsInPlace: false,
+    },
+  },
+  plugins: [
+    "expo-router",
+    "./plugins/withExpoSceneDelegate",
+    ["expo-share-intent", { disableIOS: true, androidIntentFilters: shareMime }],
+  ],
+  extra: {
+    eas: { projectId: "caaa478d-1167-481c-bbb5-0339a7fbfadb" },
+    e2e: process.env.CROSSFOG_E2E === "1",
+  },
   experiments: { typedRoutes: true },
 });

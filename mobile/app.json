@@ -1,3 +1,11 @@
 {
-  "plugins": ["expo-router", "expo-status-bar"]
+  "plugins": ["expo-router", "expo-status-bar"],
+  "extra": {
+    "e2e": false,
+    "router": {},
+    "eas": {
+      "projectId": "caaa478d-1167-481c-bbb5-0339a7fbfadb"
+    }
+  },
+  "owner": "leoleg"
 }

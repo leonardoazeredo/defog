@@ -193,6 +193,7 @@ describe("protocol", () => {
 
   it("trusts only the page at ORIGIN", () => {
     expect(isTrustedSource(ORIGIN)).toBe(true);
+    expect(isTrustedSource(ORIGIN.slice(0, -1))).toBe(true); // Android omits trailing slash
     expect(isTrustedSource(`${ORIGIN}#plan`)).toBe(true);
     expect(isTrustedSource("https://crossfog.madera.codes/other")).toBe(false);
     expect(isTrustedSource("https://crossfog.madera.codes.evil.example/")).toBe(false);

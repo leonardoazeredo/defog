@@ -73,8 +73,6 @@ const nativeToWebSchema = z.union([
   z.object({ v: z.literal(1), type: z.literal("back") }),
 ]);
 
-export type LoadFailure = "unzip" | "noTiles" | "memory" | "checksum" | "unknown";
-export type CopyRole = "current" | "pending";
 export type WebToNative = z.infer<typeof webToNativeSchema>;
 export type NativeToWeb = z.infer<typeof nativeToWebSchema>;
 export type ChunkMessage = Extract<NativeToWeb, { type: "chunk" }>;
@@ -101,9 +99,11 @@ export function parseNativeToWeb(raw: string): NativeToWeb | null {
   }
 }
 
+// Android WebView reports the baseUrl without its trailing slash in onMessage events.
 export function isTrustedSource(url: string): boolean {
   return (
     url === ORIGIN ||
+    url === ORIGIN.slice(0, -1) ||
     (url.startsWith(ORIGIN) && (url[ORIGIN.length] === "#" || url[ORIGIN.length] === "?"))
   );
 }

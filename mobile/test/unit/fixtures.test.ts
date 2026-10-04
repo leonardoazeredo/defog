@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import {
   largeBackup,
@@ -36,4 +37,9 @@ it("builds a large backup of about the requested size", () => {
   expect(zip.length).toBeLessThan(5_100_000);
   expect(loadZipLikeDefog(zip).tiles).toBeGreaterThan(0);
   expect(largeBackup(5_000_000, 7)).toEqual(zip);
+});
+
+it("the committed e2e fixtures match the generator", () => {
+  expect(new Uint8Array(readFileSync("assets/e2e/standard.zip"))).toEqual(standardBackup());
+  expect(new Uint8Array(readFileSync("assets/e2e/not-a-backup.zip"))).toEqual(notABackup());
 });

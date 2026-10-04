@@ -17,11 +17,13 @@ export async function streamCopy(args: {
   signal: AbortSignal;
 }): Promise<void> {
   const { fs, zipName, fingerprint, send, chunkBytes, signal } = args;
-  const fileSize = await fs.size(zipName);
+  const allBytes = await fs.readBytes(zipName);
+  const fileSize = allBytes.length;
   const total = chunkCount(fileSize, chunkBytes);
   for (let i = 0; i < total; i++) {
     if (signal.aborted) break;
-    const bytes = await fs.readRange(zipName, i * chunkBytes, chunkBytes);
+    const start = i * chunkBytes;
+    const bytes = allBytes.subarray(start, Math.min(start + chunkBytes, fileSize));
     send({ v: 1, type: "chunk", fingerprint, index: i, total, data: encodeBase64(bytes) });
   }
 }

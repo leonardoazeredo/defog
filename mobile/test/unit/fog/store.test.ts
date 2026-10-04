@@ -56,7 +56,7 @@ async function storeWithSaved(
   const crashFs = createMemoryFileStore({
     files: new Map(setupFs.files),
     sources,
-    crashAtMutation: opts?.crashAfterSetup,
+    ...(opts?.crashAfterSetup !== undefined && { crashAtMutation: opts.crashAfterSetup }),
   });
   return { store: createFogStore(crashFs, deps), fs: crashFs };
 }
