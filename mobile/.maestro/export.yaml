@@ -28,6 +28,18 @@ appId: codes.madera.crossfog
 - waitForAnimationToEnd:
     timeout: 30000
 - tapOn: "GPX"
-- assertVisible: "fogtomaps-route.gpx"
+# iOS hides the file extension in the share sheet
+- assertVisible: 'fogtomaps-route(\.gpx)?'
 # Dismiss the share sheet so about.yaml starts on the main screen
-- pressKey: "Back"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - pressKey: "Back"
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      # Tapping the dimmed area above the sheet closes it; iOS has no Back key.
+      - tapOn:
+          point: "50%, 8%"

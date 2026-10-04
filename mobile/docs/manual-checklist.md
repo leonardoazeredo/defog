@@ -24,7 +24,7 @@
 
 ## Share-to-app
 
-_Tested on: Android emulator (API 36). iOS run pending._
+_Tested on: Android emulator (API 36): all rows except S2 and S5. iOS simulator (iPhone 17, iOS 27.0): S1a, S1b, S3a and S3b pass, with the share simulated by `xcrun simctl openurl file://…/standard.zip`. S2 and S5 still need a real iPhone._
 
 | # | Step | Result |
 |---|------|--------|
@@ -33,7 +33,7 @@ _Tested on: Android emulator (API 36). iOS run pending._
 | S2 | **Other apps:** same flow from Google Drive and Dropbox, on both platforms | skip — no cloud apps on emulator |
 | S3a | **Cold start:** share a zip with the app closed; app opens and imports | ✓ |
 | S3b | **Warm start:** share a zip with the app open; imports without relaunching | ✓ |
-| S4 | **Non-zip share:** a non-zip offered as `application/octet-stream` shows "Cross the Fog can only import .zip backups." | ✓ |
+| S4 | **Non-zip share:** a non-zip offered as `application/octet-stream` shows "Cross the Fog can only import .zip backups." | ✓ (Android). iOS: not reachable. The app only registers the zip document type, so iOS never offers a non-zip file to it |
 | S5 | **iOS cleanup:** after an import, app's `Documents/Inbox` is empty (verify in Xcode → Devices → container) | skip — iOS not tested in this run (requires device + Xcode); Android: cache copy deleted after each import ✓ |
 
 ## About screen
@@ -59,9 +59,11 @@ _Tested on: Android emulator (API 36). iOS run pending._
 
 ## Maestro e2e flows
 
-Run with `CROSSFOG_E2E=1 pnpm android` (or `ios`) to build, then `pnpm e2e`.
+Run with `CROSSFOG_E2E=1 pnpm android` (or `ios`) to build, then `pnpm e2e`. Use a Release build (embedded JS bundle, no Metro): on Android `CROSSFOG_E2E=1 npx expo run:android --variant release --device <avd>`; on iOS prebuild with `CROSSFOG_E2E=1` and build the Release configuration for a simulator. The flows share app state, so `.maestro/config.yaml` pins their order.
 
-_Tested on: Android emulator API 36 (AVD `chase-cashew-test`) — 6/6 passed in 1m 43s._
+_Tested on: Android emulator API 36 (AVD `chase-cashew-test`): 6/6 passed in 2m 42s and 3m 6s. iOS simulator (iPhone 17, iOS 27.0): 6/6 passed in 1m 38s and 1m 52s._
+
+_On iOS the share sheet hides the `.gpx` extension and has no Back key, so `export` accepts either filename and dismisses the sheet by tapping outside it. `not-a-backup` retries opening the panel because a tap during the second remount can be lost._
 
 | Flow | Expected | Result |
 |------|----------|--------|

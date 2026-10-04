@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { withInfoPlist, withDangerousMod } = require("expo/config-plugins");
 
-// iOS 26+ traps at launch without UIScene lifecycle adoption. Register Expo's scene delegate,
+// iOS 27+ traps at launch without UIScene lifecycle adoption. Register Expo's scene delegate,
 // which owns window creation and RN startup, so AppDelegate must stop doing both.
 module.exports = (config) => {
   config = withInfoPlist(config, (c) => {
