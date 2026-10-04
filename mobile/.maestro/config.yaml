@@ -5,3 +5,13 @@ flows:
   - not-a-backup.yaml
   - export.yaml
   - about.yaml
+# Flows share app state (import leaves a saved fog the later ones rely on), so order matters.
+executionOrder:
+  continueOnFailure: false
+  flowsOrder:
+    - import
+    - restart
+    - eviction
+    - not-a-backup
+    - export
+    - about

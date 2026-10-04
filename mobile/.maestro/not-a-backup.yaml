@@ -20,6 +20,16 @@ appId: codes.madera.crossfog
 # waitForAnimationToEnd waits for both remounts and the final fog-load to settle.
 - waitForAnimationToEnd:
     timeout: 40000
-- tapOn: "Expand or collapse panel"
-- assertVisible: "2 tiles loaded ✓"
+# A tap can land while the second remount is still settling and be lost, so retry until the panel is open.
+- repeat:
+    while:
+      notVisible: "2 tiles loaded ✓"
+    times: 4
+    commands:
+      - tapOn: "Expand or collapse panel"
+      - waitForAnimationToEnd:
+          timeout: 3000
+- extendedWaitUntil:
+    visible: "2 tiles loaded ✓"
+    timeout: 15000
 - assertVisible: "That file isn't a Fog of World backup. Your saved fog is unchanged."
