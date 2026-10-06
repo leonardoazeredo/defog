@@ -46,7 +46,7 @@ _Tested on: Android emulator (API 36): all rows except S2 and S5. iOS simulator 
 | A2 | **defog credit:** szalapak credit and MIT licence text visible | ✓ |
 | A3 | **Map tiles:** OpenStreetMap attribution and ODbL reference visible | ✓ |
 | A4 | **Leaflet / pako:** BSD-2 and MIT licence blocks visible | ✓ |
-| A5 | **Dep list:** scrollable list shows ≥ 500 rows; each row has name, version and SPDX identifier | ✓ (Android: the page says 561 packages, and the list scrolls alphabetically from @babel to zod; about 80 rows were read, the rest were not counted. `generated/licenses.json` has 561) |
+| A5 | **Dep list:** scrollable list shows ≥ 500 rows; each row has name, version and SPDX identifier | ✓ (Android: the page says 561 packages, and the list scrolls alphabetically from @babel to zod; about 80 rows were read, the rest were not counted. `generated/licenses.json` had 561 at the time, and 562 once `expo-crypto` was added) |
 
 | A6 | **Android back from About:** hardware back closes About and returns to the map; back on the main screen still closes the sheet and then asks to press again | ✓ (Android; the `about` Maestro flow presses Back) |
 
