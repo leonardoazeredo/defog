@@ -1,8 +1,8 @@
 import Constants from "expo-constants";
 import { Directory, Paths } from "expo-file-system";
 import * as Linking from "expo-linking";
-import { router } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, BackHandler, Platform, ToastAndroid } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import WebView from "react-native-webview";
@@ -103,13 +103,15 @@ export function WebShell(): React.JSX.Element {
     void controller.start();
   }, [controller]);
 
-  useEffect(() => {
-    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
-      controller.onBackPressed();
-      return true;
-    });
-    return () => sub.remove();
-  }, [controller]);
+  useFocusEffect(
+    useCallback(() => {
+      const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+        controller.onBackPressed();
+        return true;
+      });
+      return () => sub.remove();
+    }, [controller]),
+  );
 
   // Subscribe to incoming files from share-to-app and Open-with.
   useEffect(() => {

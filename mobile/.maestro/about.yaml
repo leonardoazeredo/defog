@@ -14,3 +14,10 @@ appId: codes.madera.crossfog
 - tapOn: "Show your fog"
 - tapOn: "About"
 - assertVisible: "Version 0.1.0"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - pressKey: "Back"
+      - assertNotVisible: "Version 0.1.0"
+      - assertVisible: "Expand or collapse panel"
