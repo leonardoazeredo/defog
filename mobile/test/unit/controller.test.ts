@@ -53,6 +53,7 @@ interface Harness {
   shareExport: ReturnType<typeof vi.fn>;
   openExternal: ReturnType<typeof vi.fn>;
   openAbout: ReturnType<typeof vi.fn>;
+  busy: boolean[];
 }
 
 function createHarness(): Harness {
@@ -75,6 +76,7 @@ function createHarness(): Harness {
   const shareExport = vi.fn(() => Promise.resolve());
   const openExternal = vi.fn(() => Promise.resolve());
   const openAbout = vi.fn();
+  const busy: boolean[] = [];
 
   const c = createController({
     store,
@@ -99,6 +101,7 @@ function createHarness(): Harness {
       return Promise.resolve();
     },
     now: () => clock.value,
+    setBusy: (on) => busy.push(on),
     chunkBytes: 1_048_576,
   });
 
@@ -119,6 +122,7 @@ function createHarness(): Harness {
     shareExport,
     openExternal,
     openAbout,
+    busy,
   };
 }
 
@@ -536,4 +540,76 @@ it("pickFile returning null cancels import without notifying", async () => {
   expect(h.remounts.count).toBe(0);
   await h.c.onWebMessage(pickBackup);
   expect(h.pickFile).toHaveBeenCalledTimes(2);
+});
+
+it("shows the import as busy from the start of the work until the page has loaded it", async () => {
+  const h = createHarness();
+  h.picks.push({ uri: bSrc, name: "b.zip" });
+  await h.c.start();
+  await h.c.onWebMessage(pickBackup);
+  expect(h.busy).toEqual([true]);
+  await h.c.onWebMessage(ready);
+  expect(h.busy).toEqual([true]);
+  await h.c.onWebMessage({ v: 1, type: "loaded", fingerprint: sha(B), ok: true, tiles: 2 });
+  expect(h.busy).toEqual([true, false]);
+});
+
+it("is not busy while the file picker is open, nor after it is cancelled", async () => {
+  const h = createHarness();
+  await h.c.start();
+  const pick = deferred<SourceFile | null>();
+  h.pickFile.mockReturnValueOnce(pick.promise);
+  const picking = h.c.onWebMessage(pickBackup);
+  await vi.waitFor(() => expect(h.pickFile).toHaveBeenCalled());
+  expect(h.busy).not.toContain(true);
+  pick.resolve(null);
+  await picking;
+  expect(h.busy).not.toContain(true);
+});
+
+it("clears busy when the page says the backup is not a backup", async () => {
+  const h = createHarness();
+  h.picks.push({ uri: bSrc, name: "b.zip" });
+  await h.c.start();
+  await h.c.onWebMessage(pickBackup);
+  await h.c.onWebMessage(ready);
+  await h.c.onWebMessage({
+    v: 1,
+    type: "loaded",
+    fingerprint: sha(B),
+    ok: false,
+    reason: "noTiles",
+  });
+  expect(h.busy).toEqual([true, false]);
+});
+
+it("clears busy when the import fails before the page is involved", async () => {
+  const h = createHarness();
+  h.picks.push({ uri: "file:///cache/missing.zip", name: "missing.zip" });
+  await h.c.start();
+  await h.c.onWebMessage(pickBackup);
+  expect(h.busy).toEqual([true, false]);
+  expect(h.remounts.count).toBe(0);
+});
+
+it("clears busy when the WebView dies during an import", async () => {
+  const h = createHarness();
+  h.picks.push({ uri: bSrc, name: "b.zip" });
+  await h.c.start();
+  await h.c.onWebMessage(pickBackup);
+  await h.c.onWebMessage(ready);
+  await h.c.onProcessGone();
+  expect(h.busy).toEqual([true, false]);
+});
+
+it("stays busy across the hand-over to a share that waited for the import", async () => {
+  const h = createHarness();
+  await saveToStore(h.store, aSrc, "a.zip");
+  h.picks.push({ uri: bSrc, name: "b.zip" });
+  await h.c.start();
+  await h.c.onWebMessage(pickBackup);
+  await h.c.onIncoming({ uri: cSrc, name: "c.zip" });
+  await h.c.onWebMessage(ready);
+  await h.c.onWebMessage({ v: 1, type: "loaded", fingerprint: sha(B), ok: true, tiles: 2 });
+  expect(h.busy).toEqual([true, false, true]);
 });

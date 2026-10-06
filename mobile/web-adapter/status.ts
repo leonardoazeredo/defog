@@ -64,9 +64,16 @@ export function createStatus(doc: Document, actions: StatusActions, now: () => n
 
   const lineEl = doc.getElementById("crossfogLine")!;
   const noticeEl = doc.getElementById("crossfogNotice")!;
+  const hintEl = doc.getElementById("hint");
+  const hintText = hintEl?.textContent ?? "";
+
+  function restoreHint(): void {
+    if (hintEl != null) hintEl.textContent = hintText;
+  }
 
   return {
     showSaved({ name, savedAt }) {
+      restoreHint();
       lineEl.textContent = "";
       const days = Math.floor((now() - Date.parse(savedAt)) / 86_400_000);
       const age = ageLabel(days);
@@ -94,10 +101,13 @@ export function createStatus(doc: Document, actions: StatusActions, now: () => n
     },
 
     showProgress(receivedBytes, totalBytes) {
-      lineEl.textContent = `Loading your fog… ${formatMb(receivedBytes)} / ${formatMb(totalBytes)} MB`;
+      const amount = `${formatMb(receivedBytes)} / ${formatMb(totalBytes)} MB`;
+      lineEl.textContent = `Loading your fog… ${amount}`;
+      if (hintEl != null) hintEl.textContent = `Loading… ${amount}`;
     },
 
     showRetry(kind) {
+      restoreHint();
       lineEl.textContent = "";
       const msg = doc.createElement("span");
       msg.textContent =
@@ -118,6 +128,7 @@ export function createStatus(doc: Document, actions: StatusActions, now: () => n
     },
 
     hide() {
+      restoreHint();
       lineEl.textContent = "";
     },
   };

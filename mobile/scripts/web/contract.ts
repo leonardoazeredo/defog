@@ -4,7 +4,7 @@ import { encodeBase64 } from "../../src/bridge/base64.js";
 import type { NativeToWeb } from "../../src/bridge/protocol.js";
 import { encode, ORIGIN, parseWebToNative } from "../../src/bridge/protocol.js";
 
-const ELEMENTS = ["zip", "folder", "loadStatus", "sidebar", "brandName"];
+const ELEMENTS = ["zip", "folder", "loadStatus", "sidebar", "brandName", "hint"];
 const GLOBALS = ["FogZip.unzip", "FogParser.FogMap.prototype.addTile"];
 const CHUNK_SIZE = 64 * 1024;
 

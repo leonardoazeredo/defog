@@ -3,7 +3,7 @@ import { Directory, Paths } from "expo-file-system";
 import * as Linking from "expo-linking";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, BackHandler, Platform, ToastAndroid } from "react-native";
+import { Alert, BackHandler, Platform, StyleSheet, Text, ToastAndroid, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import WebView from "react-native-webview";
 import { WEB_HTML } from "../../generated/web.js";
@@ -23,6 +23,18 @@ import { sha256Hex } from "./platform/sha256.js";
 
 // Page background colour so safe areas match the page.
 const PAGE_BG = "#e7e9ee";
+
+const styles = StyleSheet.create({
+  busyLayer: { alignItems: "center", justifyContent: "center" },
+  busyCard: {
+    alignItems: "center",
+    paddingHorizontal: 22,
+    paddingVertical: 18,
+    borderRadius: 14,
+    backgroundColor: "rgba(20, 24, 32, 0.82)",
+  },
+  busyText: { color: "#fff", fontSize: 15 },
+});
 
 function confirmAlert(
   title: string,
@@ -49,6 +61,7 @@ function buildController(
   webViewRef: React.RefObject<WebView | null>,
   setWebKey: (fn: (k: number) => number) => void,
   initialLoadDone: React.RefObject<boolean>,
+  setBusy: (on: boolean) => void,
 ): Controller {
   const fogDir = new Directory(Paths.document, "fog");
   const fs = createExpoFileStore(fogDir);
@@ -82,6 +95,7 @@ function buildController(
     },
     exitApp: BackHandler.exitApp,
     releaseSource,
+    setBusy,
     now: Date.now,
     chunkBytes: CHUNK_BYTES,
   });
@@ -89,13 +103,14 @@ function buildController(
 
 export function WebShell(): React.JSX.Element {
   const [webKey, setWebKey] = useState(0);
+  const [busy, setBusy] = useState(false);
   const webViewRef = useRef<WebView | null>(null);
   const initialLoadDone = useRef(false);
 
   // Lazy-initialise the controller once; never rebuild it across re-renders.
   const controllerRef = useRef<Controller | null>(null);
   if (controllerRef.current === null) {
-    controllerRef.current = buildController(webViewRef, setWebKey, initialLoadDone);
+    controllerRef.current = buildController(webViewRef, setWebKey, initialLoadDone, setBusy);
   }
   const controller = controllerRef.current;
 
@@ -165,6 +180,13 @@ export function WebShell(): React.JSX.Element {
         }}
         style={{ flex: 1, backgroundColor: PAGE_BG }}
       />
+      {busy ? (
+        <View style={[StyleSheet.absoluteFill, styles.busyLayer]} pointerEvents="none">
+          <View style={styles.busyCard}>
+            <Text style={styles.busyText}>{COPY.importing}</Text>
+          </View>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
