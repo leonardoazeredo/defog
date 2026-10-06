@@ -5,6 +5,7 @@ flows:
   - not-a-backup.yaml
   - export.yaml
   - about.yaml
+  - help-links.yaml
 # Flows share app state (import leaves a saved fog the later ones rely on), so order matters.
 executionOrder:
   continueOnFailure: false
@@ -15,3 +16,4 @@ executionOrder:
     - not-a-backup
     - export
     - about
+    - help-links

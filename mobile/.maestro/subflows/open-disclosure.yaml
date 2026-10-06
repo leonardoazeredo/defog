@@ -1,0 +1,20 @@
+appId: codes.madera.crossfog
+---
+- runFlow:
+    when:
+      notVisible: ".*Fog of World keeps a folder.*"
+    commands:
+      - tapOn:
+          text: ".*Where's my Sync folder.*"
+          retryTapIfNoChange: false
+      - waitForAnimationToEnd
+- runFlow:
+    when:
+      notVisible: ".*Fog of World keeps a folder.*"
+    commands:
+      - tapOn:
+          point: "27%,63%"
+      - waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: ".*Fog of World keeps a folder.*"
+    timeout: 10000

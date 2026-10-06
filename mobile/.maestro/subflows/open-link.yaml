@@ -1,0 +1,17 @@
+appId: codes.madera.crossfog
+---
+- runFlow: open-disclosure.yaml
+- swipe:
+    start: "50%,80%"
+    end: "50%,55%"
+    duration: 600
+- assertVisible: ${LINK}
+- tapOn: ${LINK}
+- extendedWaitUntil:
+    notVisible: "Expand or collapse panel"
+    timeout: 15000
+- launchApp:
+    stopApp: false
+- extendedWaitUntil:
+    visible: "Expand or collapse panel"
+    timeout: 30000
