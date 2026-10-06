@@ -2,6 +2,8 @@
 
 ## Native shell
 
+_Latest re-run: Android emulator (API 36, userdebug image) and iOS simulator (iPhone 17, iOS 27.0). Each result names its platform; a plain ✓ means every platform that applies passed._
+
 | # | Step | Result |
 |---|------|--------|
 | 1 | **First launch:** brand reads "CROSS THE FOG"; no "Pick your Sync folder…" button; defog's "Your fog is read on your device and is never uploaded." shows; nothing sits under status bar, notch, or nav bar | ✓ |
@@ -10,17 +12,17 @@
 | 4 | **Restart:** force-quit and relaunch; the same fog and line show without picking anything | ✓ |
 | 5 | **Bad import:** Update → `not-a-backup.zip` shows "That file isn't a Fog of World backup. Your saved fog is unchanged." and "2 tiles loaded ✓" comes back | ✓ |
 | 6 | **Non-zip pick:** picking a photo shows "Cross the Fog can only import .zip backups." | ✓ (iOS). Android: not doable as written, because the picker greys out non-zips; the message is reached through a share instead (S4) |
-| 7a | **Large backup:** picking `large-50mb.zip` shows "Loading your fog… ‹n› / 50 MB", then loads | ✓ (Android). iOS: loads, but the loading text was not captured; it is transient, so a screen recording is needed (text is asserted only in `test/adapter/status.test.ts`) |
+| 7a | **Large backup:** picking `large-50mb.zip` shows "Loading your fog… ‹n› / 50 MB", then loads | ✓ (Android). iOS: loads (about 30 s from the share), but the loading text was not captured. The web view remounts and the panel collapses, and the line sits in the panel body, so it is off-screen for the load; recordings showed only the finished state. The text is asserted only in `test/adapter/status.test.ts` |
 | 7b | **Large backup restart:** a relaunch loads it again from the cache | ✓ |
 | 8 | **Export:** draw a route; GPX and KML open the share sheet with `fogtomaps-route.gpx` / `.kml`; cancelling the sheet shows nothing | ✓ |
-| 9 | **External links:** "Maps ↗" and the Drive and OneDrive help links open outside the app | ✓ (Android). iOS: "Maps ↗" opens Safari; the Drive and OneDrive help links are unconfirmed because the taps did not land |
+| 9 | **External links:** "Maps ↗" and the Drive and OneDrive help links open outside the app | ✓ (Android): onedrive.live.com hands off to Chrome; drive.google.com is claimed by the Drive app, which exits at once on an emulator with no Google account, so no browser opens for it. Scroll the panel first: the OneDrive link starts under the map attribution strip. iOS: "Maps ↗" opens Safari; onedrive.live.com opened Safari on a manual Maestro tap; the Drive link and a full Maestro flow are unconfirmed |
 | 10a | **Android back (sheet open):** back closes the sheet | ✓ |
 | 10b | **Android back (sheet closed):** back shows "Press back again to exit"; two presses within 2 s exit | ✓ |
 | 11a | **Clear:** "Clear saved fog" asks "Clear saved fog?"; choosing Clear brings back defog's first-run text | ✓ |
 | 11b | **Clear restart:** a relaunch restores nothing | ✓ |
-| 12 | **Real backup:** owner's own multi-MB backup loads; a relaunch restores it | ✓ (Sync.zip — 246 tiles). The percentage is for the visible map area, so it depends on the viewport: 0.00014% in the Android app, 0.00015% on the website at 390x844 |
-| 13 | **User agent:** in `chrome://inspect` / Safari Web Inspector a tile request's User-Agent ends with `CrossTheFog/0.1.0 (+https://madera.codes)` | ✓ |
-| 14 | **Process death (Android emulator only):** `adb root` + `kill -9` sandboxed_process during large restore (twice); retry panel shows "Your saved fog couldn't be opened. The last attempt ran out of memory." | Inconclusive. One kill recovers silently, because the restore guard allows two attempts; the panel needs a second kill before "tiles loaded" appears. Re-run as one scripted sequence |
+| 12 | **Real backup:** owner's own multi-MB backup loads; a relaunch restores it | ✓ (Android: Sync.zip, 246 tiles; a relaunch restores it without picking). The percentage is for the visible map area, so it depends on the viewport: 0.00014% in the Android app (1080x2400), 0.00015% on the website at 390x844, 0.000067% at 1280x800 and 0.000029% at 1920x1080 |
+| 13 | **User agent:** in `chrome://inspect` / Safari Web Inspector a tile request's User-Agent ends with `CrossTheFog/0.1.0 (+https://madera.codes)` | ✓ (Android: the page's `navigator.userAgent`, read over devtools, ends with it; a tile request's header was not inspected, and iOS was not run. No automated test asserts it) |
+| 14 | **Process death (Android emulator only):** `adb root` + `kill -9` sandboxed_process during large restore (twice); retry panel shows "Your saved fog couldn't be opened. The last attempt ran out of memory." | ✓ (Android, rooted emulator). `scripts/process-death-android.sh <serial>` kills the renderer twice during the restore and the panel shows exactly that text; Retry restores the fog. A kill while idle and one right after "tiles loaded" recover silently with no panel. One kill alone recovers silently too, because the restore guard allows two attempts |
 
 ## Share-to-app
 
@@ -44,7 +46,9 @@ _Tested on: Android emulator (API 36): all rows except S2 and S5. iOS simulator 
 | A2 | **defog credit:** szalapak credit and MIT licence text visible | ✓ |
 | A3 | **Map tiles:** OpenStreetMap attribution and ODbL reference visible | ✓ |
 | A4 | **Leaflet / pako:** BSD-2 and MIT licence blocks visible | ✓ |
-| A5 | **Dep list:** scrollable table shows ≥ 500 rows; name, version and SPDX identifier columns | ✓ (560 rows) |
+| A5 | **Dep list:** scrollable list shows ≥ 500 rows; each row has name, version and SPDX identifier | ✓ (Android: the page says 561 packages, and the list scrolls alphabetically from @babel to zod; about 80 rows were read, the rest were not counted. `generated/licenses.json` has 561) |
+
+_A2–A5 were checked on Android. Known issue: Android hardware back does not close About, because the web view's back handler in `WebShell.tsx` always consumes it while the screen stays mounted under the modal; the "Navigate up" button works._
 
 ## Store baseline
 
@@ -53,9 +57,9 @@ _Tested on: Android emulator (API 36): all rows except S2 and S5. iOS simulator 
 | B1 | **Permissions:** `check-apk.sh` prints `OK permissions` (only `INTERNET`) | ✓ |
 | B2 | **Target SDK:** `check-apk.sh` prints `OK targetSdk` (36) | ✓ |
 | B3 | **Zip alignment:** `check-apk.sh` prints `OK zipalign` | ✓ |
-| B4 | **16 KB ELF pages:** `check-apk.sh` prints `OK 16k-elf` on API 35+ device or AVD | ✓ |
-| B5 | **iOS privacy manifest:** `privacy-union.ts` output pasted into `app.config.ts`; generated `PrivacyInfo.xcprivacy` lists all categories | ✓ |
-| B6 | **EAS preview APK:** `eas build -p android --profile preview` produces a download link; `check-apk.sh` passes on that APK | ✓ |
+| B4 | **16 KB ELF pages:** `check-apk.sh` prints `OK 16k-elf` (a static check of the APK, so it needs no device) | ✓ |
+| B5 | **iOS privacy manifest:** `privacy-union.ts` output pasted into `app.config.ts`; generated `PrivacyInfo.xcprivacy` lists all categories | ✓ (the Pods union matches `app.config.ts`; the generated manifest also lists UserDefaults `CA92.1` from the Expo template) |
+| B6 | **EAS preview APK:** `eas build -p android --profile preview` produces a download link; `check-apk.sh` passes on that APK | ✓ (B1–B4 also pass on a local release APK and on the existing preview build, which is from an older commit; no new cloud build was started) |
 
 ## Maestro e2e flows
 
@@ -64,6 +68,8 @@ Run with `CROSSFOG_E2E=1 pnpm android` (or `ios`) to build, then `pnpm e2e`. Use
 _Tested on: Android emulator API 36 (AVD `chase-cashew-test`): 6/6 passed in 2m 42s and 3m 6s. iOS simulator (iPhone 17, iOS 27.0): 6/6 passed in 1m 38s and 1m 52s._
 
 _On iOS the share sheet hides the `.gpx` extension and has no Back key, so `export` accepts either filename and dismisses the sheet by tapping outside it. `not-a-backup` retries opening the panel because a tap during the second remount can be lost._
+
+_A flow for the Drive and OneDrive help links was tried on iOS and is not included. A text tap on the "Where's my Sync folder?" summary does not land, a point tap does, and `scrollUntilVisible` leaves the links under the tab bar, so the flow still failed at the step that checks the app was left. Control the scroll with a fixed swipe instead._
 
 | Flow | Expected | Result |
 |------|----------|--------|
