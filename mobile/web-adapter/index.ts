@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { installAttributionLift } from "./attribution.js";
 import { createSend, onNativeMessage } from "./bridge.js";
 import { installDevTools } from "./devTools.js";
 import { installDownloads } from "./downloads.js";
@@ -13,6 +14,7 @@ z.config({ jitless: true });
 
 const send = createSend(window);
 
+installAttributionLift(document);
 installLinks(window, document, send);
 installDownloads(window, document, send);
 
