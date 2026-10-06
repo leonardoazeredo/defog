@@ -1324,6 +1324,11 @@
       "license": "MIT"
     },
     {
+      "name": "expo-crypto",
+      "version": "57.0.3",
+      "license": "MIT"
+    },
+    {
       "name": "expo-document-picker",
       "version": "57.0.3",
       "license": "MIT"
