@@ -18,6 +18,10 @@ function findAppIndex(): string {
 
 const INDEX_HTML = findAppIndex();
 
+export function readUpstreamIndex(): string {
+  return readFileSync(INDEX_HTML, "utf-8");
+}
+
 export function loadUpstreamDom(doc: Document): void {
   const html = readFileSync(INDEX_HTML, "utf-8");
   const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
