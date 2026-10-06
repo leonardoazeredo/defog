@@ -1,0 +1,34 @@
+diff --git a/android/src/main/java/expo/modules/shareintent/ExpoShareIntentModule.kt b/android/src/main/java/expo/modules/shareintent/ExpoShareIntentModule.kt
+index ff5b1001e7bb3443482727cec48c22579465c73b..524bfab0109cd74586004ed05e3fccfdeb2077c5 100644
+--- a/android/src/main/java/expo/modules/shareintent/ExpoShareIntentModule.kt
++++ b/android/src/main/java/expo/modules/shareintent/ExpoShareIntentModule.kt
+@@ -66,13 +66,23 @@ class ExpoShareIntentModule : Module() {
+                     "filePath" to instance?.getAbsolutePath(uri),
+                 )
+             }
+-            val queryResult: Cursor = resolver.query(uri, null, null, null, null)!!
+-            queryResult.moveToFirst()
+-            val fileName = queryResult.getString(queryResult.getColumnIndex(OpenableColumns.DISPLAY_NAME))
+-            val fileSize = queryResult.getString(queryResult.getColumnIndex(OpenableColumns.SIZE))
+-            queryResult.close()
++            // The provider can return no cursor or an empty one for a stale or unreadable URI.
++            var fileName: String? = null
++            var fileSize: String? = null
++            try {
++                resolver.query(uri, null, null, null, null)?.use { cursor ->
++                    if (cursor.moveToFirst()) {
++                        val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
++                        if (nameIndex >= 0) fileName = cursor.getString(nameIndex)
++                        val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
++                        if (sizeIndex >= 0) fileSize = cursor.getString(sizeIndex)
++                    }
++                }
++            } catch (e: Exception) {
++                notifyError("cannot read file info for $uri: ${e.message}")
++            }
+ 
+-            val mimeType = resolver.getType(uri)!!
++            val mimeType = resolver.getType(uri) ?: ""
+ 
+             var mediaWidth: String? = null;
+             var mediaHeight: String? = null;
