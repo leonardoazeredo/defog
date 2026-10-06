@@ -12,12 +12,12 @@ _Latest re-run: Android emulator (API 36, userdebug image) and iOS simulator (iP
 | 4 | **Restart:** force-quit and relaunch; the same fog and line show without picking anything | ✓ |
 | 5 | **Bad import:** Update → `not-a-backup.zip` shows "That file isn't a Fog of World backup. Your saved fog is unchanged." and "2 tiles loaded ✓" comes back | ✓ |
 | 6 | **Non-zip pick:** picking a photo shows "Cross the Fog can only import .zip backups." | ✓ (iOS). Android: not doable as written, because the picker greys out non-zips; the message is reached through a share instead (S4) |
-| 7a | **Large backup:** picking `large-50mb.zip` shows "Loading your fog… ‹n› / 50 MB", then loads | ✓ (Android). iOS: loads (about 30 s from the share), but the loading text was not captured. The web view remounts and the panel collapses, and the line sits in the panel body, so it is off-screen for the load; recordings showed only the finished state. The text is asserted only in `test/adapter/status.test.ts` |
+| 7a | **Large backup:** picking `large-50mb.zip` shows "Loading your fog… ‹n› / 50 MB", then loads | ✓ (Android). iOS: loads, but the loading text was not captured. The web view remounts and the panel collapses, and the line sits in the panel body, so it is off-screen while it shows; recordings showed only the finished state. The text is asserted only in `test/adapter/status.test.ts`. Measured on the simulator (two runs, Release build): a 50 MB share takes about 25 s to the last chunk, of which the JavaScript SHA-256 in `beginImport` is about 18 s (72-73%) with the web view frozen on the old page, the remount about 1 s, and base64 plus streaming about 6 s; the native copy and the file read are under 30 ms. The page then parses the zip, so the whole import is about 30-35 s |
 | 7b | **Large backup restart:** a relaunch loads it again from the cache | ✓ |
 | 8 | **Export:** draw a route; GPX and KML open the share sheet with `fogtomaps-route.gpx` / `.kml`; cancelling the sheet shows nothing | ✓ |
-| 9 | **External links:** "Maps ↗" and the Drive and OneDrive help links open outside the app | ✓ (Android): onedrive.live.com hands off to Chrome; drive.google.com is claimed by the Drive app, which exits at once on an emulator with no Google account, so no browser opens for it. Scroll the panel first: the OneDrive link starts under the map attribution strip. iOS: "Maps ↗" opens Safari; onedrive.live.com opened Safari on a manual Maestro tap; the Drive link and a full Maestro flow are unconfirmed |
-| 10a | **Android back (sheet open):** back closes the sheet | ✓ |
-| 10b | **Android back (sheet closed):** back shows "Press back again to exit"; two presses within 2 s exit | ✓ |
+| 9 | **External links:** "Maps ↗" and the Drive and OneDrive help links open outside the app | ✓ (Android): onedrive.live.com hands off to Chrome, also on the first tap with the panel unscrolled now that the map attribution sits above the sheet; drive.google.com is claimed by the Drive app, which exits at once on an emulator with no Google account, so no browser opens for it. iOS: "Maps ↗" opens Safari, and the `help-links` Maestro flow leaves the app and returns for both Drive and OneDrive. The flow proves the app was left, not which page opened (onedrive.live.com redirects) |
+| 10a | **Android back (sheet open):** back closes the sheet | ✓ (re-checked after the About fix) |
+| 10b | **Android back (sheet closed):** back shows "Press back again to exit"; two presses within 2 s exit | ✓ (re-checked after the About fix, including after visiting About) |
 | 11a | **Clear:** "Clear saved fog" asks "Clear saved fog?"; choosing Clear brings back defog's first-run text | ✓ |
 | 11b | **Clear restart:** a relaunch restores nothing | ✓ |
 | 12 | **Real backup:** owner's own multi-MB backup loads; a relaunch restores it | ✓ (Android: Sync.zip, 246 tiles; a relaunch restores it without picking). The percentage is for the visible map area, so it depends on the viewport: 0.00014% in the Android app (1080x2400), 0.00015% on the website at 390x844, 0.000067% at 1280x800 and 0.000029% at 1920x1080 |
@@ -48,7 +48,9 @@ _Tested on: Android emulator (API 36): all rows except S2 and S5. iOS simulator 
 | A4 | **Leaflet / pako:** BSD-2 and MIT licence blocks visible | ✓ |
 | A5 | **Dep list:** scrollable list shows ≥ 500 rows; each row has name, version and SPDX identifier | ✓ (Android: the page says 561 packages, and the list scrolls alphabetically from @babel to zod; about 80 rows were read, the rest were not counted. `generated/licenses.json` has 561) |
 
-_A2–A5 were checked on Android. Known issue: Android hardware back does not close About, because the web view's back handler in `WebShell.tsx` always consumes it while the screen stays mounted under the modal; the "Navigate up" button works._
+| A6 | **Android back from About:** hardware back closes About and returns to the map; back on the main screen still closes the sheet and then asks to press again | ✓ (Android; the `about` Maestro flow presses Back) |
+
+_A2–A6 were checked on Android._
 
 ## Store baseline
 
@@ -65,11 +67,11 @@ _A2–A5 were checked on Android. Known issue: Android hardware back does not cl
 
 Run with `CROSSFOG_E2E=1 pnpm android` (or `ios`) to build, then `pnpm e2e`. Use a Release build (embedded JS bundle, no Metro): on Android `CROSSFOG_E2E=1 npx expo run:android --variant release --device <avd>`; on iOS prebuild with `CROSSFOG_E2E=1` and build the Release configuration for a simulator. The flows share app state, so `.maestro/config.yaml` pins their order.
 
-_Tested on: Android emulator API 36 (AVD `chase-cashew-test`): 6/6 passed in 2m 42s and 3m 6s. iOS simulator (iPhone 17, iOS 27.0): 6/6 passed in 1m 38s and 1m 52s._
+_Tested on: Android emulator API 36 (AVD `chase-cashew-test`): 7/7 passed in 1m 59s. iOS simulator (iPhone 17, iOS 27.0): 7/7 passed in 2m 35s; an earlier iOS run failed once in `export`, which passed on the next run._
 
 _On iOS the share sheet hides the `.gpx` extension and has no Back key, so `export` accepts either filename and dismisses the sheet by tapping outside it. `not-a-backup` retries opening the panel because a tap during the second remount can be lost._
 
-_A flow for the Drive and OneDrive help links was tried on iOS and is not included. A text tap on the "Where's my Sync folder?" summary does not land, a point tap does, and `scrollUntilVisible` leaves the links under the tab bar, so the flow still failed at the step that checks the app was left. Control the scroll with a fixed swipe instead._
+_`help-links` expands the "Where's my Sync folder?" disclosure, swipes a fixed distance so the link is on screen (Maestro reports off-screen web view text as visible, so a "swipe only if not visible" guard is skipped), taps the link and asserts that "Expand or collapse panel" is gone, which is the only proof the app was left because the link text is also visible inside the app. iOS runs Drive then OneDrive; Android runs OneDrive only, because without a Google account the Drive app swallows the link and leaves the app in front._
 
 | Flow | Expected | Result |
 |------|----------|--------|
@@ -78,4 +80,5 @@ _A flow for the Drive and OneDrive help links was tried on iOS and is not includ
 | eviction | "2 tiles loaded ✓" after dropping the cache and restarting | ✓ |
 | not-a-backup | "That file isn't a Fog of World backup. Your saved fog is unchanged." stays visible | ✓ |
 | export | "fogtomaps-route.gpx" visible in the share sheet | ✓ |
-| about | "Version 0.1.0" visible on the About screen | ✓ |
+| about | "Version 0.1.0" visible on the About screen; on Android, Back closes it | ✓ |
+| help-links | Tapping each help link leaves the app, and the app is back afterwards | ✓ |

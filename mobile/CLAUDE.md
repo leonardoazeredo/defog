@@ -16,6 +16,13 @@ Read `AGENTS.md` first: Expo APIs change every SDK, so fetch the versioned docs 
 
 `generated/web.ts` is tracked. A `CROSSFOG_E2E=1` build or `pnpm generate` regenerates it, and the e2e flavour contains the developer-only "Dev: drop fog cache" button. After any e2e build run `git status --short` and restore it with `git checkout -- generated/web.ts`. Stage files by name, never with `git add -A`.
 
+## Build and Maestro gotchas
+
+- Gradle does not track `generated/web.ts` (it sits outside `mobile/`), so `createBundleReleaseJsAndAssets` can report `UP-TO-DATE` and ship the previous bundle. Before an Android build that changes the bundle (normal and e2e, either way, or an adapter change) run `rm -rf mobile/android/app/build/generated/{assets,res,sourcemaps}/react/release`, and check the build log shows the task ran. Hermes keeps some strings as UTF-16, so grep an APK bundle with `grep -a -c -P` on the spaced form.
+- iOS keeps the e2e flag in the generated `ios/` project: switching between normal and e2e needs `npx expo prebuild --platform ios` with or without `CROSSFOG_E2E=1`, then a Release build. A Debug build needs Metro and shows "No script URL provided" without it.
+- `android-mcp`'s device-side helper holds the UiAutomation connection, so Maestro fails with "Android driver did not start up in time". Kill the `com.wetest.uia2.Main` process on the device before a Maestro run; the next `Snapshot` restarts it.
+- Maestro reports off-screen web view text as visible, so do not guard a swipe with `notVisible`. Use a fixed swipe, and assert that the app was left with `notVisible: "Expand or collapse panel"`.
+
 ## Tools
 
 - Expo docs, EAS build status: the Expo MCP (`read_documentation`, `search_documentation`, `build_list`). Its builds run in the cloud and do not drive a local simulator.
@@ -25,7 +32,7 @@ Read `AGENTS.md` first: Expo APIs change every SDK, so fetch the versioned docs 
 
 ## Commit hook
 
-A hook blocks `git commit` while comment-like lines are unreviewed (markdown, text and lockfiles are exempt). Finish the edits, run the `pr-review-toolkit:comment-analyzer` agent alone with the first prompt line exactly `Repository: /Users/leo/Lab/defog`, wait for its report, re-run it if you changed a comment, then commit in a following turn. Do not bypass the hook.
+A hook blocks `git commit` while comment-like lines are unreviewed (markdown, text and lockfiles are exempt). A new Maestro flow with no `#` lines still needed a review (probably because of the YAML `---` separator, which starts with `--`). Finish the edits, run the `pr-review-toolkit:comment-analyzer` agent alone with the first prompt line exactly `Repository: /Users/leo/Lab/defog`, wait for its report, re-run it if you changed a comment, then commit in a following turn. Do not bypass the hook.
 
 ## Private data
 
