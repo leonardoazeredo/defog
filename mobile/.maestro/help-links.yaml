@@ -1,0 +1,21 @@
+appId: codes.madera.crossfog
+---
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible: "Expand or collapse panel"
+    timeout: 60000
+- tapOn: "Expand or collapse panel"
+- waitForAnimationToEnd
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - runFlow:
+          file: subflows/open-link.yaml
+          env:
+            LINK: "drive.google.com"
+- runFlow:
+    file: subflows/open-link.yaml
+    env:
+      LINK: "onedrive.live.com"
