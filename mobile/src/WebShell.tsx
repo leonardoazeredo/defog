@@ -7,7 +7,7 @@ import { Alert, BackHandler, Platform, ToastAndroid } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import WebView from "react-native-webview";
 import { WEB_HTML } from "../../generated/web.js";
-import { decideNavigation } from "./bridge/navigationPolicy.js";
+import { decideNavigation, shouldOpenWindowExternally } from "./bridge/navigationPolicy.js";
 import { encode, isTrustedSource, ORIGIN, parseWebToNative } from "./bridge/protocol.js";
 import { type Controller, createController } from "./controller.js";
 import { COPY } from "./copy.js";
@@ -142,7 +142,7 @@ export function WebShell(): React.JSX.Element {
         }}
         onOpenWindow={(event) => {
           const url = event.nativeEvent.targetUrl;
-          if (url.startsWith("https://") || url.startsWith("http://")) {
+          if (shouldOpenWindowExternally(url)) {
             void Linking.openURL(url);
           }
         }}

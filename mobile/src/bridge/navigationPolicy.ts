@@ -15,3 +15,7 @@ export function decideNavigation(url: string, initialLoadDone: boolean): Navigat
   }
   return "block";
 }
+
+export function shouldOpenWindowExternally(targetUrl: string): boolean {
+  return decideNavigation(targetUrl, true) === "external";
+}
