@@ -11,9 +11,13 @@ export function acceptIncoming(name: string): boolean {
 }
 
 export function nameFromFileUrl(url: string): string {
-  const path = new URL(url).pathname;
+  const path = URL.canParse(url) ? new URL(url).pathname : url;
   const last = path.split("/").at(-1) ?? "";
-  return decodeURIComponent(last);
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
+  }
 }
 
 export function fileFromSystemPath(path: string): SourceFile | null {
@@ -23,7 +27,8 @@ export function fileFromSystemPath(path: string): SourceFile | null {
 
 export function filesFromShareIntent(files: ShareFileLike[]): SourceFile[] {
   return files.map((f) => {
-    const uri = f.path.startsWith("file://") ? f.path : `file://${f.path}`;
+    // Keep URIs that already have a scheme (e.g. Android content://); prefixing file:// would corrupt them.
+    const uri = /^[a-z][a-z0-9+.-]*:\/\//i.test(f.path) ? f.path : `file://${f.path}`;
     const name = f.fileName ?? nameFromFileUrl(uri);
     return { uri, name };
   });

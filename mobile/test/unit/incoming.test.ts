@@ -70,3 +70,18 @@ it("replays files queued before the shell subscribed", () => {
   expect(received).toEqual([file]);
   unsub();
 });
+
+it("keeps a content:// share as is instead of turning it into an invalid file URL", () => {
+  expect(filesFromShareIntent([{ path: "content://media/external/downloads/96" }])).toEqual([
+    { uri: "content://media/external/downloads/96", name: "96" },
+  ]);
+  expect(
+    filesFromShareIntent([
+      { path: "content://x/y", fileName: "Backup.zip", mimeType: "application/zip" },
+    ]),
+  ).toEqual([{ uri: "content://x/y", name: "Backup.zip" }]);
+});
+
+it("does not throw on a share path it cannot parse as a URL", () => {
+  expect(() => filesFromShareIntent([{ path: "weird path with spaces" }])).not.toThrow();
+});
