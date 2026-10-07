@@ -22,6 +22,7 @@ export interface ControllerDeps {
   openAbout(): void;
   exitApp(): void;
   releaseSource(uri: string): Promise<void>;
+  setBusy(on: boolean): void;
   now(): number;
   chunkBytes: number;
 }
@@ -48,6 +49,11 @@ export function createController(deps: ControllerDeps): Controller {
   let activeAbort: AbortController | null = null;
 
   let lastBackAt: number | null = null;
+
+  function clearImportActive(): void {
+    importActive = false;
+    deps.setBusy(false);
+  }
 
   function sendMsg(msg: NativeToWeb): void {
     if (pageReady) deps.send(msg);
@@ -132,7 +138,7 @@ export function createController(deps: ControllerDeps): Controller {
   }
 
   async function endImport(): Promise<void> {
-    importActive = false;
+    clearImportActive();
     const queued = pendingShare;
     pendingShare = null;
     if (queued) {
@@ -154,7 +160,7 @@ export function createController(deps: ControllerDeps): Controller {
 
     if (msg.ok) {
       await store.promotePending();
-      importActive = false;
+      clearImportActive();
       const queued = pendingShare;
       pendingShare = null;
       if (queued) await handleIncoming(queued);
@@ -167,6 +173,7 @@ export function createController(deps: ControllerDeps): Controller {
   }
 
   async function doImport(file: SourceFile, source: "picker" | "share"): Promise<boolean> {
+    deps.setBusy(true);
     try {
       await store.beginImport(file, source);
       await deps.releaseSource(file.uri);
@@ -184,19 +191,19 @@ export function createController(deps: ControllerDeps): Controller {
     try {
       const file = await deps.pickFile();
       if (!file) {
-        importActive = false;
+        clearImportActive();
         return;
       }
       if (!acceptIncoming(file.name)) {
         deps.notify(COPY.zipOnly);
-        importActive = false;
+        clearImportActive();
         return;
       }
       const ok = await doImport(file, "picker");
-      if (!ok) importActive = false;
+      if (!ok) clearImportActive();
     } catch {
       queueNotice(COPY.importFailed);
-      importActive = false;
+      clearImportActive();
     }
   }
 
@@ -220,7 +227,7 @@ export function createController(deps: ControllerDeps): Controller {
     }
     importActive = true;
     const ok = await doImport(file, "share");
-    if (!ok) importActive = false;
+    if (!ok) clearImportActive();
   }
 
   return {
@@ -305,7 +312,7 @@ export function createController(deps: ControllerDeps): Controller {
           await store.discardPending();
           queueNotice(COPY.importFailed);
         }
-        importActive = false;
+        clearImportActive();
         pendingShare = null;
       }
       await doRemount();

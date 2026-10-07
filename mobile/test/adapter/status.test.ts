@@ -7,6 +7,7 @@ import { loadUpstreamDom } from "./support/upstreamDom.js";
 
 const now = () => Date.parse("2026-10-01T12:00:00.000Z");
 const line = () => document.getElementById("crossfogLine")!;
+const hint = () => document.getElementById("hint")!;
 
 let actions: StatusActions;
 let status: ReturnType<typeof createStatus>;
@@ -97,6 +98,28 @@ it("wires every button to its action", () => {
 it("shows progress", () => {
   status.showProgress(12_400_000, 50_000_000);
   expect(line().textContent).toBe("Loading your fog… 12 / 50 MB");
+});
+
+it("shows progress in the header hint too, which stays visible when the panel is collapsed", () => {
+  status.showProgress(12_400_000, 50_000_000);
+  expect(hint().textContent).toBe("Loading… 12 / 50 MB");
+});
+
+it.each([
+  ["saved", () => status.showSaved({ name: "a.zip", savedAt: "2026-10-01T09:00:00.000Z" })],
+  ["retry", () => status.showRetry("failed")],
+  ["hide", () => status.hide()],
+] as const)("puts the header hint's own text back on %s", (_name, end) => {
+  const original = hint().textContent;
+  status.showProgress(3_000_000, 50_000_000);
+  end();
+  expect(hint().textContent).toBe(original);
+});
+
+it("does not mind a page without the header hint", () => {
+  hint().remove();
+  expect(() => status.showProgress(1, 2)).not.toThrow();
+  expect(() => status.hide()).not.toThrow();
 });
 
 it.each([
