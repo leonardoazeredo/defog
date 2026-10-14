@@ -47,5 +47,23 @@ Observed on a real fog, ~4 km pins, 15% buffer unless noted:
     19918 -> 22117 (max retrace 11% -> 23%, a better card, not a worse route).
   - fetches per run: +0 to +2 (the re-route cap is 2).
   A card that retraces on purpose (a real dead end) is only discounted, never dropped.
+  - "Use" hand-off in the browser (trekking, pins as above, 1.5x = 5.1 km, 15%; editor
+    length and retrace read from the route editor's polyline). Cards are not deterministic
+    between reruns, so each row is from the set live when Use was pressed:
+
+    | run   | card | card km | card retrace | editor km | editor retrace | re-routed | verdict |
+    |-------|------|---------|--------------|-----------|----------------|-----------|---------|
+    | blank | 0    | 3.9     | 0 (4% real)  | 3.93      | 4.0%           | n         | pass    |
+    | 5.1   | 0    | 5.1     | 0            | 5.07      | 0%             | n         | pass    |
+    | 5.1   | 1    | 5.1     | 0            | 4.99      | 1.8%           | y, 80 m   | pass*   |
+    | 5.1   | 2    | 4.6     | 0 (7.1% real)| 4.55      | 7.1%           | n         | pass    |
+    | ~14   | 0    | 16.3    | 0            | 16.26     | 0%             | n         | pass    |
+    | ~14   | 1    | 13.8    | 0            | 13.74     | 0%             | n         | pass    |
+    | ~14   | 2    | 14.7    | 10%          | 14.72     | 10.2%          | n         | pass    |
+
+    *km -2.2% and retrace +1.8 points, inside the 3% / +5 point criteria, but BRouter
+    chose another street for part of the path (editor up to 80 m off the preview).
+    Card retrace labels matched the editor's. No >=50% or bridge-only card appeared.
+  - `overlapFrac(coords, false)` on a 16.3 km card (729 points): 0.7-0.9 ms per call.
 - car-fast and rail search the "bike" street set (`streetKind`), so their candidates
   are not guided by car or rail networks.
