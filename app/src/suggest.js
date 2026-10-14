@@ -458,6 +458,30 @@
     return picked.slice(0, MAX_VIAS);
   };
 
+  // The length window of an A to B run. With a wanted distance it is want ± buffer, never
+  // below the fastest route; one shorter than that is clamped up to it and reported as such.
+  function p2pWindow(baseM, targetM, buffer) {
+    const want = targetM > 0 ? Math.max(targetM, baseM) : null;
+    const clamped = want != null && targetM < baseM;
+    const budget = (want || baseM) * (1 + buffer);
+    const floor = want ? Math.max(baseM, want * (1 - buffer)) : 0;
+    // where re-aimed vias should land: the wanted length, but no closer than halfway into
+    // the buffer above the fastest route, so a clamped request doesn't aim at the fastest
+    // route itself. With no wanted distance, just inside the budget: the best detours live
+    // right at the edge.
+    const aim = want ? Math.max(want, baseM * (1 + buffer / 2)) : baseM + 0.95 * (budget - baseM);
+    return { want, clamped, budget, floor, aim };
+  }
+
+  // Candidates worth ranking. The fastest route is a normal candidate unless a wanted
+  // distance puts it under the floor; then it only shows (fallback) when nothing else fits.
+  function p2pCandidates(found, base, win) {
+    const list = found.filter((c) => c.r.lenM >= win.floor);
+    const baseFits = base.r.lenM >= win.floor;
+    if (!win.want || baseFits || !list.length) list.unshift(base);
+    return { list, fallback: win.want != null && !baseFits && list.length === 1 && list[0] === base };
+  }
+
   SuggestTool.prototype._suggestP2P = async function (profile, buffer, targetM) {
     if (!this.a || !this.b) return;
     this.clearResults();
@@ -471,17 +495,8 @@
     const base = await this._route([A, B], profile, 0);
     if (stale()) return;
     if (!base) { emit({ error: true }); return; }
-    // With a wanted distance the window is want ± buffer, never below the fastest
-    // route; one shorter than that is clamped up to it and reported as such.
-    const want = targetM > 0 ? Math.max(targetM, base.lenM) : null;
-    const clamped = want != null && targetM < base.lenM;
-    const budget = (want || base.lenM) * (1 + buffer);
-    const floor = want ? Math.max(base.lenM, want * (1 - buffer)) : 0;
-    // where re-aimed vias should land: the wanted length, but no closer than halfway into
-    // the buffer above the fastest route, so a clamped request doesn't aim at the fastest
-    // route itself. With no wanted distance, just inside the budget: the best detours live
-    // right at the edge.
-    const aim = want ? Math.max(want, base.lenM * (1 + buffer / 2)) : 0.95 * budget;
+    const win = p2pWindow(base.lenM, targetM, buffer);
+    const { want, clamped, budget, floor, aim } = win;
 
     // Fetch street data so candidates can chase undefogged streets. Short
     // trips get one rect covering everywhere the budget could reach, which
@@ -587,13 +602,10 @@
     emit({ loading: true, phase: "detours", done: 0, total });
     const found = await this._pool(jobs, stale, (done) => emit({ loading: true, phase: "detours", done, total }));
     if (stale()) return;
-    // Routes under the floor are dropped. The fastest route is a normal candidate unless a
-    // wanted distance puts it under the floor; then it only shows when nothing else fits.
-    const inWindow = found.filter((c) => c.r.lenM >= floor);
-    if (!want || base.lenM >= floor || !inWindow.length) inWindow.unshift({ r: base, adoptWps: [A, B], isBase: true });
-    this._finish(runId, inWindow, {
+    const { list, fallback } = p2pCandidates(found, { r: base, adoptWps: [A, B], isBase: true }, win);
+    this._finish(runId, list, {
       baseKm: base.lenM / 1000, bufferPct,
-      wantKm: want ? want / 1000 : null, clamped
+      wantKm: want ? want / 1000 : null, clamped, fallback
     });
   };
 
@@ -905,6 +917,6 @@
     this._finish(runId, clean.length ? clean : found, { targetKm: distM / 1000, bufferPct });
   };
 
-  SuggestTool._internals = { snipOldSpurs, overlapFrac, statsFromCoords }; // for tests
+  SuggestTool._internals = { snipOldSpurs, overlapFrac, statsFromCoords, p2pWindow, p2pCandidates }; // for tests
   global.SuggestTool = SuggestTool;
 })(window);

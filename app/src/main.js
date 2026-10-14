@@ -478,7 +478,7 @@
 
   function renderSug() {
     const s = lastSug;
-    if (!s) { sugResults.innerHTML = ""; return; }
+    if (!s) { sugResults.innerHTML = ""; sugTarget.placeholder = "optional"; return; }
     if (s.loading) {
       sugResults.innerHTML = `<div class="muted" style="margin-top:10px">${
         s.phase === "baseline" ? "Finding the fastest route…" :
@@ -501,8 +501,10 @@
       return;
     }
     const isLoop = s.targetKm != null;
-    if (s.baseKm != null) sugTarget.placeholder = fmtDist(s.baseKm) + " fastest";
-    const header = s.wantKm != null
+    if (s.baseKm != null) sugTarget.placeholder = "≥ " + fmtDist(s.baseKm);
+    const header = s.fallback
+      ? `Nothing fits near ${fmtDist(s.wantKm)} (±${s.bufferPct}%). This is the fastest route, ${fmtDist(s.baseKm)}. Tap it to preview:`
+      : s.wantKm != null
       ? (s.clamped ? `The fastest route is ${fmtDist(s.baseKm)}, longer than the distance you asked for. ` : "") +
         `Routes near ${fmtDist(s.wantKm)} (±${s.bufferPct}%, never under the fastest route), ranked by defogging. Tap one to preview:`
       : isLoop

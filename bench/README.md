@@ -20,3 +20,22 @@ node bench/overpass.js [filter]     # street-network context (total vs undefogge
 - Results land in `bench/out/<name>.json` (gitignored) with per-card metrics:
   defogged area, m² per metre, % new ground, overlap %, elongation
   (1 = round blob, 3+ = a proper thin "line" of a loop).
+
+## A to B wanted distance
+
+`node bench/p2p-window.test.js` checks the window maths with no network or fog.
+`node bench/p2p-target.js [profile]` runs the six routing profiles through the real
+`SuggestTool` against your fog (`P2P_PINS="lat,lng;lat,lng"` picks the pins, default
+is the Dresden `neustadt-p2p` pair). One live run per profile is enough: responses are
+cached. brouter.de answers 403 "Please, retry later" when throttled; a rerun after a
+few minutes refetches only what failed.
+
+Observed on a real fog, ~4 km pins, 15% buffer unless noted:
+- trekking, fastbike, hiking-mountain, car-fast, rail, shortest: all cases stay inside
+  the promised window.
+- A 5% window at 1.5x the fastest route often finds nothing (trekking, car-fast, rail,
+  shortest) and shows the fastest route as a flagged fallback.
+- 10x the fastest route is reachable on trekking and fastbike, but falls back on
+  hiking-mountain, car-fast, rail and shortest.
+- car-fast and rail search the "bike" street set (`streetKind`), so their candidates
+  are not guided by car or rail networks.
