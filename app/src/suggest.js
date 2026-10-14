@@ -10,6 +10,11 @@
   const MAX_VIAS = 6;           // fog-seeking detour candidates per p2p run
   const VIA_RETRIES = 2;        // times a via is pulled back in when its route overshoots
   const RETRACE_WEIGHT = 0.5;   // p2p: share of a route's score lost if all of it retraces itself
+  const RETRACE_REROUTE_MIN = 0.12; // p2p: retraced share above which a via route's return leg is re-asked
+  const MAX_RETRACE_REROUTES = 2;   // extra BRouter requests per run for that
+  const NOGO_RADIUS_M = 30;
+  const NOGO_KEEP_CLEAR_M = 80;     // discs stay this far from A, B, the via and the ends of a retraced run, or BRouter can't leave them
+  const MAX_NOGOS = 8;
   const MAX_LOOPS = 6;          // loop bearings tried per run
   const CONCURRENCY = 3;        // parallel BRouter requests (be kind to the public server)
   // Same neon family as the drawn route (#ff2d55): red · pink · orange, which pops against
@@ -151,6 +156,25 @@
       }
       return { coords, lenM: parseInt(feat.properties["track-length"], 10) || 0, ascent: Math.round(asc), descent: Math.round(desc) };
     } catch (e) { return null; }
+  };
+
+  // Re-ask the leg after the via with the retraced stretch blocked. null means keep the
+  // original: no stretch worth blocking, or BRouter returned no way home.
+  // The caller decides whether the new way home is worth taking.
+  SuggestTool.prototype._rerouteReturn = async function (route, via, B, profile) {
+    const c = route.coords;
+    const { kx, ky } = metresPerDeg(c[0][1]);
+    let k = 0, bd = Infinity;
+    for (let i = 0; i < c.length; i++) {
+      const d = Math.hypot((c[i][0] - via.lng) * kx, (c[i][1] - via.lat) * ky);
+      if (d < bd) { bd = d; k = i; }
+    }
+    const A = { lat: c[0][1], lng: c[0][0] };
+    const nogos = retraceNogos(c.slice(0, k + 1), c.slice(k), [A, via, B]);
+    if (!nogos.length) return null;
+    const back = await this._route([{ lat: c[k][1], lng: c[k][0] }, B], profile, 0, nogos);
+    if (!back || !back.coords.length) return null;
+    return statsFromCoords(c.slice(0, k + 1).concat(back.coords.slice(1)));
   };
 
   // Share of never-visited cells within ~100 m of a point, used to steer candidates
@@ -547,6 +571,7 @@
       }
     }
 
+    let reroutes = 0;
     // candidate jobs: BRouter's alternatives + our street/fog-seeking via-points
     const jobs = [];
     for (let idx = 1; idx <= 3; idx++)
@@ -605,9 +630,23 @@
         }
         // 1.02: don't bin a paid-for route for skimming the budget by metres
         if (!r || !r.lenM || r.lenM > budget * 1.02) return null;
+        let adoptWps = [A, ll, B];
+        const gainOf = (x) => this.computeGain(x.coords) || { area: 0, newPct: 0 };
+        const retrace = overlapFrac(r.coords, false);
+        if (retrace >= RETRACE_REROUTE_MIN && reroutes < MAX_RETRACE_REROUTES) {
+          reroutes++;
+          const rr = await this._rerouteReturn(r, ll, B, profile);
+          if (stale()) return null;
+          if (rr && rr.lenM >= floor && rr.lenM <= budget * 1.02 &&
+              rankKey(gainOf(rr), overlapFrac(rr.coords, false)) > rankKey(gainOf(r), retrace)) {
+            r = rr;
+            // the editor has no nogos: pin the new way home with waypoints
+            adoptWps = [A].concat(resampleMids(r.coords, Math.max(4, Math.min(8, Math.round(r.lenM / 500)))), [B]);
+          }
+        }
         const snip = snipOldSpurs(r.coords, this.computeGain, floor);
         if (snip.coords) return { r: statsFromCoords(snip.coords), adoptWps: [A].concat(resampleMids(snip.coords, 3), [B]) };
-        return { r, adoptWps: [A, ll, B] };
+        return { r, adoptWps };
       });
 
     const total = jobs.length;
@@ -707,6 +746,34 @@
       }
     }
     return total ? overlap / total : 0;
+  }
+
+  // Discs on the outbound street where the way back retraces it, so BRouter has to
+  // find another street home. Spaced out and capped to keep the URL short.
+  function retraceNogos(outbound, back, keepClear) {
+    if (!outbound.length || !back.length) return [];
+    const { kx, ky } = metresPerDeg(outbound[0][1]);
+    const xy = (p) => ({ x: p[0] * kx, y: p[1] * ky });
+    const bp = back.map(xy);
+    const op = outbound.map(xy);
+    const hit = op.map((p) => bp.some((q) => Math.hypot(p.x - q.x, p.y - q.y) < 25));
+    const keep = keepClear.map((ll) => ({ x: ll.lng * kx, y: ll.lat * ky }));
+    // ends of each retraced run: a disc there would seal the junction the way home must use
+    for (let i = 0; i < op.length; i++) {
+      if (!hit[i]) continue;
+      if (i > 0 && hit[i - 1] && i < op.length - 1 && hit[i + 1]) continue;
+      keep.push(op[i]);
+    }
+    const out = [];
+    let lastAt = -Infinity, at = 0;
+    for (let i = 0; i < op.length && out.length < MAX_NOGOS; i++) {
+      if (i) at += Math.hypot(op[i].x - op[i - 1].x, op[i].y - op[i - 1].y);
+      if (!hit[i] || at - lastAt < 120) continue;
+      if (keep.some((k) => Math.hypot(op[i].x - k.x, op[i].y - k.y) < NOGO_KEEP_CLEAR_M)) continue;
+      out.push({ lat: outbound[i][1], lng: outbound[i][0], radiusM: NOGO_RADIUS_M });
+      lastAt = at;
+    }
+    return out;
   }
 
   function rankKey(gain, retrace) {
@@ -935,6 +1002,6 @@
     this._finish(runId, clean.length ? clean : found, { targetKm: distM / 1000, bufferPct });
   };
 
-  SuggestTool._internals = { snipOldSpurs, overlapFrac, rankKey, RETRACE_WEIGHT, routeUrl, statsFromCoords, p2pWindow, p2pCandidates }; // for tests
+  SuggestTool._internals = { snipOldSpurs, overlapFrac, rankKey, RETRACE_WEIGHT, routeUrl, retraceNogos, statsFromCoords, p2pWindow, p2pCandidates }; // for tests
   global.SuggestTool = SuggestTool;
 })(window);
