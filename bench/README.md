@@ -69,5 +69,30 @@ Observed on a real fog, ~4 km pins, 15% buffer unless noted:
     (with the same `overlapFrac` patch) against this branch: card count, km and defogged
     area identical in every scenario. The neustadt-p2p scenario differs as intended (third
     card 4.08 km with 9% overlap -> 3.73 km with 0%).
+  - The four profiles that were throttled earlier, before -> after (same pins, 15% buffer,
+    one profile per invocation, throttled `SKIP` rows rerun). Cards, `retr max`, best m2/km:
+
+    | profile / case          | cards          | retr max  | best m2/km      | fallback |
+    |-------------------------|----------------|-----------|-----------------|----------|
+    | hiking-mountain untarg. | 3 -> 3         | 0 -> 0%   | 22629 = 22629   | no       |
+    | hiking-mountain 1.5x    | 3 -> 3         | 0 -> 0%   | 20599 -> 21626  | no       |
+    | hiking-mountain 1.5x 5% | 1 -> 1         | 0 -> 0%   | 22177 = 22177   | yes, yes |
+    | hiking-mountain 0.5x    | 3 -> **2**     | 0 -> 0%   | 22602 -> 22194  | no       |
+    | hiking-mountain 10x     | 3 -> 3         | 56 -> 56% | 24134 = 24134   | no       |
+    | car-fast untargeted     | 3 -> 3         | 0 -> 0%   | 18323 = 18323   | no       |
+    | car-fast 1.5x           | 1 -> 3         | 0 -> 10%  | 17737 -> 19828  | no       |
+    | car-fast 1.5x 5%        | 1 -> 1         | 0 -> 8%   | 17337 -> 16516  | yes -> no|
+    | car-fast 0.5x           | 2 -> 2         | 0 -> 0%   | 17337 = 17337   | no       |
+    | car-fast 10x            | 1 -> 3         | 0 -> 30%  | 17337 -> 25569  | yes -> no|
+    | rail (all five cases)   | unchanged      | unchanged | unchanged       | as before|
+    | shortest untargeted     | 3 -> 3         | 0 -> 0%   | 25075 -> **22655** | no    |
+    | shortest 1.5x           | 3 -> 3         | 4 -> 4%   | 22226 = 22226   | no       |
+    | shortest 1.5x 5%        | 1 -> 1         | 9 -> 9%   | 21511 = 21511   | no       |
+    | shortest 0.5x           | 3 -> 3         | 0 -> 0%   | 22655 = 22655   | no       |
+    | shortest 10x            | 3 -> 3         | 45 -> 5%  | 30949 -> 30701  | no       |
+
+    Fetches per case: +0 to +10 (hiking-mountain 1.5x 5%: 11 -> 21). Flagged by the
+    rules (fewer cards, new fallback, best m2/km down > 5%): hiking-mountain 0.5x (one
+    card fewer) and shortest untargeted (-9.7%, the 3.04 km card is gone).
 - car-fast and rail search the "bike" street set (`streetKind`), so their candidates
   are not guided by car or rail networks.
