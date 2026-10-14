@@ -434,7 +434,9 @@
   const sugModeSeg = $("sugModeSeg"), sugBufSeg = $("sugBufSeg");
   wireHelp("sugBufHelp", "sugBufHelpText");
   const sugDistRow = $("sugDistRow"), sugDist = $("sugDist"), sugDistUnit = $("sugDistUnit");
+  const sugTargetRow = $("sugTargetRow"), sugTarget = $("sugTarget"), sugTargetUnit = $("sugTargetUnit");
   let lastSug = null;
+  let p2pKm = parseFloat(localStorage.getItem("f2m_p2pkm")) || null; // null = no wanted distance
   let sugBuffer = parseInt(localStorage.getItem("f2m_sugbuf") || "15", 10);
   let loopKm = parseFloat(localStorage.getItem("f2m_loopkm") || "10");
 
@@ -468,6 +470,11 @@
     sugDist.value = (units === "imperial" ? loopKm * 0.621371 : loopKm).toFixed(1).replace(/\.0$/, "");
   }
   syncDistInput();
+  function syncTargetInput() {
+    sugTargetUnit.textContent = units === "imperial" ? "mi" : "km";
+    sugTarget.value = p2pKm ? (units === "imperial" ? p2pKm * 0.621371 : p2pKm).toFixed(1).replace(/\.0$/, "") : "";
+  }
+  syncTargetInput();
 
   function renderSug() {
     const s = lastSug;
@@ -494,7 +501,11 @@
       return;
     }
     const isLoop = s.targetKm != null;
-    const header = isLoop
+    if (s.baseKm != null) sugTarget.placeholder = fmtDist(s.baseKm) + " fastest";
+    const header = s.wantKm != null
+      ? (s.clamped ? `The fastest route is ${fmtDist(s.baseKm)}, longer than the distance you asked for. ` : "") +
+        `Routes near ${fmtDist(s.wantKm)} (±${s.bufferPct}%, never under the fastest route), ranked by defogging. Tap one to preview:`
+      : isLoop
       ? `Loops near ${fmtDist(s.targetKm)} (±${s.bufferPct}%), ranked by defogging. Tap one to preview:`
       : `Your best options within ${fmtDist(s.baseKm * (1 + s.bufferPct / 100))} (the fastest route plus ${s.bufferPct}%). Tap one to preview:`;
     const deltaLabel = (c) => {
@@ -542,6 +553,7 @@
   sugModeSeg.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
     sugModeSeg.querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
     sugDistRow.style.display = b.dataset.m === "loop" ? "" : "none";
+    sugTargetRow.style.display = b.dataset.m === "loop" ? "none" : "";
     suggest.setMode(b.dataset.m); // fires onPoints -> status text + button state
   }));
 
@@ -563,9 +575,17 @@
     suggest.clearResults();
   });
 
+  sugTarget.addEventListener("change", () => {
+    const v = parseFloat(sugTarget.value);
+    p2pKm = v > 0 ? Math.min(300, units === "imperial" ? v / 0.621371 : v) : null;
+    if (p2pKm) localStorage.setItem("f2m_p2pkm", String(p2pKm)); else localStorage.removeItem("f2m_p2pkm");
+    syncTargetInput();
+    suggest.clearResults();
+  });
+
   sugGo.addEventListener("click", () => {
     route.clear(); // don't leave a hand-drawn route tangled under the previews
-    suggest.suggest(profile, { buffer: sugBuffer / 100, distM: loopKm * 1000 });
+    suggest.suggest(profile, { buffer: sugBuffer / 100, distM: loopKm * 1000, targetM: p2pKm ? p2pKm * 1000 : 0 });
   });
   sugReset.addEventListener("click", () => suggest.reset());
 
@@ -587,7 +607,7 @@
     b.addEventListener("click", () => {
       units = b.dataset.u; localStorage.setItem("f2m_units", units);
       unitSeg.querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
-      renderStats(); renderElev(); renderSug(); syncDistInput();
+      renderStats(); renderElev(); renderSug(); syncDistInput(); syncTargetInput();
     });
   });
 

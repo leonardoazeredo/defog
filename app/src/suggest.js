@@ -6,7 +6,7 @@
 // waypoint coordinates go to BRouter, same as manual drawing.
 (function (global) {
   const BROUTER = "https://brouter.de/brouter";
-  const DEFAULT_BUFFER = 0.15;  // p2p: max length over baseline; loop: tolerance around target
+  const DEFAULT_BUFFER = 0.15;  // p2p: max length over the fastest route, or ± around a wanted distance; loop: tolerance around target
   const MAX_VIAS = 6;           // fog-seeking detour candidates per p2p run
   const VIA_RETRIES = 2;        // times a via is pulled back in when its route overshoots
   const MAX_LOOPS = 6;          // loop bearings tried per run
@@ -385,7 +385,7 @@
     o = o || {};
     const buffer = o.buffer || DEFAULT_BUFFER;
     if (this.mode === "loop") return this._suggestLoop(profile, o.distM, buffer);
-    return this._suggestP2P(profile, buffer);
+    return this._suggestP2P(profile, buffer, o.targetM);
   };
 
   // ----- point-to-point ---------------------------------------------------------
@@ -458,7 +458,7 @@
     return picked.slice(0, MAX_VIAS);
   };
 
-  SuggestTool.prototype._suggestP2P = async function (profile, buffer) {
+  SuggestTool.prototype._suggestP2P = async function (profile, buffer, targetM) {
     if (!this.a || !this.b) return;
     this.clearResults();
     const runId = this._runId;
@@ -471,7 +471,17 @@
     const base = await this._route([A, B], profile, 0);
     if (stale()) return;
     if (!base) { emit({ error: true }); return; }
-    const budget = base.lenM * (1 + buffer);
+    // With a wanted distance the window is want ± buffer, never below the fastest
+    // route; one shorter than that is clamped up to it and reported as such.
+    const want = targetM > 0 ? Math.max(targetM, base.lenM) : null;
+    const clamped = want != null && targetM < base.lenM;
+    const budget = (want || base.lenM) * (1 + buffer);
+    const floor = want ? Math.max(base.lenM, want * (1 - buffer)) : 0;
+    // where re-aimed vias should land: the wanted length, but no closer than halfway into
+    // the buffer above the fastest route, so a clamped request doesn't aim at the fastest
+    // route itself. With no wanted distance, just inside the budget: the best detours live
+    // right at the edge.
+    const aim = want ? Math.max(want, base.lenM * (1 + buffer / 2)) : 0.95 * budget;
 
     // Fetch street data so candidates can chase undefogged streets. Short
     // trips get one rect covering everywhere the budget could reach, which
@@ -523,7 +533,7 @@
       jobs.push(async () => {
         const r = await this._route(pl.wps, profile, 0);
         if (!r || !r.lenM || r.lenM > budget * 1.02) return null;
-        const snip = snipOldSpurs(r.coords, this.computeGain, 0);
+        const snip = snipOldSpurs(r.coords, this.computeGain, floor);
         if (snip.coords) return { r: statsFromCoords(snip.coords), adoptWps: [A].concat(resampleMids(snip.coords, 4), [B]) };
         return { r, adoptWps: pl.wps };
       });
@@ -546,8 +556,7 @@
         for (let k = 0; k < VIA_RETRIES; k++) {
           // 3: past this the via is in the wrong place entirely, not just too far out
           if (!r || !r.lenM || r.lenM <= budget || r.lenM <= base.lenM || r.lenM > budget * 3) break;
-          // 0.95: aim just inside the budget, because the best detours live right at the edge
-          const shrink = Math.max(0.2, Math.min(0.9, 0.95 * (budget - base.lenM) / (r.lenM - base.lenM)));
+          const shrink = Math.max(0.2, Math.min(0.9, (aim - base.lenM) / (r.lenM - base.lenM)));
           const d2 = d * shrink;
           const ll2 = d2 >= 120 ? this._viaPoint(v.t, v.side, d2) : null;
           if (!ll2) break;
@@ -560,9 +569,16 @@
           r = r2; ll = ll2; d = d2;
         }
         r = best; ll = bestLl;
+        // a wanted distance also has a floor: one regrow pass when the via fell short of it
+        if (want && r && r.lenM && r.lenM < floor && r.lenM > base.lenM) {
+          const grow = Math.max(1.1, Math.min(3, (aim - base.lenM) / (r.lenM - base.lenM)));
+          const ll2 = this._viaPoint(v.t, v.side, d * grow);
+          const r2 = ll2 ? await this._route([A, ll2, B], profile, 0) : null;
+          if (r2 && r2.lenM && r2.lenM > r.lenM && r2.lenM <= budget * 1.02) { r = r2; ll = ll2; }
+        }
         // 1.02: don't bin a paid-for route for skimming the budget by metres
         if (!r || !r.lenM || r.lenM > budget * 1.02) return null;
-        const snip = snipOldSpurs(r.coords, this.computeGain, 0);
+        const snip = snipOldSpurs(r.coords, this.computeGain, floor);
         if (snip.coords) return { r: statsFromCoords(snip.coords), adoptWps: [A].concat(resampleMids(snip.coords, 3), [B]) };
         return { r, adoptWps: [A, ll, B] };
       });
@@ -571,8 +587,14 @@
     emit({ loading: true, phase: "detours", done: 0, total });
     const found = await this._pool(jobs, stale, (done) => emit({ loading: true, phase: "detours", done, total }));
     if (stale()) return;
-    found.unshift({ r: base, adoptWps: [A, B], isBase: true });
-    this._finish(runId, found, { baseKm: base.lenM / 1000, bufferPct });
+    // Routes under the floor are dropped. The fastest route is a normal candidate unless a
+    // wanted distance puts it under the floor; then it only shows when nothing else fits.
+    const inWindow = found.filter((c) => c.r.lenM >= floor);
+    if (!want || base.lenM >= floor || !inWindow.length) inWindow.unshift({ r: base, adoptWps: [A, B], isBase: true });
+    this._finish(runId, inWindow, {
+      baseKm: base.lenM / 1000, bufferPct,
+      wantKm: want ? want / 1000 : null, clamped
+    });
   };
 
   // ----- loops ------------------------------------------------------------------
@@ -667,8 +689,8 @@
   // That catches dead-end re-walks of covered ground (rate ≈ 0) and marginal wiggles,
   // while keeping spurs INTO fog, which are ugly but often the point of the suggestion.
   // Returns { coords, blockedM }: coords is the spliced geometry (null if nothing was
-  // cut) and blockedM the length of cuts wanted but skipped to respect minLenM, so the
-  // caller can regrow the loop by that much and retry.
+  // cut) and blockedM the length of cuts wanted but skipped to respect minLenM. Loop
+  // callers regrow by that much and retry; p2p callers ignore it.
   function snipOldSpurs(coords, computeGain, minLenM) {
     const none = { coords: null, blockedM: 0 };
     if (!computeGain || coords.length < 10) return none;
@@ -698,7 +720,7 @@
       if (lost / exLen < 0.5 * routeEff) snips.push({ i, j: found, cut: exLen });
       i = found;
     }
-    // apply biggest cuts first, skip overlapping ones, never fall below the tolerance floor
+    // apply biggest cuts first, skip overlapping ones, never fall below minLenM
     snips.sort((a, b) => b.cut - a.cut);
     const applied = [];
     let remaining = total, blockedM = 0;
