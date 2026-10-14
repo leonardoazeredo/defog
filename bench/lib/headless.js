@@ -2,6 +2,7 @@
 // Resolves with the tool's final results plus request/timing counters.
 "use strict";
 const { SuggestTool, StreetIndex, L } = require("./load.js");
+const { overlapFrac } = SuggestTool._internals;
 const cache = require("./fetch-cache.js");
 
 function pin(lat, lng) { const ll = L.latLng(lat, lng); return { getLatLng: () => ll }; }
@@ -22,7 +23,11 @@ function runSuggest(fogMap, gain, scenario) {
         const c = cache.counters();
         resolve({
           state: s,
-          results: tool.results.map((r) => ({ coords: r.r.coords, lenM: r.r.lenM, gain: r.gain, isBase: !!r.isBase })),
+          results: tool.results.map((r) => ({
+            coords: r.r.coords, lenM: r.r.lenM, gain: r.gain, isBase: !!r.isBase,
+            retracePct: Math.round(100 * overlapFrac(r.r.coords, false)),
+            areaPerKm: r.gain.area / (r.r.lenM / 1000)
+          })),
           requests: c.hits + c.misses, cacheHits: c.hits, ms: Date.now() - t0
         });
       }

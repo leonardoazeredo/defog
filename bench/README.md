@@ -37,5 +37,15 @@ Observed on a real fog, ~4 km pins, 15% buffer unless noted:
   shortest) and shows the fastest route as a flagged fallback.
 - 10x the fastest route is reachable on trekking and fastbike, but falls back on
   hiking-mountain, car-fast, rail and shortest.
+- Retracing (`node bench/p2p-target.js` prints `retr max`, the best card's m2/km and the
+  fetch count per case, BRouter and Overpass, cache hits included). Before/after the
+  retrace work, same pins, 15% buffer, cache warm; only trekking and fastbike completed
+  (the other four were throttled), and reruns differ by a few percent:
+  - trekking, 1.5x: max retrace 15% -> 9%, best area per km 21268 -> 21533; 5% window
+    unchanged (25%, 22288); 10x: 77% both, area per km 23737 -> 25664.
+  - fastbike, 1.5x: max retrace 31% -> 10%, best area per km 19863 -> 20563; 5% window
+    19918 -> 22117 (max retrace 11% -> 23%, a better card, not a worse route).
+  - fetches per run: +0 to +2 (the re-route cap is 2).
+  A card that retraces on purpose (a real dead end) is only discounted, never dropped.
 - car-fast and rail search the "bike" street set (`streetKind`), so their candidates
   are not guided by car or rail networks.

@@ -27,6 +27,10 @@ const say = (profile, label, verdict, detail) =>
   const gain = makeGain(fogMap, FogParser);
   const run = (profile, buffer, targetM) =>
     runSuggest(fogMap, gain, { mode: "p2p", a: pins[0], b: pins[1], profile, buffer, targetM });
+  // informational, does not affect PASS/FAIL
+  const extra = (o) => o.results.length
+    ? ` | retr max ${Math.max(...o.results.map((r) => r.retracePct))}%, best ${Math.round(Math.max(...o.results.map((r) => r.areaPerKm)))} m2/km, ${o.requests} req`
+    : "";
   const kms = (o) => o.results.map((r) => +(r.lenM / 1000).toFixed(2)).join(", ") || "none";
 
   for (const profile of PROFILES) {
@@ -41,7 +45,7 @@ const say = (profile, label, verdict, detail) =>
     if (!(plain.state.baseKm > 0) || plain.state.empty) {
       say(profile, "untargeted", "WARN", `no cards (${plain.state.reason || "empty"}), fog around the pins may be fully defogged`);
     } else {
-      say(profile, "untargeted", "PASS", `fastest ${plain.state.baseKm.toFixed(2)} km, cards ${kms(plain)}`);
+      say(profile, "untargeted", "PASS", `fastest ${plain.state.baseKm.toFixed(2)} km, cards ${kms(plain)}${extra(plain)}`);
     }
 
     const cases = [
@@ -73,7 +77,7 @@ const say = (profile, label, verdict, detail) =>
         problems.push("only the fastest route shown but fallback not flagged");
       if (s.fallback && !(o.results.length === 1 && o.results[0].isBase)) problems.push("fallback flagged with other cards");
       if (problems.length) failed++;
-      say(profile, c.label, problems.length ? "FAIL" : "PASS", `${problems.join("; ")} cards ${kms(o)}${s.fallback ? " (fallback)" : ""}`);
+      say(profile, c.label, problems.length ? "FAIL" : "PASS", `${problems.join("; ")} cards ${kms(o)}${s.fallback ? " (fallback)" : ""}${extra(o)}`);
     }
   }
   process.exit(failed ? 1 : 0);
