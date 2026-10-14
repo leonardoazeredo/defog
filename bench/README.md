@@ -65,5 +65,9 @@ Observed on a real fog, ~4 km pins, 15% buffer unless noted:
     chose another street for part of the path (editor up to 80 m off the preview).
     Card retrace labels matched the editor's. No >=50% or bridge-only card appeared.
   - `overlapFrac(coords, false)` on a 16.3 km card (729 points): 0.7-0.9 ms per call.
+  - Loops unchanged: `node bench/run.js` on the six loop scenarios, `ab-target-distance`
+    (with the same `overlapFrac` patch) against this branch: card count, km and defogged
+    area identical in every scenario. The neustadt-p2p scenario differs as intended (third
+    card 4.08 km with 9% overlap -> 3.73 km with 0%).
 - car-fast and rail search the "bike" street set (`streetKind`), so their candidates
   are not guided by car or rail networks.
