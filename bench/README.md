@@ -37,10 +37,13 @@ Observed on a real fog, ~4 km pins, 15% buffer unless noted:
   shortest) and shows the fastest route as a flagged fallback.
 - 10x the fastest route is reachable on trekking and fastbike, but falls back on
   hiking-mountain, car-fast, rail and shortest.
+  (These three bullets describe the tree before the retrace work; after it, car-fast and
+  shortest return real cards at 10x and rail and car-fast at a 5% window, see below.)
 - Retracing (`node bench/p2p-target.js` prints `retr max`, the best card's m2/km and the
   fetch count per case, BRouter and Overpass, cache hits included). Before/after the
   retrace work, same pins, 15% buffer, cache warm; only trekking and fastbike completed
-  (the other four were throttled), and reruns differ by a few percent:
+  (the other four were throttled, see the warm rerun below), and reruns differ by a few
+  percent:
   - trekking, 1.5x: max retrace 15% -> 9%, best area per km 21268 -> 21533; 5% window
     unchanged (25%, 22288); 10x: 77% both, area per km 23737 -> 25664.
   - fastbike, 1.5x: max retrace 31% -> 10%, best area per km 19863 -> 20563; 5% window
@@ -69,46 +72,49 @@ Observed on a real fog, ~4 km pins, 15% buffer unless noted:
     (with the same `overlapFrac` patch) against this branch: card count, km and defogged
     area identical in every scenario. The neustadt-p2p scenario differs as intended (third
     card 4.08 km with 9% overlap -> 3.73 km with 0%).
-  - The four profiles that were throttled earlier, before -> after (same pins, 15% buffer,
-    one profile per invocation, throttled `SKIP` rows rerun). Cards, `retr max`, best m2/km:
+  - The four profiles that were throttled earlier, before -> after, both trees run back to
+    back on one warm cache, one profile per invocation. A first pass run while brouter.de
+    was throttling silently lost candidate requests (no `SKIP`, just fewer or worse
+    cards) and produced fake deltas, so only this rerun is recorded. Cards, `retr max`,
+    best m2/km (fetch counts from `p2p-target.js` include cache hits and do not show misses):
 
-    | profile / case          | cards          | retr max  | best m2/km      | fallback |
-    |-------------------------|----------------|-----------|-----------------|----------|
-    | hiking-mountain untarg. | 3 -> 3         | 0 -> 0%   | 22629 = 22629   | no       |
-    | hiking-mountain 1.5x    | 3 -> 3         | 0 -> 0%   | 20599 -> 21626  | no       |
-    | hiking-mountain 1.5x 5% | 1 -> 1         | 0 -> 0%   | 22177 = 22177   | yes, yes |
-    | hiking-mountain 0.5x    | 3 -> **2**     | 0 -> 0%   | 22602 -> 22194  | no       |
-    | hiking-mountain 10x     | 3 -> 3         | 56 -> 56% | 24134 = 24134   | no       |
-    | car-fast untargeted     | 3 -> 3         | 0 -> 0%   | 18323 = 18323   | no       |
-    | car-fast 1.5x           | 1 -> 3         | 0 -> 10%  | 17737 -> 19828  | no       |
-    | car-fast 1.5x 5%        | 1 -> 1         | 0 -> 8%   | 17337 -> 16516  | yes -> no|
-    | car-fast 0.5x           | 2 -> 2         | 0 -> 0%   | 17337 = 17337   | no       |
-    | car-fast 10x            | 1 -> 3         | 0 -> 30%  | 17337 -> 25569  | yes -> no|
-    | rail (all five cases)   | unchanged      | unchanged | unchanged       | as before|
-    | shortest untargeted     | 3 -> 3         | 0 -> 0%   | 25075 -> **22655** | no    |
-    | shortest 1.5x           | 3 -> 3         | 4 -> 4%   | 22226 = 22226   | no       |
-    | shortest 1.5x 5%        | 1 -> 1         | 9 -> 9%   | 21511 = 21511   | no       |
-    | shortest 0.5x           | 3 -> 3         | 0 -> 0%   | 22655 = 22655   | no       |
-    | shortest 10x            | 3 -> 3         | 45 -> 5%  | 30949 -> 30701  | no       |
+    | profile / case          | cards      | retr max   | best m2/km       | fallback    |
+    |-------------------------|------------|------------|------------------|-------------|
+    | hiking-mountain untarg. | 3 -> 3     | 0 -> 0%    | 25625 = 25625    | no          |
+    | hiking-mountain 1.5x    | 3 -> 3     | 13 -> 7%   | 22471 = 22471    | no          |
+    | hiking-mountain 1.5x 5% | 3 -> 3     | 3 -> 3%    | 22637 = 22637    | no          |
+    | hiking-mountain 0.5x    | 3 -> 3     | 0 -> 0%    | 25625 = 25625    | no          |
+    | hiking-mountain 10x     | 3 -> 3     | 56 -> 56%  | 24134 -> 29434   | no          |
+    | car-fast untargeted     | 2 -> 2     | 0 -> 0%    | 17619 = 17619    | no          |
+    | car-fast 1.5x           | 3 -> 3     | 37 -> 10%  | 18414 -> 19828   | no          |
+    | car-fast 1.5x 5%        | 3 -> 3     | 33 -> 9%   | 18405 -> 19636   | no          |
+    | car-fast 0.5x           | 2 -> 2     | 0 -> 0%    | 17337 = 17337    | no          |
+    | car-fast 10x            | 3 -> 3     | 31 -> 18%  | 25569 = 25569    | no          |
+    | rail untargeted         | 1 -> 1     | 6 -> 0%    | 18032 -> 19679   | no          |
+    | rail 1.5x               | 1 -> 1     | 11 -> 11%  | 17681 = 17681    | no          |
+    | rail 1.5x 5%            | 1 -> 2     | 0 -> 0%    | 18723 -> 19290   | yes -> no   |
+    | rail 0.5x               | 1 -> 1     | 6 -> 0%    | 18032 -> 19679   | no          |
+    | rail 10x                | 1 -> 1     | 0 -> 0%    | 18723 = 18723    | yes, yes    |
+    | shortest untargeted     | 3 -> 3     | 0 -> 0%    | 25075 = 25075    | no          |
+    | shortest 1.5x           | 3 -> 3     | 30 -> 4%   | 19553 -> 22390   | no          |
+    | shortest 1.5x 5%        | 2 -> **1**  | 22 -> 9%   | 21726 -> 21511   | no          |
+    | shortest 0.5x           | 3 -> 3     | 0 -> 0%    | 22655 = 22655    | no          |
+    | shortest 10x            | 3 -> 3     | 45 -> 27%  | 30949 = 30949    | no          |
 
-    Two cases were flagged by the rules (fewer cards, new fallback, best m2/km down > 5%):
-    hiking-mountain 0.5x (3 -> 2 cards) and shortest untargeted (-9.7%). Both had 0%
-    retrace, where `RETRACE_WEIGHT` has no effect, and rerunning `RETRACE_WEIGHT` 0.3, 0.5
-    and 0.7 on the warm cache gave identical results, so the flags were requests lost to
-    throttling in the first pass, not the penalty. Warm-cache rerun of both trees on
-    those two profiles (before -> after):
-    - shortest: untargeted 25075 = 25075 m2/km; 1.5x retr max 30% -> 4% (best 19553 ->
-      22390); 1.5x 5% retr max 22% -> 9% (best 21726 -> 21511, 2 -> 1 cards, still in
-      window); 0.5x equal; 10x retr max 45% -> 27% (best 30949 = 30949).
-    - hiking-mountain: untargeted and 0.5x equal (25625 m2/km); 1.5x retr max 13% -> 7%
-      (best 22471 = 22471); 1.5x 5% equal; 10x retr max 56% = 56% (best 24134 -> 29434).
-    Treat the first-pass hiking-mountain and shortest rows above as contaminated; the
-    other profiles had no `SKIP` or missing-card signs but were not rerun warm.
+    One case is flagged by the rules (fewer cards): shortest 1.5x 5%. The dropped card
+    (4.95 km, a 22% retracer) is the one the penalty discounts. `RETRACE_WEIGHT` 0.3, 0.5
+    and 0.7 all leave one card (5.06, 5.06, 4.94 km; the 0.7 card retraces 7%), so no
+    weight restores it: it is the planner/ranking order, not the weight. The surviving
+    card is in the window and 1% below in m2/km, so it is recorded and left. Earlier
+    first-pass flags (hiking-mountain 0.5x, shortest untargeted) vanished in the warm rerun.
+    That card count is the one open item; `RETRACE_WEIGHT` stays 0.5.
 
-  Decision: no code change. Task 1 passed (the one visibly re-routed card is within the
-  criteria), `overlapFrac` takes under 1 ms on a 16 km route, loops are identical, and no
-  profile regressed once throttling was ruled out. `RETRACE_WEIGHT` stays 0.5. Cards
-  retracing >= 50% (hiking-mountain 10x, 56%) are still returned, labelled when shown;
-  no such card appeared in the browser check, so the label there is unverified.
+  Decision: no code change. Task 1 passed numerically (the one visibly re-routed card,
+  5.1 km card 1, is -2.2% in km and +1.8 points of retrace at one-decimal card precision),
+  `overlapFrac` takes under 1 ms on a 16 km route, loops are identical, and the only
+  flagged case is not moved by the weight. Cards retracing >= 50% (hiking-mountain 10x
+  56%, trekking 10x 77%) are still returned and labelled by `main.js` for retrace >= 10%;
+  the browser check showed one labelled card (10% at ~14 km, matching the editor's 10.2%)
+  and no >= 50% card, so that label is verified only for that one case.
 - car-fast and rail search the "bike" street set (`streetKind`), so their candidates
   are not guided by car or rail networks.
