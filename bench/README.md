@@ -91,8 +91,24 @@ Observed on a real fog, ~4 km pins, 15% buffer unless noted:
     | shortest 0.5x           | 3 -> 3         | 0 -> 0%   | 22655 = 22655   | no       |
     | shortest 10x            | 3 -> 3         | 45 -> 5%  | 30949 -> 30701  | no       |
 
-    Fetches per case: +0 to +10 (hiking-mountain 1.5x 5%: 11 -> 21). Flagged by the
-    rules (fewer cards, new fallback, best m2/km down > 5%): hiking-mountain 0.5x (one
-    card fewer) and shortest untargeted (-9.7%, the 3.04 km card is gone).
+    Two cases were flagged by the rules (fewer cards, new fallback, best m2/km down > 5%):
+    hiking-mountain 0.5x (3 -> 2 cards) and shortest untargeted (-9.7%). Both had 0%
+    retrace, where `RETRACE_WEIGHT` has no effect, and rerunning `RETRACE_WEIGHT` 0.3, 0.5
+    and 0.7 on the warm cache gave identical results, so the flags were requests lost to
+    throttling in the first pass, not the penalty. Warm-cache rerun of both trees on
+    those two profiles (before -> after):
+    - shortest: untargeted 25075 = 25075 m2/km; 1.5x retr max 30% -> 4% (best 19553 ->
+      22390); 1.5x 5% retr max 22% -> 9% (best 21726 -> 21511, 2 -> 1 cards, still in
+      window); 0.5x equal; 10x retr max 45% -> 27% (best 30949 = 30949).
+    - hiking-mountain: untargeted and 0.5x equal (25625 m2/km); 1.5x retr max 13% -> 7%
+      (best 22471 = 22471); 1.5x 5% equal; 10x retr max 56% = 56% (best 24134 -> 29434).
+    Treat the first-pass hiking-mountain and shortest rows above as contaminated; the
+    other profiles had no `SKIP` or missing-card signs but were not rerun warm.
+
+  Decision: no code change. Task 1 passed (the one visibly re-routed card is within the
+  criteria), `overlapFrac` takes under 1 ms on a 16 km route, loops are identical, and no
+  profile regressed once throttling was ruled out. `RETRACE_WEIGHT` stays 0.5. Cards
+  retracing >= 50% (hiking-mountain 10x, 56%) are still returned, labelled when shown;
+  no such card appeared in the browser check, so the label there is unverified.
 - car-fast and rail search the "bike" street set (`streetKind`), so their candidates
   are not guided by car or rail networks.
