@@ -9,6 +9,7 @@
   const DEFAULT_BUFFER = 0.15;  // p2p: max length over the fastest route, or ± around a wanted distance; loop: tolerance around target
   const MAX_VIAS = 6;           // fog-seeking detour candidates per p2p run
   const VIA_RETRIES = 2;        // times a via is pulled back in when its route overshoots
+  const RETRACE_WEIGHT = 0.5;   // p2p: share of a route's score lost if all of it retraces itself
   const MAX_LOOPS = 6;          // loop bearings tried per run
   const CONCURRENCY = 3;        // parallel BRouter requests (be kind to the public server)
   // Same neon family as the drawn route (#ff2d55): red · pink · orange, which pops against
@@ -339,10 +340,15 @@
     // a route that breaks <1% new ground isn't a suggestion, it's a re-walk
     scored = scored.filter((c) => c.gain.area > 0 && c.gain.newPct >= 1);
     if (!scored.length) { emit(Object.assign({ empty: true, reason: "defogged" }, extra)); return; }
+    // A to B also loses up to RETRACE_WEIGHT of its score in proportion to the share it
+    // retraces (rankKey); loops use the plain key below.
     // rank by area, blended with share-of-length-on-new-ground: between two
     // routes that defog the same area, the one that isn't mostly a re-walk wins
-    const key = (c) => c.gain.area * (0.7 + 0.3 * Math.min(1, c.gain.newPct / 100));
-    scored.sort((x, y) => key(y) - key(x));
+    const key = extra.baseKm != null
+      ? (c) => { c.retrace = overlapFrac(c.r.coords, false); return rankKey(c.gain, c.retrace); }
+      : (c) => c.gain.area * (0.7 + 0.3 * Math.min(1, c.gain.newPct / 100));
+    for (const c of scored) c.key = key(c);
+    scored.sort((x, y) => y.key - x.key);
     // One local metric frame for the whole run, so footprints are comparable.
     const { kx, ky } = metresPerDeg(scored[0].r.coords[0][1]);
     const unique = [];
@@ -376,6 +382,7 @@
         deltaKm: c.r.lenM / 1000 - refKm,
         ascent: c.r.ascent, descent: c.r.descent,
         area: c.gain.area, newPct: c.gain.newPct,
+        retracePct: c.retrace != null ? Math.round(c.retrace * 100) : undefined,
         isBase: !!c.isBase
       }))
     }));
@@ -671,7 +678,9 @@
 
   // Share of the route's length that runs within ~25 m of another, path-distant part of
   // itself. High values mean out-and-back spurs rather than a proper loop.
-  function overlapFrac(coords) {
+  // closed=false (A to B): the start and end are unrelated, so no wrap-around adjacency,
+  // and high values mean the route re-walks earlier ground.
+  function overlapFrac(coords, closed = true) {
     const { kx, ky } = metresPerDeg(coords.length ? coords[0][1] : 0);
     const d2 = (p, q) => { const dx = (p.x - q.x), dy = (p.y - q.y); return dx * dx + dy * dy; };
     const pts = [];
@@ -688,11 +697,15 @@
       total += p.len;
       for (const q of pts) {
         const along = Math.abs(p.at - q.at);
-        if (Math.min(along, acc - along) < 250) continue; // path-adjacent (loop-circular)
+        if ((closed ? Math.min(along, acc - along) : along) < 250) continue; // closed: start and end are adjacent, so wrap the path distance
         if (d2(p, q) < 25 * 25) { overlap += p.len; break; }
       }
     }
     return total ? overlap / total : 0;
+  }
+
+  function rankKey(gain, retrace) {
+    return gain.area * (0.7 + 0.3 * Math.min(1, gain.newPct / 100)) * (1 - RETRACE_WEIGHT * retrace);
   }
 
   // Cut "there and back" excursions that don't pull their weight: an excursion is a
@@ -917,6 +930,6 @@
     this._finish(runId, clean.length ? clean : found, { targetKm: distM / 1000, bufferPct });
   };
 
-  SuggestTool._internals = { snipOldSpurs, overlapFrac, statsFromCoords, p2pWindow, p2pCandidates }; // for tests
+  SuggestTool._internals = { snipOldSpurs, overlapFrac, rankKey, RETRACE_WEIGHT, statsFromCoords, p2pWindow, p2pCandidates }; // for tests
   global.SuggestTool = SuggestTool;
 })(window);

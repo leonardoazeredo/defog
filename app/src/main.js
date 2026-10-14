@@ -521,7 +521,7 @@
           <div class="sugTop"><span class="chip" style="background:${c.color}"></span><b>${fmtDist(c.km)}</b>
             <span class="muted">${deltaLabel(c)}</span>
             <button class="use act" data-use="${i}">Use</button></div>
-          <div class="sugGain"><span>defogs ~${fmtArea(c.area)}</span><span>${fmtPct(c.newPct)} new ground</span></div>
+          <div class="sugGain"><span>defogs ~${fmtArea(c.area)}</span><span>${fmtPct(c.newPct)} new ground</span>${c.retracePct >= 10 ? `<span>retraces ${c.retracePct}%</span>` : ""}</div>
           <div class="sugSub"><span>↑ ${fmtEle(c.ascent)}</span><span>↓ ${fmtEle(c.descent)}</span></div>
         </div>`).join("");
     sugResults.querySelectorAll(".sugCard").forEach((el) => el.addEventListener("click", () => {

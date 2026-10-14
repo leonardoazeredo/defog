@@ -1,0 +1,49 @@
+// Pure-logic checks for the retraced share (overlapFrac) and rankKey; no network, no fog.
+//   node bench/retrace.test.js
+"use strict";
+const assert = require("node:assert/strict");
+const { SuggestTool } = require("./lib/load.js");
+const { overlapFrac, rankKey, RETRACE_WEIGHT } = SuggestTool._internals;
+
+const LAT = 51, KY = 111320, KX = 111320 * Math.cos(LAT * Math.PI / 180);
+// polyline through metre offsets (east, north) from a fixed origin, a point every ~10 m
+function line(...pts) {
+  const out = [];
+  for (let i = 1; i < pts.length; i++) {
+    const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+    const n = Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0) / 10));
+    for (let k = i === 1 ? 0 : 1; k <= n; k++)
+      out.push([13.7 + (x0 + (x1 - x0) * k / n) / KX, LAT + (y0 + (y1 - y0) * k / n) / KY, 0]);
+  }
+  return out;
+}
+
+{ // out and back along one street
+  const f = overlapFrac(line([0, 0], [1000, 0], [0, 0]), false);
+  assert.ok(f > 0.8, `out-and-back ${f}`);
+}
+{ // one-way routes retrace nothing
+  assert.equal(overlapFrac(line([0, 0], [1000, 0]), false), 0);
+  assert.ok(overlapFrac(line([0, 0], [500, 0], [500, 500]), false) < 0.05);
+}
+{ // default stays circular: a closed square loop is not a retrace
+  assert.ok(overlapFrac(line([0, 0], [250, 0], [250, 250], [0, 250], [0, 0])) < 0.05);
+}
+{ // A and B about 28 m apart: closing the gap is not retracing
+  const f = overlapFrac(line([0, 0], [500, 0], [500, 500], [20, 500], [20, 20]), false);
+  assert.ok(f < 0.15, `nearly closed ${f}`);
+}
+{ // ranking
+  assert.equal(RETRACE_WEIGHT, 0.5);
+  assert.equal(rankKey({ area: 1000, newPct: 100 }, 0), 1000);
+  assert.equal(rankKey({ area: 1000, newPct: 100 }, 1), 500);
+  assert.ok(rankKey({ area: 1000, newPct: 60 }, 0.1) > rankKey({ area: 1000, newPct: 60 }, 0.4));
+}
+{ // guard against quadratic blow-up; 250 ms is generous for 3000 points on a laptop
+  const zig = [];
+  for (let i = 0; i < 3000; i++) zig.push([13.7 + (i * 4) / KX, LAT + ((i % 2) * 30 + Math.floor(i / 100) * 40) / KY, 0]);
+  const t = Date.now();
+  overlapFrac(zig, false);
+  assert.ok(Date.now() - t < 250, `overlapFrac took ${Date.now() - t} ms`);
+}
+console.log("retrace.test.js ok");
