@@ -129,9 +129,14 @@
 
   // ----- shared plumbing --------------------------------------------------------
 
-  SuggestTool.prototype._route = async function (latlngs, profile, altIdx) {
-    const lonlats = latlngs.map((ll) => ll.lng.toFixed(6) + "," + ll.lat.toFixed(6)).join("|");
-    const url = `${BROUTER}?lonlats=${lonlats}&profile=${encodeURIComponent(profile)}&alternativeidx=${altIdx}&format=geojson`;
+  function routeUrl(latlngs, profile, altIdx, nogos) {
+    const pt = (ll) => ll.lng.toFixed(6) + "," + ll.lat.toFixed(6);
+    const ng = nogos && nogos.length ? "&nogos=" + nogos.map((n) => pt(n) + "," + Math.round(n.radiusM)).join("|") : "";
+    return `${BROUTER}?lonlats=${latlngs.map(pt).join("|")}&profile=${encodeURIComponent(profile)}&alternativeidx=${altIdx}&format=geojson${ng}`;
+  }
+
+  SuggestTool.prototype._route = async function (latlngs, profile, altIdx, nogos) {
+    const url = routeUrl(latlngs, profile, altIdx, nogos);
     try {
       const res = await fetch(url);
       if (!res.ok) return null;
@@ -930,6 +935,6 @@
     this._finish(runId, clean.length ? clean : found, { targetKm: distM / 1000, bufferPct });
   };
 
-  SuggestTool._internals = { snipOldSpurs, overlapFrac, rankKey, RETRACE_WEIGHT, statsFromCoords, p2pWindow, p2pCandidates }; // for tests
+  SuggestTool._internals = { snipOldSpurs, overlapFrac, rankKey, RETRACE_WEIGHT, routeUrl, statsFromCoords, p2pWindow, p2pCandidates }; // for tests
   global.SuggestTool = SuggestTool;
 })(window);

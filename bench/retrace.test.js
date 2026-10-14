@@ -3,7 +3,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 const { SuggestTool } = require("./lib/load.js");
-const { overlapFrac, rankKey, RETRACE_WEIGHT } = SuggestTool._internals;
+const { overlapFrac, rankKey, RETRACE_WEIGHT, routeUrl } = SuggestTool._internals;
 
 const LAT = 51, KY = 111320, KX = 111320 * Math.cos(LAT * Math.PI / 180);
 // polyline through metre offsets (east, north) from a fixed origin, a point every ~10 m
@@ -45,5 +45,13 @@ function line(...pts) {
   const t = Date.now();
   overlapFrac(zig, false);
   assert.ok(Date.now() - t < 250, `overlapFrac took ${Date.now() - t} ms`);
+}
+{ // BRouter URL: unchanged without nogos (bench cache keys), nogos appended otherwise
+  const pts = [{ lat: 51, lng: 13.7 }, { lat: 51.01, lng: 13.71 }];
+  const plain = "https://brouter.de/brouter?lonlats=13.700000,51.000000|13.710000,51.010000&profile=trekking&alternativeidx=0&format=geojson";
+  assert.equal(routeUrl(pts, "trekking", 0), plain);
+  assert.equal(routeUrl(pts, "trekking", 0, []), plain);
+  assert.equal(routeUrl(pts, "trekking", 0, [{ lat: 51, lng: 13.7, radiusM: 30 }, { lat: 51.01, lng: 13.71, radiusM: 30 }]),
+    plain + "&nogos=13.700000,51.000000,30|13.710000,51.010000,30");
 }
 console.log("retrace.test.js ok");
