@@ -20,6 +20,7 @@
   LocalRouter.prototype.explain = function (points, opts) {
     const pl = this.planner;
     pl.build();
+    if (!pl.lons.length) return { reason: "no-street-data", points: [], graph: { nodes: 0, edges: 0, pieces: 0 } };
     const nodes = points.map((p) => this._snap(p));
     const metres = (n, p) => Math.hypot((pl.lons[n] - p.lng) * pl.kx, (pl.lats[n] - p.lat) * pl.ky);
     const pts = points.map((p, i) => {

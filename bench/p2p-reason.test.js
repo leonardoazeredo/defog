@@ -50,6 +50,13 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]]]
     assert.equal(r.reason, "no-path");
     assert.ok(Math.abs(r.why.gap.m - 300) < 5);
   }
+  { // two pins farther apart than the street download can cover: declined before downloading
+    const st = streetsWith(street);
+    st.ensureRects = async () => { throw new Error("must not download"); };
+    const r = await run(st, [0, 0], [0, 40000]);
+    assert.equal(r.empty, true);
+    assert.equal(r.reason, "too-far");
+  }
   { // a loop longer than the street download can cover says so, without downloading anything
     const st = streetsWith(street);
     st.ensureRects = async () => { throw new Error("must not download"); };

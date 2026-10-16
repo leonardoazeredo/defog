@@ -11,6 +11,7 @@
   const RETRACE_WEIGHT = 0.5;   // p2p: share of a route's score lost if all of it retraces itself
   const RETRACE_REROUTE_MIN = 0.12; // p2p: retraced share above which a via route's return leg is re-asked
   const MAX_RETRACE_REROUTES = 2;   // re-routed return legs per run
+  const MAX_P2P_M = 30000;      // A and B farther apart than this need a street download past what we cap
   const MAX_LOOP_M = 30000;     // longer loops reach past the capped street download (bearing squares reach ~0.3x the length)
   const MAX_LOOPS = 6;          // loop bearings tried per run
   const CONCURRENCY = 3;        // jobs interleaved by the pool
@@ -535,6 +536,7 @@
     // pad it by how far sideways the longest allowed detour can reach.
     const { kx, ky } = metresPerDeg((A.lat + B.lat) / 2);
     const straightM = Math.hypot((B.lng - A.lng) * kx, (B.lat - A.lat) * ky);
+    if (straightM > MAX_P2P_M) { emit({ empty: true, reason: "too-far", maxKm: MAX_P2P_M / 1000 }); return; }
     const reachM = Math.max(targetM || 0, straightM * 1.5) * (1 + buffer);
     const pad = Math.min(4000, Math.sqrt(Math.max(0, reachM * reachM - straightM * straightM)) / 2 + 300);
     // pins snapped to the cache grid (as for loops); the extra 400 m absorbs the snap offset
@@ -619,7 +621,7 @@
         }
         // 1.02: don't bin a route for skimming the budget by metres
         if (!r || !r.lenM || r.lenM > budget * 1.02) return null;
-        let adoptWps = [A, ll, B];
+        let adoptWps = joinPins(r, A, B);
         const gainOf = (x) => this.computeGain(x.coords) || { area: 0, newPct: 0 };
         const retrace = overlapFrac(r.coords, false);
         if (retrace >= RETRACE_REROUTE_MIN && reroutes < MAX_RETRACE_REROUTES) {
@@ -811,6 +813,14 @@
     return { coords, lenM: Math.round(len), ascent: hasZ ? Math.round(asc) : undefined, descent: hasZ ? Math.round(desc) : undefined };
   }
 
+  // Editor pins for a routed candidate: its ends plus the street vertices its legs join at.
+  // A via pin may sit off the street, and a pin floating off the line would send the first
+  // edit's re-route through that point.
+  function joinPins(route, from, to) {
+    const joins = route.legs.slice(0, -1).map((l) => { const c = l.coords[l.coords.length - 1]; return L.latLng(c[1], c[0]); });
+    return [from].concat(joins, [to]);
+  }
+
   // Evenly spaced points along a snipped route's cleaned shape, used as adoption
   // waypoints so a later re-route follows the same streets instead of re-growing the spur.
   function resampleMids(coords, n) {
@@ -902,7 +912,7 @@
         const snip = snipOldSpurs(raw.coords, this.computeGain, floor);
         return snip.coords
           ? { r: statsFromCoords(snip.coords), adoptWps: [S].concat(resampleMids(snip.coords, 4), [S]), blockedM: snip.blockedM }
-          : { r: raw, adoptWps: loopWps(vias), blockedM: snip.blockedM };
+          : { r: raw, adoptWps: joinPins(raw, S, S), blockedM: snip.blockedM };
       };
       let dim = distM / 5;
       let c = await prep(dim);
@@ -946,6 +956,6 @@
     this._finish(runId, clean.length ? clean : found, { targetKm: distM / 1000, bufferPct });
   };
 
-  SuggestTool._internals = { snipOldSpurs, overlapFrac, rankKey, RETRACE_WEIGHT, statsFromCoords, p2pWindow, p2pCandidates }; // for tests
+  SuggestTool._internals = { snipOldSpurs, overlapFrac, rankKey, RETRACE_WEIGHT, statsFromCoords, joinPins, p2pWindow, p2pCandidates }; // for tests
   global.SuggestTool = SuggestTool;
 })(window);

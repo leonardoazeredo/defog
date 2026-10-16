@@ -8,7 +8,7 @@ Defog: a browser-only tool that reads a Fog of World `Sync/` folder (or backup .
 
 ## Running and deploying
 
-- No build, package manager, linter or test suite. `app/` is the site root: serve it with any static file server and open `index.html`.
+- No build, package manager or linter; tests are plain Node scripts in `bench/*.test.js` (offline, synthetic data). `app/` is the site root: serve it with any static file server and open `index.html`.
 - Pushing to `main` deploys `app/` to GitHub Pages via `.github/workflows/deploy.yml`. Anything outside `app/` is not published.
 - `Sync/` (personal location history) is gitignored: never commit it or anything derived from it.
 - Third-party libs are vendored in `app/vendor/`; there is nothing to install.
@@ -39,5 +39,5 @@ Headless Node run of the shipping suggestion code against a real `Sync/` folder 
 
 - `bench/lib/load.js` `require`s `parser.js`, `streets.js`, `planner.js`, `router.js`, `suggest.js` over `bench/lib/leaflet-stub.js`; a new app file that suggest code depends on must be added there too.
 - `bench/lib/gain.js` is a hand copy of `computeGain`/`cellIsNew` from `main.js`. Change one, change the other.
-- Overpass responses are cached in `bench/cache/` (gitignored); delete it to re-measure live. Overpass answers 502 under load and the run then ends in the error state: rerun after a minute, only failed requests refetch. `bench/cache/brouter/` is the old baseline only; nothing fetches BRouter now.
+- Overpass responses are cached in `bench/cache/` (gitignored); delete it to re-measure live. Overpass answers 502 under load and the run then ends in the error state: rerun after a minute, only failed requests refetch. `bench/cache/brouter/` is leftover from before suggestions went local; nothing reads or writes it. The acceptance baseline is the saved `bench/out/baseline-brouter.json`.
 - Results go to `bench/out/<name>.json` (gitignored).

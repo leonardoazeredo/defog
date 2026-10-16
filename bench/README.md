@@ -49,8 +49,7 @@ least 0.90, no route has a vertex gap over 700 m, and every scenario ran in 5 s.
 `node bench/p2p-target.js [profile]` runs the six routing profiles through the real
 `SuggestTool` against your fog (`P2P_PINS="lat,lng;lat,lng"` picks the pins, default
 is the Dresden `neustadt-p2p` pair). One live run per profile is enough: responses are
-cached. brouter.de answers 403 "Please, retry later" when throttled; a rerun after a
-few minutes refetches only what failed.
+cached. Overpass answers 502 when busy; a rerun after a few minutes refetches only what failed.
 
 Observed on a real fog, ~4 km pins, 15% buffer unless noted:
 - trekking, fastbike, hiking-mountain, car-fast, rail, shortest: all cases stay inside

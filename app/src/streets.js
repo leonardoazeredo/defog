@@ -20,7 +20,7 @@
   const RUN_HW = "residential|unclassified|tertiary|secondary|primary|living_street|track|path|footway|cycleway|pedestrian|steps|" + CONNECT_HW;
   const BIKE_HW = "residential|unclassified|tertiary|secondary|primary|living_street|cycleway|track|" + CONNECT_HW;
   // Which of the walked ways each other way of travelling can actually use. A
-  // walking fetch also asks for these as bare ID LISTS (a few hundred KB, versus
+  // fetch also asks for these as bare ID LISTS (a few hundred KB, versus
   // about a megabyte if we asked Overpass for the tags), so the map can dim the
   // ways the chosen transport can't take without fetching anything again.
   const CLASS_HW = {
@@ -130,18 +130,20 @@
     if (!todo.length) return;
     this._anchor(todo[0].s);
     const bb = (r) => [r.s, r.w, r.n, r.e].map((x) => x.toFixed(4)).join(",");
-    // access filter: planned and routed walks must not cross ways the person
-    // can't use
-    const acc = `[access!~"^(private|no|military)$"]`;
+    // access filter: planned and routed trips must not cross ways the person can't
+    // use (motorroads are for motor vehicles; foot=no only matters on foot)
+    const acc = `[access!~"^(private|no|military)$"][motorroad!=yes]` + (kind === "bike" ? "" : `[foot!=no]`);
     const clauses = (hw) => todo.map((r) =>
       `way[highway~"^(${hw})$"]${acc}(${bb(r)});way[highway=service]${acc}[service!~"^(driveway|parking_aisle)$"](${bb(r)});`).join("");
-    const tagged = (hw, filter) => todo.map((r) => `way[highway~"^(${hw})$"]${acc}${filter}(${bb(r)});`).join("");
     const hw = kind === "bike" ? BIKE_HW : RUN_HW;
-    let q = `[out:json][timeout:60];(${clauses(hw)});out skel geom;`;
+    // the box is scanned once into .all; each list below filters that set (scanning the
+    // box again per list ran Overpass out of time on a town-sized box)
+    let q = `[out:json][timeout:60];(${clauses(hw)})->.all;.all out skel geom;`;
+    const tagged = (list, filter) => `way.all[highway~"^(${list})$"]${filter};`;
     // Then ID lists, each introduced by its own count so the groups stay apart in one
-    // response: the travel classes (walking fetch only) and the one-ways (a way
-    // travelled one way, plus roundabouts, and one travelled against its node order).
-    const groups = (kind === "bike" ? [] : CLASS_ORDER.map((k) => [k, clauses(CLASS_HW[k])])).concat([
+    // response: the travel classes and the one-ways (a way travelled one way, plus
+    // roundabouts, and one travelled against its node order).
+    const groups = CLASS_ORDER.map((k) => [k, tagged(CLASS_HW[k], "") + "way.all[highway=service];"]).concat([
       ["oneWay", tagged(hw, `[oneway~"^(yes|true|1)$"]`) + tagged(hw, `[junction=roundabout][oneway!=no]`)],
       ["reverseWay", tagged(hw, `[oneway~"^(-1|reverse)$"]`)]
     ]);
@@ -155,11 +157,13 @@
     });
     if (!res.ok) throw new Error("overpass HTTP " + res.status);
     const gj = await res.json();
+    // a timeout or out-of-memory still answers 200, with whatever it had by then
+    if (gj.remark) throw new Error("overpass: " + gj.remark);
     let group = -1; // -1 = the geometry, then one list (see `groups`) per count marker
     for (const el of gj.elements || []) {
       if (el.type === "count") { group++; continue; }
       if (el.type !== "way") continue;
-      if (group < 0) { this._addWay(el); if (kind !== "bike") this.classified.add(el.id); }
+      if (group < 0) { this._addWay(el); this.classified.add(el.id); }
       else (this.classIds[groups[group][0]] || this[groups[group][0]]).add(el.id);
     }
     for (const r of todo) this.rects.push({ s: r.s, w: r.w, n: r.n, e: r.e, kind });

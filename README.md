@@ -38,7 +38,7 @@ uploaded anywhere.
 Your Fog of World data is parsed and drawn in your browser and is never sent
 to any server. Two features do make outbound requests, and only with the coordinates needed
 for that feature (not your fog data): **drawing a route by hand** (and editing a pin of
-a suggested route) sends its waypoints to the public [BRouter](https://brouter.de) server
+a suggested route, switching its mode or reversing it) sends its waypoints to the public [BRouter](https://brouter.de) server
 to snap them to roads; **route suggestions** are routed entirely on your device and send
 nothing but the bounding box of the **street map around your pins**, and the
 **Streets in fog** look fetches the street map of the **area on screen**, both from the public

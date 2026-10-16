@@ -3,7 +3,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 const { SuggestTool } = require("./lib/load.js");
-const { statsFromCoords } = SuggestTool._internals;
+const { statsFromCoords, joinPins } = SuggestTool._internals;
 
 { // local routes have no z: ascent/descent stay undefined so the cards can hide the row
   const s = statsFromCoords([[13.7, 51], [13.71, 51]]);
@@ -27,5 +27,14 @@ const { statsFromCoords } = SuggestTool._internals;
   assert.deepEqual(tool.adopt(0), { wps: [a, b], coords: C });
   assert.deepEqual(tool.results, []);
   assert.equal(tool.adopt(0), null);
+}
+{ // the editor's pins sit where the route joins its legs, not on the via pin that may be off the street
+  const a = { lat: 51, lng: 13.7 }, b = { lat: 51.01, lng: 13.72 };
+  const r = { legs: [{ coords: [[13.7, 51], [13.71, 51.001]] }, { coords: [[13.71, 51.001], [13.72, 51.01]] }] };
+  const pins = joinPins(r, a, b);
+  assert.equal(pins.length, 3);
+  assert.deepEqual([pins[1].lat, pins[1].lng], [51.001, 13.71]);
+  assert.equal(pins[0], a);
+  assert.equal(pins[2], b);
 }
 console.log("handoff.test.js ok");
