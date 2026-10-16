@@ -494,6 +494,7 @@
       const msg = s.reason === "streets-fetch" ? `Couldn't download the street map (${w}). Try again in a minute.`
         : s.reason === "no-street-data" ? "No streets were found around here."
         : s.reason === "off-network" ? `${pin(w.point)} is ${fmtDist(w.points[w.point].nearestM / 1000)} from the nearest street this mode can use. Move the pin closer to a street.`
+        : s.reason === "one-way" ? "A and B are on the same street network, but one-way streets block every way between them for this mode."
         : s.reason === "no-path" ? `A and B sit on separate pieces of the street map for this mode${w.gap ? ` (about ${fmtDist(w.gap.m / 1000)} apart)` : ""}. Try another mode or move a pin.`
         : "Couldn't find a route. Try again in a moment.";
       sugResults.innerHTML = `<div class="muted" style="margin-top:10px">${msg}</div>`;
@@ -503,6 +504,8 @@
       sugResults.innerHTML = `<div class="muted" style="margin-top:10px">${
         s.reason === "defogged"
           ? "You've already covered the ground around here. Every route tried runs over defogged territory. Try a different area" + (s.targetKm != null ? " or a longer distance." : " or a bigger buffer.")
+          : s.reason === "too-long"
+          ? `Loops over ${fmtDist(s.maxKm)} aren't supported: the street map for one that long is too big to download. Try a shorter loop.`
           : s.reason === "server"
           ? "No routes could be found from here. The start may be off the street network, or the streets around it unreachable. Move the start pin and try again."
           : `No loops landed within ±${s.bufferPct}% of ${fmtDist(s.targetKm)}. Try a bigger buffer or a different distance.`}</div>`;

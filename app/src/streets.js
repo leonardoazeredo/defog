@@ -43,6 +43,8 @@
     this.wayIds = new Set();     // dedupe across overlapping fetches
     this.classIds = { bike: new Set(), road: new Set(), car: new Set() };
     this.classified = new Set(); // ways we know the travel classes of (blank = assume usable)
+    this.oneWay = new Set();     // one-way along the way's node order (incl. roundabouts)
+    this.reverseWay = new Set(); // one-way against it (oneway=-1)
     this.ways = [];              // raw {id,nodes,geometry}: shared node ids give the
                                  // route planner its graph connectivity for free
     this.segCount = 0;
@@ -93,6 +95,14 @@
   // street map" note only when there's a real fetch, not on every rerun.
   StreetIndex.prototype.needsFetch = function (rects, kind) { return this._uncovered(rects, kind).length > 0; };
 
+  // Which way a routing profile may travel each way: 1 along its node order only, -1
+  // against it, 0 both. One-ways bind the profiles on wheels, not walking, rail or the
+  // straight line.
+  StreetIndex.prototype.onewayFor = function (profile) {
+    if (!MODE_CLASS[profile]) return () => 0;
+    return (id) => (this.oneWay.has(id) ? 1 : this.reverseWay.has(id) ? -1 : 0);
+  };
+
   // Which ways a routing profile may use, by the same rule streetsLayer dims
   // them with. A way we hold no class for (a bike-kind fetch) counts as usable.
   StreetIndex.prototype.usableFor = function (profile) {
@@ -127,8 +137,16 @@
     let q = `[out:json][timeout:60];(${clauses(kind === "bike" ? BIKE_HW : RUN_HW)});out skel geom;`;
     // Ask a walking fetch for the travel-class ID lists too. Each list is
     // introduced by its own count, so the groups stay apart in one response.
+    const lists = [];
     if (kind !== "bike")
-      for (const k of CLASS_ORDER) q += `(${clauses(CLASS_HW[k])})->.${k};.${k} out count;.${k} out ids;`;
+      for (const k of CLASS_ORDER) { lists.push(k); q += `(${clauses(CLASS_HW[k])})->.${k};.${k} out count;.${k} out ids;`; }
+    // and the one-way ID lists (a way travelled one way, a roundabout, one travelled against its order)
+    const hw = kind === "bike" ? BIKE_HW : RUN_HW;
+    const tagged = (f) => todo.map((r) => `way[highway~"^(${hw})$"]${acc}${f}(${bb(r)});`).join("");
+    for (const [k, f] of [["oneWay", `[oneway~"^(yes|true|1)$"]`], ["reverseWay", `[oneway~"^(-1|reverse)$"]`]]) {
+      lists.push(k);
+      q += `(${tagged(f)}${k === "oneWay" ? todo.map((r) => `way[highway~"^(${hw})$"]${acc}[junction=roundabout][oneway!=no](${bb(r)});`).join("") : ""})->.${k};.${k} out count;.${k} out ids;`;
+    }
     const res = await fetch(OVERPASS, {
       method: "POST",
       // UA is for the Node benchmark harness (Overpass rejects Node's default);
@@ -138,12 +156,13 @@
     });
     if (!res.ok) throw new Error("overpass HTTP " + res.status);
     const gj = await res.json();
-    let group = -1; // -1 = the geometry, then one travel class per count marker
+    let group = -1; // -1 = the geometry, then one list (see `lists`) per count marker
     for (const el of gj.elements || []) {
       if (el.type === "count") { group++; continue; }
       if (el.type !== "way") continue;
       if (group < 0) { this._addWay(el); if (kind !== "bike") this.classified.add(el.id); }
-      else if (CLASS_ORDER[group]) this.classIds[CLASS_ORDER[group]].add(el.id);
+      else if (this.classIds[lists[group]]) this.classIds[lists[group]].add(el.id);
+      else if (this[lists[group]]) this[lists[group]].add(el.id);
     }
     for (const r of todo) this.rects.push({ s: r.s, w: r.w, n: r.n, e: r.e, kind });
   };

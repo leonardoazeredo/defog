@@ -1,4 +1,4 @@
-// Disk-cached fetch for benchmarks: identical URLs are served from bench/cache/
+// Disk-cached fetch for benchmarks: identical Overpass requests are served from bench/cache/
 // so re-runs are reproducible, instant, and never hammer public servers.
 // Real (uncached) requests are throttled to one every THROTTLE_MS.
 "use strict";
@@ -18,8 +18,8 @@ function keyFor(url, body) {
 }
 
 async function cachedFetch(url, opts) {
-  const sub = url.includes("overpass") ? "overpass" : "brouter";
-  const dir = path.join(CACHE_DIR, sub);
+  if (!url.includes("overpass")) return realFetch(url, opts); // suggestions only talk to Overpass
+  const dir = path.join(CACHE_DIR, "overpass");
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, keyFor(url, opts && opts.body) + ".json");
   if (fs.existsSync(file)) {

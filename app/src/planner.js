@@ -65,9 +65,12 @@
     };
   }
 
-  function GraphPlanner(streets, newFrac, usable) {
+  // usable: wayId -> may this travel class use the way; dirOf: wayId -> 1 when the way
+  // may only be travelled along its node order, -1 against it, 0 both ways
+  function GraphPlanner(streets, newFrac, usable, dirOf) {
     this.streets = streets;
     this.usable = usable || (() => true);
+    this.dirOf = dirOf || (() => 0);
     this.newFrac = fracCache(newFrac);
     this.built = 0; // ways incorporated so far; rebuild when more are fetched
   }
@@ -99,13 +102,13 @@
     const ky = 110540;
     this.kx = kx; this.ky = ky;
 
-    this.edges = [];      // {a,b,len,coords:[[lon,lat]..],way: OSM way id}
+    this.edges = [];      // {a,b,len,coords:[[lon,lat]..],way: OSM way id,dir: 1 a->b only, -1 b->a only, 0 both}
     this.reward = [];     // base reward per edge, m² (static)
     this.spentVer = [];   // reward-claim stamp per edge (see _fresh)
     this.usedVer = [];    // traversal stamp: walked edges cost extra to re-walk
     const midGrid = new Map(); // 100 m bins of edge sample points, for parallel spend
     this.midGrid = midGrid;
-    const pushEdge = (aId, bId, coords, wayId) => {
+    const pushEdge = (aId, bId, coords, wayId, dir) => {
       let len = 0, rew = 0;
       const samples = [];
       for (let i = 1; i < coords.length; i++) {
@@ -125,7 +128,7 @@
       this.edges.push({
         a: nodeIdx(aId, coords[0][0], coords[0][1]),
         b: nodeIdx(bId, coords[coords.length - 1][0], coords[coords.length - 1][1]),
-        len, coords, way: wayId
+        len, coords, way: wayId, dir
       });
       this.reward.push(rew);
       this.spentVer.push(0);
@@ -143,7 +146,7 @@
       for (let i = 1; i < w.nodes.length; i++) {
         if (i === w.nodes.length - 1 || uses.get(w.nodes[i]) >= 2) {
           pushEdge(w.nodes[start], w.nodes[i],
-            w.geometry.slice(start, i + 1).map((g) => [g.lon, g.lat]), w.id);
+            w.geometry.slice(start, i + 1).map((g) => [g.lon, g.lat]), w.id, this.dirOf(w.id));
           start = i;
         }
       }
@@ -223,6 +226,9 @@
     }
   };
 
+  // Can the edge be left from node u (one-ways only open at their entry end)?
+  GraphPlanner.prototype.canLeave = function (e, u) { return !e.dir || (e.dir > 0 ? e.a : e.b) === u; };
+
   GraphPlanner.prototype._dijkstra = function (src, costFn) {
     const N = this.lons.length;
     const dist = new Float64Array(N).fill(Infinity);
@@ -235,6 +241,7 @@
       if (du > dist[u]) continue;
       for (const ei of this.adj[u]) {
         const e = this.edges[ei];
+        if (!this.canLeave(e, u)) continue;
         const v = e.a === u ? e.b : e.a;
         const nd = du + costFn(ei);
         if (nd < dist[v]) { dist[v] = nd; prev[v] = ei; h.push(v, nd); }

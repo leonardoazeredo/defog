@@ -28,4 +28,14 @@ streets.classIds.bike = new Set([10]);
   assert.equal(p.edges.length, 1);
   assert.equal(p.edges[0].way, 10);
 }
+{ // one-way tags only bind the classes that travel on wheels
+  streets.oneWay = new Set([10]);
+  streets.reverseWay = new Set([11]);
+  const wheels = streets.onewayFor("trekking");
+  assert.equal(wheels(10), 1);
+  assert.equal(wheels(11), -1);
+  assert.equal(wheels(12), 0);
+  assert.equal(streets.onewayFor("hiking-mountain")(10), 0);
+  assert.equal(streets.onewayFor("shortest")(10), 0);
+}
 console.log("planner-filter.test.js ok");

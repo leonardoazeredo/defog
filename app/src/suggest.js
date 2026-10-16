@@ -11,6 +11,7 @@
   const RETRACE_WEIGHT = 0.5;   // p2p: share of a route's score lost if all of it retraces itself
   const RETRACE_REROUTE_MIN = 0.12; // p2p: retraced share above which a via route's return leg is re-asked
   const MAX_RETRACE_REROUTES = 2;   // re-routed return legs per run
+  const MAX_LOOP_M = 30000;     // longer loops reach past the capped street download (bearing squares reach ~0.3x the length)
   const MAX_LOOPS = 6;          // loop bearings tried per run
   const CONCURRENCY = 3;        // jobs interleaved by the pool
   // Same neon family as the drawn route (#ff2d55): red · pink · orange, which pops against
@@ -248,7 +249,7 @@
   SuggestTool.prototype._getPlanner = function (profile) {
     if (!this.streets || !global.GraphPlanner || !this.streets.ways.length) return null;
     if (!this._planners[profile])
-      this._planners[profile] = new global.GraphPlanner(this.streets, this.streets.newFrac, this.streets.usableFor(profile));
+      this._planners[profile] = new global.GraphPlanner(this.streets, this.streets.newFrac, this.streets.usableFor(profile), this.streets.onewayFor(profile));
     return this._planners[profile];
   };
 
@@ -829,6 +830,7 @@
     const emit = (s) => { if (!stale() && this.onResults) this.onResults(s); };
     const S = this.a.getLatLng();
     const bufferPct = Math.round(buffer * 100);
+    if (distM > MAX_LOOP_M) { emit({ empty: true, reason: "too-long", targetKm: distM / 1000, bufferPct, maxKm: MAX_LOOP_M / 1000 }); return; }
     const inTol = (lenM) => Math.abs(lenM - distM) <= buffer * distM;
 
     // Streets first: routing runs on them, and bearings and vias chase undefogged

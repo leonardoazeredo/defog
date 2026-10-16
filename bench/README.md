@@ -13,13 +13,35 @@ node bench/overpass.js [filter]     # street-network context (total vs undefogge
 - `lib/load.js` loads the real `app/src` parser + suggest code over a Leaflet stub,
   so benchmarks exercise the exact shipping algorithm.
 - `lib/gain.js` replicates `computeGain`/`cellIsNew` from `main.js` (kept in sync by hand).
-- All BRouter/Overpass responses are disk-cached in `bench/cache/` (gitignored):
-  re-runs are free, reproducible, and kind to the public servers. Delete the cache
-  to re-measure live. Avoid live runs while also testing in the browser: brouter.de
-  throttles per IP.
+- Overpass responses are disk-cached in `bench/cache/` (gitignored): re-runs are free,
+  reproducible, and kind to the public server. Delete the cache to re-measure live.
+  Overpass answers 502 under load and the scenario then ends in the error state with
+  `reason: "streets-fetch"`: wait a minute and rerun, only failed requests refetch.
+  Suggestions never call BRouter; see CLAUDE.md for `bench/cache/brouter/`.
 - Results land in `bench/out/<name>.json` (gitignored) with per-card metrics:
   defogged area, m² per metre, % new ground, overlap %, elongation
   (1 = round blob, 3+ = a proper thin "line" of a loop).
+
+## Local routing
+
+Suggestions route on the Overpass street graph in the browser (`app/src/router.js`).
+The synthetic-graph tests need no `Sync/` and no network:
+
+    for t in bench/*.test.js; do node $t; done
+
+`planner-filter`, `router`, `p2p-reason`, `handoff` and `retrace` cover the travel-class
+filter, shortest paths and one-ways, why a run fails, the Use hand-off and the retrace
+ranking.
+
+Acceptance against the BRouter baseline `bench/out/baseline-brouter.json` (keep a copy outside
+`bench/out`; it can't be regenerated):
+
+    node bench/run.js local            # twice: the first run pays for Overpass, the second is the timing
+    node bench/compare.js bench/out/baseline-brouter.json bench/out/local.json
+
+passes when the median, over scenarios, of best-card area relative to the baseline is at
+least 0.90, no route has a vertex gap over 700 m, and every scenario ran in 5 s. A loop over
+30 km is declined with `reason: "too-long"` and shown as skipped.
 
 ## A to B wanted distance
 

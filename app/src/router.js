@@ -46,6 +46,8 @@
     if (off >= 0) return { reason: "off-network", point: off, points: pts, graph };
     for (let i = 1; i < nodes.length; i++) {
       if (this._path(nodes[i - 1], nodes[i], opts && opts.avoid)) continue;
+      // same piece of the map but still no way: only a one-way can be in the road
+      if (pts[i - 1].piece === pts[i].piece) return { reason: "one-way", leg: i - 1, points: pts, graph };
       return { reason: "no-path", leg: i - 1, points: pts, graph, gap: this._gap(pts[i - 1].piece, pts[i].piece) };
     }
     return { reason: null, points: pts, graph };
@@ -86,6 +88,7 @@
       if (du > dist[u]) continue;
       for (const ei of pl.adj[u]) {
         const e = pl.edges[ei];
+        if (!pl.canLeave(e, u)) continue;
         const v = e.a === u ? e.b : e.a;
         const nd = du + e.len * (avoid && avoid.has(ei) ? AVOID_COST : 1);
         if (nd < dist[v]) { dist[v] = nd; prev[v] = ei; h.push(v, nd); }

@@ -1,4 +1,4 @@
-// An A to B run that cannot route says why; synthetic streets, no network.
+// A suggestion run that cannot route says why; synthetic streets, no network.
 //   node bench/p2p-reason.test.js
 "use strict";
 const assert = require("node:assert/strict");
@@ -49,6 +49,17 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]]]
     const r = await run(streetsWith(street.concat([[3, [7, 8], [0, 300], [250, 300]], [4, [8, 9], [250, 300], [500, 300]]])), [0, 0], [500, 300]);
     assert.equal(r.reason, "no-path");
     assert.ok(Math.abs(r.why.gap.m - 300) < 5);
+  }
+  { // a loop longer than the street download can cover says so, without downloading anything
+    const st = streetsWith(street);
+    st.ensureRects = async () => { throw new Error("must not download"); };
+    const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => null, streets: st });
+    tool.mode = "loop"; tool.a = pin(0, 0);
+    let last = null;
+    tool.onResults = (x) => { if (x && !x.loading) last = x; };
+    await tool.suggest("hiking-mountain", { distM: 50000, buffer: 0.15 });
+    assert.equal(last.empty, true);
+    assert.equal(last.reason, "too-long");
   }
   console.log("p2p-reason.test.js ok");
 })();

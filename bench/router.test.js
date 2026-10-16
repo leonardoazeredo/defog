@@ -9,9 +9,9 @@ const KX = 111320 * Math.cos(51 * Math.PI / 180), KY = 110540;
 const ll = (x, y) => ({ lat: 51 + y / KY, lon: 13.7 + x / KX });
 const pt = (x, y) => ({ lat: 51 + y / KY, lng: 13.7 + x / KX });
 // streets of straight two-node ways: [idA, idB, [x, y], [x, y]]
-function router(ways) {
+function router(ways, dirOf) {
   const streets = { ways: ways.map(([a, b, p, q], i) => ({ id: 100 + i, nodes: [a, b], geometry: [ll(...p), ll(...q)] })) };
-  return new LocalRouter(new GraphPlanner(streets, () => 1));
+  return new LocalRouter(new GraphPlanner(streets, () => 1, undefined, dirOf));
 }
 // straight street 1-2-3 along y=0 (1000 m); parallel street 1-4-5-3 at y=200 (1400 m with the joins)
 const straight = [[1, 2, [0, 0], [500, 0]], [2, 3, [500, 0], [1000, 0]]];
@@ -76,5 +76,17 @@ const A = pt(0, 0), B = pt(1000, 0);
   assert.equal(e.reason, "off-network");
   assert.equal(e.point, 1);
   assert.ok(Math.abs(e.points[1].nearestM - 5000) < 50, `nearest ${e.points[1].nearestM}`);
+}
+{ // one-ways: way ids are 100 + index; 1 = only along the way's node order, -1 = only against it
+  const forward = () => 1;
+  const rt = router(straight, forward);
+  assert.ok(rt.route([A, B]), "with the one-way");
+  assert.equal(rt.route([B, A]), null, "against it");
+  const why = rt.explain([B, A]);
+  assert.equal(why.reason, "one-way");
+  assert.ok(router(straight, () => -1).route([B, A]), "reverse-flagged way runs against its node order");
+  // a parallel street gives the way back
+  const back = router(straight.concat(parallel), (id) => (id === 100 || id === 101 ? 1 : 0)).route([B, A]);
+  assert.ok(back && Math.abs(back.lenM - 1400) < 5, `way back ${back && back.lenM}`);
 }
 console.log("router.test.js ok");

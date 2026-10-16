@@ -4,7 +4,7 @@
 // Exits non-zero when a targeted case breaks a check: a result outside the window, an
 // empty result, a clamp or wantKm mismatch, or a fastest route that the header doesn't
 // own up to. The untargeted baseline is only reported.
-// BRouter responses are cached in bench/cache/, so only the first run is live.
+// Overpass responses are cached in bench/cache/, so only the first run is live.
 "use strict";
 const path = require("path");
 const { loadSync, FogParser, SuggestTool } = require("./lib/load.js");

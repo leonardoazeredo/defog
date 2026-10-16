@@ -26,21 +26,21 @@ uploaded anywhere.
   and an estimate of the **new area a route would defog**. Export the route as GPX / KML,
   or open it in Google Maps. km/mi units.
 - **Suggested routes ("surprise me"):** Pick **A → B** and get up
-  to three road-snapped options that maximise defogging within a length budget (fastest
+  to three options, routed on the street map in your browser, that maximise defogging within a length budget (fastest
   route + 5/15/30%, your pick), or pick a **start + distance** and get loops that head
   into your foggiest directions. Every option is scored against your actual fog: the cards
-  show distance, climb, defogged area and % new ground. Tap **Use**
-  to load one into the editor for tweaking and export. 
+  show distance, defogged area and % new ground (no climb: suggestions have no elevation).
+  Tap **Use** to load one into the editor for tweaking and export; editing a pin then
+  re-routes through BRouter. 
 
 ## Privacy
 
 Your Fog of World data is parsed and drawn in your browser and is never sent
 to any server. Two features do make outbound requests, and only with the coordinates needed
-for that feature (not your fog data): **route planning and route suggestions** send
-waypoints to the public [BRouter](https://brouter.de) server to snap them to roads; for
-suggestions this includes a handful of automatically generated candidate points near your
-chosen area (their placement is influenced by where your fog is, but the fog itself is
-never sent); route suggestions fetch the **street map of the area around your pins**, and the
+for that feature (not your fog data): **drawing a route by hand** (and editing a pin of
+a suggested route) sends its waypoints to the public [BRouter](https://brouter.de) server
+to snap them to roads; **route suggestions** are routed entirely on your device and send
+nothing but the bounding box of the **street map around your pins**, and the
 **Streets in fog** look fetches the street map of the **area on screen**, both from the public
 [Overpass API](https://overpass-api.de) (OpenStreetMap), which only sees
 bounding boxes, the same class of information the basemap tile servers already get, and
