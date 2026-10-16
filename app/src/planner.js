@@ -20,6 +20,7 @@
   const REUSE_COST = 1.8;     // cost multiplier for re-walking an edge the plan already used
   const RETRACE_WEIGHT = 0.5; // ranking discount for re-walked ground: predicted gain doesn't price the re-walk
   const PARALLEL_M = 22;      // spending an edge also spends parallels this close
+  const NET_MIN_NODES = 50;   // a connected piece of street map smaller than this is a fragment (courtyard, station), not a network to start from
 
   // ---- binary heap keyed by dist -------------------------------------------
   function Heap() { this.n = []; this.d = []; }
@@ -150,6 +151,28 @@
     this.lons = lons; this.lats = lats;
     this.adj = Array.from({ length: lons.length }, () => []);
     this.edges.forEach((e, i) => { this.adj[e.a].push(i); this.adj[e.b].push(i); });
+    // inNet[i] = 1 when node i belongs to a connected piece big enough to travel on
+    // (or to the biggest piece, so a small map still has a network)
+    this.inNet = new Uint8Array(lons.length);
+    const seen = new Uint8Array(lons.length);
+    const pieces = [];
+    for (let i = 0; i < lons.length; i++) {
+      if (seen[i]) continue;
+      const stack = [i], piece = [];
+      seen[i] = 1;
+      while (stack.length) {
+        const u = stack.pop();
+        piece.push(u);
+        for (const ei of this.adj[u]) {
+          const v = this.edges[ei].a === u ? this.edges[ei].b : this.edges[ei].a;
+          if (!seen[v]) { seen[v] = 1; stack.push(v); }
+        }
+      }
+      pieces.push(piece);
+    }
+    const biggest = pieces.reduce((m, p) => (p.length > m ? p.length : m), 0);
+    for (const piece of pieces)
+      if (piece.length >= NET_MIN_NODES || piece.length === biggest) for (const u of piece) this.inNet[u] = 1;
     this.plainDist = new Map(); // source node -> Float64Array of shortest lengths
     this.ver = 0;
     this.built = ways.length;
@@ -270,7 +293,7 @@
       const dx = (this.lons[i] - latlng.lng) * this.kx, dy = (this.lats[i] - latlng.lat) * this.ky;
       const d = dx * dx + dy * dy;
       // prefer proper intersections; a dead-end start makes every plan begin with a spur
-      if (d < bd && this.adj[i].length >= 2) { bd = d; best = i; }
+      if (d < bd && this.adj[i].length >= 2 && this.inNet[i]) { bd = d; best = i; }
     }
     return best;
   };

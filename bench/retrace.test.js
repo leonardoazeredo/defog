@@ -3,7 +3,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 const { SuggestTool } = require("./lib/load.js");
-const { overlapFrac, rankKey, RETRACE_WEIGHT, routeUrl, retraceNogos, statsFromCoords } = SuggestTool._internals;
+const { overlapFrac, rankKey, RETRACE_WEIGHT, statsFromCoords } = SuggestTool._internals;
 
 const LAT = 51, KY = 111320, KX = 111320 * Math.cos(LAT * Math.PI / 180);
 // polyline through metre offsets (east, north) from a fixed origin, a point every ~10 m
@@ -46,46 +46,31 @@ function line(...pts) {
   overlapFrac(zig, false);
   assert.ok(Date.now() - t < 250, `overlapFrac took ${Date.now() - t} ms`);
 }
-{ // BRouter URL: unchanged without nogos (bench cache keys), nogos appended otherwise
-  const pts = [{ lat: 51, lng: 13.7 }, { lat: 51.01, lng: 13.71 }];
-  const plain = "https://brouter.de/brouter?lonlats=13.700000,51.000000|13.710000,51.010000&profile=trekking&alternativeidx=0&format=geojson";
-  assert.equal(routeUrl(pts, "trekking", 0), plain);
-  assert.equal(routeUrl(pts, "trekking", 0, []), plain);
-  assert.equal(routeUrl(pts, "trekking", 0, [{ lat: 51, lng: 13.7, radiusM: 30 }, { lat: 51.01, lng: 13.71, radiusM: 30 }]),
-    plain + "&nogos=13.700000,51.000000,30|13.710000,51.010000,30");
-}
-{ // nogos land on the outbound street, clear of A and the via
-  const out = line([0, 0], [1000, 0]), back = line([1000, 0], [0, 0]);
-  const A = { lat: out[0][1], lng: out[0][0] }, via = { lat: out[out.length - 1][1], lng: out[out.length - 1][0] };
-  const ng = retraceNogos(out, back, [A, via]);
-  assert.ok(ng.length > 0 && ng.length <= 8, `nogos ${ng.length}`);
-  for (const n of ng) {
-    const dx = (n.lng - 13.7) * KX;
-    assert.ok(dx > 79.9 && dx < 920.1, `nogo at ${dx} m`);
-    assert.ok(Math.abs((n.lat - LAT) * KY) < 1);
-  }
-  assert.deepEqual(retraceNogos(line([0, 0], [500, 0]), line([500, 400], [0, 400]), [A, via]), []);
-}
 (async () => {
-{ // _rerouteReturn: discs go to _route, result is outbound + new way home; null when nothing to block or BRouter fails
-  const route = statsFromCoords(line([0, 0], [1000, 0], [0, 0]));
+{ // _rerouteReturn: the outbound edges are avoided, the result is outbound + new way home; null when there is nothing new
+  const out = line([0, 0], [1000, 0]), back = line([1000, 0], [0, 0]);
+  const route = Object.assign(statsFromCoords(out.concat(back.slice(1))), {
+    legs: [{ coords: out, edges: [1, 2] }, { coords: back, edges: [2, 1] }]
+  });
   const via = { lat: LAT, lng: 13.7 + 1000 / KX };
   const Bll = { lat: LAT, lng: 13.7 };
   const homeStreet = line([1000, 0], [1000, 300], [0, 300], [0, 0]);
   const calls = [];
   const tool = Object.create(SuggestTool.prototype);
-  tool._route = async (pts, profile, idx, nogos) => { calls.push({ pts, nogos }); return { coords: homeStreet }; };
+  tool._route = async (pts, profile, opts) => { calls.push({ pts, opts }); return opts.avoid.size ? { coords: homeStreet } : { coords: back }; };
   const r = await tool._rerouteReturn(route, via, Bll, "trekking");
   assert.equal(calls.length, 1);
-  assert.ok(calls[0].nogos.length > 0);
-  assert.ok(Math.abs((calls[0].pts[0].lng - via.lng) * KX) < 15);
+  assert.deepEqual([...calls[0].opts.avoid].sort(), [1, 2]);
+  assert.deepEqual(calls[0].pts, [via, Bll]);
   assert.deepEqual(r.coords[0], route.coords[0]);
   assert.deepEqual(r.coords[r.coords.length - 1], homeStreet[homeStreet.length - 1]);
+  assert.equal(r.lenM, statsFromCoords(out.concat(homeStreet.slice(1))).lenM);
   tool._route = async () => null;
   assert.equal(await tool._rerouteReturn(route, via, Bll, "trekking"), null);
+  tool._route = async () => ({ coords: back }); // same way home again
+  assert.equal(await tool._rerouteReturn(route, via, Bll, "trekking"), null);
   tool._route = async () => { throw new Error("must not be called"); };
-  const oneWay = statsFromCoords(line([0, 0], [1000, 0]));
-  assert.equal(await tool._rerouteReturn(oneWay, via, Bll, "trekking"), null);
+  assert.equal(await tool._rerouteReturn(Object.assign({}, route, { legs: [route.legs[0]] }), via, Bll, "trekking"), null);
 }
 console.log("retrace.test.js ok");
 })();

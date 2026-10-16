@@ -115,6 +115,19 @@
     this._recalc();
   };
 
+  // Like setWaypoints, but the route is the given geometry as it is (a suggested
+  // route handed over from the preview): no routing request until the user edits a pin.
+  RouteTool.prototype.setFixedRoute = function (latlngs, coords) {
+    this.wps.forEach((w) => this.map.removeLayer(w.marker));
+    this.wps = latlngs.map((ll, i) => this._makeWp(L.latLng(ll), i));
+    this._emitWps();
+    ++this._reqId; // a request still in flight must not replace this route
+    let m = 0;
+    for (let i = 1; i < coords.length; i++)
+      m += L.latLng(coords[i - 1][1], coords[i - 1][0]).distanceTo(L.latLng(coords[i][1], coords[i][0]));
+    this._applyRoute(coords, { km: m / 1000, seconds: 0, ascent: null, descent: null });
+  };
+
   // Flip the direction of travel. The waypoints are reversed and the route is asked for
   // again rather than the old geometry being played backwards, so BRouter picks the legs
   // that are right for the new direction (one-ways, and the correct side of a road that
@@ -266,11 +279,7 @@
       const gj = await res.json();
       if (reqId !== this._reqId) return; // superseded
       const feat = gj.features[0];
-      const coords = feat.geometry.coordinates;
-      this.routeCoords = coords;
-      this._renderLine(coords);
-      this._indexWaypoints();
-      this._emit(Object.assign({ points: this.wps.length }, this._stats(feat, coords)));
+      this._applyRoute(feat.geometry.coordinates, this._stats(feat, feat.geometry.coordinates));
     } catch (e) {
       if (reqId !== this._reqId) return;
       this.routeCoords = this.wps.map((w) => [w.latlng.lng, w.latlng.lat]);
@@ -279,6 +288,13 @@
       this.hit.setLatLngs(this.wps.map((w) => w.latlng));
       this._emit({ points: this.wps.length, error: true });
     }
+  };
+
+  RouteTool.prototype._applyRoute = function (coords, stats) {
+    this.routeCoords = coords;
+    this._renderLine(coords);
+    this._indexWaypoints();
+    this._emit(Object.assign({ points: this.wps.length }, stats));
   };
 
   RouteTool.prototype._indexWaypoints = function () {

@@ -357,7 +357,7 @@
       ? `<div class="statline gain"><span>defogs ~${fmtArea(lastGain.area)}</span><span>${fmtPct(lastGain.newPct)} new ground</span></div>` : "";
     statsWrap.innerHTML =
       `<div class="card"><span class="statbig">${fmtDist(s.km)}</span> <span class="statsub">${MODE_LABEL[profile] || ""}</span>` +
-      `<div class="statline"><span>↑ ${fmtEle(s.ascent)}</span><span>↓ ${fmtEle(s.descent)}</span></div>${gain}</div>`;
+      (s.ascent != null ? `<div class="statline"><span>↑ ${fmtEle(s.ascent)}</span><span>↓ ${fmtEle(s.descent)}</span></div>` : "") + `${gain}</div>`;
   }
 
   function renderWps(list) {
@@ -488,7 +488,7 @@
       return;
     }
     if (s.error) {
-      sugResults.innerHTML = `<div class="muted" style="margin-top:10px">Couldn't reach the routing server. Try again in a moment.</div>`;
+      sugResults.innerHTML = `<div class="muted" style="margin-top:10px">Couldn't load the street map, or A and B aren't connected by streets. Try again in a moment.</div>`;
       return;
     }
     if (s.empty) {
@@ -496,7 +496,7 @@
         s.reason === "defogged"
           ? "You've already covered the ground around here. Every route tried runs over defogged territory. Try a different area" + (s.targetKm != null ? " or a longer distance." : " or a bigger buffer.")
           : s.reason === "server"
-          ? "The routing server didn't return any routes. It may be busy right now, or this start may be hard to route from. Try again in a minute, or move the start pin."
+          ? "No routes could be found from here. The start may be off the street network, or the streets around it unreachable. Move the start pin and try again."
           : `No loops landed within ±${s.bufferPct}% of ${fmtDist(s.targetKm)}. Try a bigger buffer or a different distance.`}</div>`;
       return;
     }
@@ -522,7 +522,7 @@
             <span class="muted">${deltaLabel(c)}</span>
             <button class="use act" data-use="${i}">Use</button></div>
           <div class="sugGain"><span>defogs ~${fmtArea(c.area)}</span><span>${fmtPct(c.newPct)} new ground</span>${c.retracePct >= 10 ? `<span>retraces ${c.retracePct}%</span>` : ""}</div>
-          <div class="sugSub"><span>↑ ${fmtEle(c.ascent)}</span><span>↓ ${fmtEle(c.descent)}</span></div>
+          ${c.ascent != null ? `<div class="sugSub"><span>↑ ${fmtEle(c.ascent)}</span><span>↓ ${fmtEle(c.descent)}</span></div>` : ""}
         </div>`).join("");
     sugResults.querySelectorAll(".sugCard").forEach((el) => el.addEventListener("click", () => {
       suggest.select(parseInt(el.dataset.i, 10));
@@ -530,9 +530,9 @@
     }));
     sugResults.querySelectorAll("[data-use]").forEach((el) => el.addEventListener("click", (e) => {
       e.stopPropagation();
-      const wps = suggest.adopt(parseInt(el.dataset.use, 10));
-      if (!wps) return;
-      route.setWaypoints(wps);
+      const adopted = suggest.adopt(parseInt(el.dataset.use, 10));
+      if (!adopted) return;
+      route.setFixedRoute(adopted.wps, adopted.coords);
       setSeg("draw"); // hand over to the editor: tweak pins, see the two-colour path, export
     }));
   }
