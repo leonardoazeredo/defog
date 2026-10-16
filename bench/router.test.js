@@ -58,4 +58,23 @@ const A = pt(0, 0), B = pt(1000, 0);
   const alone = router(courtyard); // nothing bigger around: the fragment is all there is
   assert.ok(alone.route([pt(228, 6), pt(236, 6)]));
 }
+{ // explain: a routable pair reports no failure and the snap it used
+  const e = router(straight).explain([A, B]);
+  assert.equal(e.reason, null);
+  assert.ok(e.points[0].snapM < 1 && e.points[1].snapM < 1);
+  assert.equal(e.graph.edges, 2);
+}
+{ // explain: separate pieces of the map name the failure and the closest approach
+  const e = router(straight.concat([[7, 8, [0, 300], [250, 300]], [8, 9, [250, 300], [500, 300]]])).explain([A, pt(500, 300)]);
+  assert.equal(e.reason, "no-path");
+  assert.notEqual(e.points[0].piece, e.points[1].piece);
+  assert.ok(Math.abs(e.gap.m - 300) < 5, `gap ${e.gap && e.gap.m}`);
+  assert.equal(e.graph.pieces, 2);
+}
+{ // explain: a point off the network says which one and how far the nearest street is
+  const e = router(straight).explain([A, pt(0, 5000)]);
+  assert.equal(e.reason, "off-network");
+  assert.equal(e.point, 1);
+  assert.ok(Math.abs(e.points[1].nearestM - 5000) < 50, `nearest ${e.points[1].nearestM}`);
+}
 console.log("router.test.js ok");

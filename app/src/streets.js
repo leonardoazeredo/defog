@@ -13,16 +13,19 @@
   const OVERPASS = "https://overpass-api.de/api/interpreter";
   // Streets someone would plausibly cover on foot vs on a bike. Driveways and
   // parking aisles are excluded: they're numerous and nobody hunts them.
-  const RUN_HW = "residential|unclassified|tertiary|secondary|primary|living_street|track|path|footway|cycleway|pedestrian";
-  const BIKE_HW = "residential|unclassified|tertiary|secondary|primary|living_street|cycleway|track";
+  // Besides what people cover, the lists hold trunk roads, link roads and (on foot) steps:
+  // routing needs their junctions, or side streets that reach the network only through
+  // a main road are cut off
+  const RUN_HW = "residential|unclassified|tertiary|secondary|primary|trunk|living_street|track|path|footway|cycleway|pedestrian|steps|primary_link|secondary_link|tertiary_link|trunk_link";
+  const BIKE_HW = "residential|unclassified|tertiary|secondary|primary|trunk|living_street|cycleway|track|primary_link|secondary_link|tertiary_link|trunk_link";
   // Which of the walked ways each other way of travelling can actually use. A
   // walking fetch also asks for these as bare ID LISTS (a few hundred KB, versus
   // about a megabyte if we asked Overpass for the tags), so the map can dim the
   // ways the chosen transport can't take without fetching anything again.
   const CLASS_HW = {
-    bike: "residential|unclassified|tertiary|secondary|primary|living_street|cycleway|track|path",
-    road: "residential|unclassified|tertiary|secondary|primary|living_street|cycleway",
-    car: "residential|unclassified|tertiary|secondary|primary|living_street"
+    bike: "residential|unclassified|tertiary|secondary|primary|living_street|cycleway|track|path|trunk|primary_link|secondary_link|tertiary_link|trunk_link",
+    road: "residential|unclassified|tertiary|secondary|primary|living_street|cycleway|trunk|primary_link|secondary_link|tertiary_link|trunk_link",
+    car: "residential|unclassified|tertiary|secondary|primary|living_street|trunk|primary_link|secondary_link|tertiary_link|trunk_link"
   };
   const CLASS_ORDER = ["bike", "road", "car"]; // the order the ID lists come back in
   // routing profile -> travel class; the same table as streetsLayer's MODE_CLASS,

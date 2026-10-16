@@ -155,7 +155,8 @@
     // (or to the biggest piece, so a small map still has a network)
     this.inNet = new Uint8Array(lons.length);
     const seen = new Uint8Array(lons.length);
-    const pieces = [];
+    const pieces = this.pieces = [];
+    this.pieceOf = new Int32Array(lons.length); // LocalRouter.explain names the piece a failed leg sits on
     for (let i = 0; i < lons.length; i++) {
       if (seen[i]) continue;
       const stack = [i], piece = [];
@@ -163,6 +164,7 @@
       while (stack.length) {
         const u = stack.pop();
         piece.push(u);
+        this.pieceOf[u] = pieces.length;
         for (const ei of this.adj[u]) {
           const v = this.edges[ei].a === u ? this.edges[ei].b : this.edges[ei].a;
           if (!seen[v]) { seen[v] = 1; stack.push(v); }

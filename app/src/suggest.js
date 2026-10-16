@@ -138,6 +138,14 @@
     return planner ? new global.LocalRouter(planner).route(latlngs, opts) : null;
   };
 
+  // Explained so the error can name the pin or pieces that failed, not just fail.
+  SuggestTool.prototype._noRoute = function (latlngs, profile) {
+    const planner = this._getPlanner(profile);
+    if (!planner) return { error: true, reason: "no-street-data" };
+    const why = new global.LocalRouter(planner).explain(latlngs);
+    return { error: true, reason: why.reason || "no-path", why };
+  };
+
   // Re-ask the leg after the via with the outbound streets avoided. null means keep the
   // original: not a via route, no way home routed, or the way home is the same.
   // The caller decides whether the new way home is worth taking.
@@ -508,7 +516,7 @@
     const bufferPct = Math.round(buffer * 100);
 
     emit({ loading: true, phase: "baseline" });
-    if (!this.streets) { emit({ error: true }); return; }
+    if (!this.streets) { emit({ error: true, reason: "no-street-data" }); return; }
 
     // Streets first: routing runs on them. The budget isn't known until A to B is
     // routed, so size the box for a fastest route up to 1.5x the straight line and
@@ -526,12 +534,12 @@
     // only announce a fetch when one will really happen; a rerun in the same
     // area is served from cache and shouldn't flash "reading the street map"
     if (this.streets.needsFetch(rects, streetKind(profile))) emit({ loading: true, phase: "streets" });
-    try { await this.streets.ensureRects(rects, streetKind(profile)); } catch (e) { emit({ error: true }); return; }
+    try { await this.streets.ensureRects(rects, streetKind(profile)); } catch (e) { emit({ error: true, reason: "streets-fetch", why: e.message }); return; }
     if (stale()) return;
 
     const base = await this._route([A, B], profile);
     if (stale()) return;
-    if (!base) { emit({ error: true }); return; }
+    if (!base) { emit(this._noRoute([A, B], profile)); return; }
     const win = p2pWindow(base.lenM, targetM, buffer);
     const { want, clamped, budget, floor, aim } = win;
     const rawVias = this._viaCandidates(budget);
@@ -827,7 +835,7 @@
     // streets rather than raw fog. One rect around the whole reach, capped so a
     // very long loop downloads a bounded area (its far side may then be out of
     // reach).
-    if (!this.streets) { emit({ error: true }); return; }
+    if (!this.streets) { emit({ error: true, reason: "no-street-data" }); return; }
     const { kx, ky } = metresPerDeg(S.lat);
     // build the fetch area around a grid-snapped centre so a rerun (same
     // or slightly nudged pin) reuses the cache; the planner still uses the
@@ -838,10 +846,10 @@
     // only announce a fetch when one will really happen; a rerun in the same
     // area is served from cache and shouldn't flash "reading the street map"
     if (this.streets.needsFetch(rects, streetKind(profile))) emit({ loading: true, phase: "streets" });
-    try { await this.streets.ensureRects(rects, streetKind(profile)); } catch (e) { emit({ error: true }); return; }
+    try { await this.streets.ensureRects(rects, streetKind(profile)); } catch (e) { emit({ error: true, reason: "streets-fetch", why: e.message }); return; }
     if (stale()) return;
     const planner = this._getPlanner(profile);
-    if (!planner) { emit({ error: true }); return; }
+    if (!planner) { emit({ error: true, reason: "no-street-data" }); return; }
 
     // Search the street network itself for high-defog loops (thin shapes, odd
     // topologies: whatever the fog asks for). Only for distances the capped rect

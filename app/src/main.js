@@ -488,7 +488,15 @@
       return;
     }
     if (s.error) {
-      sugResults.innerHTML = `<div class="muted" style="margin-top:10px">Couldn't load the street map, or A and B aren't connected by streets. Try again in a moment.</div>`;
+      console.debug("[suggest]", s.reason, s.why);
+      const w = s.why || {};
+      const pin = (i) => (suggest.mode === "loop" ? "The start" : i ? "B" : "A");
+      const msg = s.reason === "streets-fetch" ? `Couldn't download the street map (${w}). Try again in a minute.`
+        : s.reason === "no-street-data" ? "No streets were found around here."
+        : s.reason === "off-network" ? `${pin(w.point)} is ${fmtDist(w.points[w.point].nearestM / 1000)} from the nearest street this mode can use. Move the pin closer to a street.`
+        : s.reason === "no-path" ? `A and B sit on separate pieces of the street map for this mode${w.gap ? ` (about ${fmtDist(w.gap.m / 1000)} apart)` : ""}. Try another mode or move a pin.`
+        : "Couldn't find a route. Try again in a moment.";
+      sugResults.innerHTML = `<div class="muted" style="margin-top:10px">${msg}</div>`;
       return;
     }
     if (s.empty) {
