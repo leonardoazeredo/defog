@@ -22,22 +22,28 @@ function ring(b) {
   return out;
 }
 
-async function run(routable) {
+async function run(routable, opts = {}) {
   const s = new StreetIndex({ newFrac: () => 1 });
   s._anchor(51);
   s._addWay({ id: 1, nodes: [1, 2], geometry: [ll(-3000, 0), ll(3000, 0)] });
   s.rects.push({ s: 50.9, n: 51.1, w: 13.6, e: 13.8, kind: "run" });
   const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => ({ area: 1e5, newPct: 100 }), isNew: () => true, streets: s });
   tool.mode = "loop"; tool.a = { getLatLng: () => S0 };
-  tool._loopBearings = () => [0, 60, 120, 180, 240, 300, 30, 90]; // first batch takes 6, the rest is the wave
-  // the single via encodes the bearing, so the route stub can read it back
-  tool._loopVias = tool._loopViasTri = (S, b) => [at(b, 100)];
+  tool._loopBearings = () => opts.bearings || [0, 60, 120, 180, 240, 300, 30, 90]; // first batch takes 6, the rest is the wave, which also retries the first batch as narrow and fat shapes
+  // the single via encodes the bearing and, by its distance, the shape, so the route stub can read it back
+  const VIA_M = { square: 100, narrow: 200, fat: 300 }; // the via distance tells the route stub which shape was asked
+  tool._loopVias = (S, b, d, shape = "square") => {
+    assert.ok(VIA_M[shape], `unknown shape ${shape}`); // Array.map must not leak its index in as the shape
+    return [at(b, VIA_M[shape])];
+  };
+  tool._loopViasTri = (S, b) => [at(b, 100)];
   const asked = [];
   tool._route = async (wps) => {
     const v = wps[1];
     const b = Math.round((Math.atan2((v.lng - 13.7) * KX, (v.lat - 51) * KY) * 180 / Math.PI + 360) % 360);
-    asked.push(b);
-    if (!routable.includes(b)) return null;
+    const shape = Object.keys(VIA_M).find((k) => Math.abs(Math.hypot((v.lat - 51) * KY, (v.lng - 13.7) * KX) - VIA_M[k]) < 5);
+    asked.push(b + ":" + shape);
+    if (!routable.includes(opts.byShape ? b + ":" + shape : b)) return null;
     const coords = ring(b);
     const h = Math.floor(coords.length / 2);
     return { coords, lenM: 10000, legs: [{ coords: coords.slice(0, h) }, { coords: coords.slice(h - 1) }] };
@@ -51,13 +57,22 @@ async function run(routable) {
 (async () => {
   { // nothing routes in the first batch: the leftover bearings run and their loops are shown
     const { last, tool, asked } = await run([30, 90]);
-    assert.ok(asked.includes(30) && asked.includes(90), `asked ${asked}`);
+    assert.ok(asked.includes('30:square') && asked.includes('90:square'), `asked ${asked}`);
     assert.equal(tool.results.length, 2, JSON.stringify(last && last.reason));
   }
   { // three directions already in: no extra wave
     const { asked, tool } = await run([0, 120, 240]);
     assert.equal(tool.results.length, 3);
-    assert.ok(!asked.includes(30) && !asked.includes(90), `asked ${asked}`);
+    assert.ok(!asked.some((a) => a.startsWith('30:') || a.startsWith('90:')), `asked ${asked}`);
+  }
+  { // a bearing whose square never lands is retried as other shapes when too few directions came back
+    const { asked, tool } = await run(["0:fat"], { bearings: [0], byShape: true });
+    assert.ok(asked.includes("0:narrow") && asked.includes("0:fat"), `asked ${asked}`);
+    assert.equal(tool.results.length, 1);
+  }
+  { // ...and not when three directions are already in
+    const { asked } = await run([0, 120, 240]);
+    assert.ok(!asked.some((a) => a.endsWith(":narrow") || a.endsWith(":fat")), `asked ${asked}`);
   }
   { // the helpers _diversify uses
     const east = [[13.7, 51, 0], [13.7 + 3000 / KX, 51, 0], [13.7, 51, 0]];

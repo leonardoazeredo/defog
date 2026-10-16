@@ -13,7 +13,16 @@
   const MAX_RETRACE_REROUTES = 2;   // re-routed return legs per run
   const MAX_P2P_M = 30000;      // A and B farther apart than this need a street download past what we cap
   const MAX_LOOP_M = 30000;     // longer loops reach past the capped street download (bearing squares reach ~0.3x the length)
-  const MAX_LOOPS = 6;          // first-batch bearings when the planner found no routes; the rest of the ranked list is the second wave
+  const MAX_LOOPS = 6;          // first-batch bearings when the planner found no routes; the rest of the ranked list, and the first batch again as other shapes, is the second wave
+  // Square-ish loop shapes as [bearing offset, distance factor] vias around the compass bearing.
+  // The same bearing at another shape takes the router over different streets, so a bearing whose
+  // square jumps from far too short to far too long (a river crossing) can still land in tolerance.
+  const LOOP_SHAPES = {
+    square: [[-45, 1], [0, Math.SQRT2], [45, 1]],
+    narrow: [[-25, 1], [0, 1.6], [25, 1]],
+    fat: [[-60, 1], [0, 1.2], [60, 1]]
+  };
+  const ALT_SHAPES = ["narrow", "fat"];
   const FIT_ROUTES = 6;         // routes per size search, including the first: length jumps where a barrier sits, so a few tries beat one rescale
   const CONCURRENCY = 3;        // jobs interleaved by the pool
   // Same neon family as the drawn route (#ff2d55): red · pink · orange, which pops against
@@ -695,16 +704,17 @@
     return picked;
   };
 
-  // Square-ish loop S → v1 → v2 → v3 → S out along a bearing (S and three vias as the
-  // corners, edge a metres, straight perimeter 4a). Three vias give the router much
+  // Loop S → v1 → v2 → v3 → S out along a bearing; `shape` picks a LOOP_SHAPES entry. For
+  // "square" (S and three vias as the corners) a is the edge and the straight perimeter 4a;
+  // the other shapes use a as their via distance only. Three vias give the router much
   // less room than a 2-via triangle to fold the loop into out-and-back spurs.
-  SuggestTool.prototype._loopVias = function (S, bearingDeg, a) {
+  SuggestTool.prototype._loopVias = function (S, bearingDeg, a, shape = "square") {
     const { kx, ky } = metresPerDeg(S.lat);
     const at = (thDeg, m) => {
       const th = thDeg * Math.PI / 180;
       return L.latLng(S.lat + (Math.cos(th) * m) / ky, S.lng + (Math.sin(th) * m) / kx);
     };
-    return [at(bearingDeg - 45, a), at(bearingDeg, a * Math.SQRT2), at(bearingDeg + 45, a)]
+    return LOOP_SHAPES[shape].map(([off, f]) => at(bearingDeg + off, a * f))
       .map((v) => this._snapToNewStreets(v, a * 0.3));
   };
 
@@ -935,14 +945,16 @@
     // safety net, but a real one: in dense fringe the best square still beats
     // the best plan at times, so the first batch is three bearings when plans are plentiful,
     // four with one or two, and MAX_LOOPS when there are none.
-    // The ranked bearings left over are a second wave, run only if too few directions came out.
+    // The ranked bearings left over, and the first batch again as other shapes, are a second
+    // wave, run only if too few directions came out.
     const ranked = this._loopBearings(S, distM);
     const firstN = planned.length >= 3 ? 3 : planned.length >= 1 ? 4 : MAX_LOOPS;
     const bearings = ranked.slice(0, firstN);
     let total = bearings.length + planned.length;
     emit({ loading: true, phase: "loops", done: 0, total });
 
-    // 5: roads inflate the straight square (4a) by ~25%, so start with perimeter = D/1.25.
+    // Roads inflate the straight square (4a) by ~25%, so the square starts with perimeter = distM/1.25;
+    // the other shapes start at the same size and rely on fitLoopSize.
     // If the routed loop misses the tolerance, fitLoopSize searches for a size that lands in it;
     // if the square doesn't route at all, fall back to a triangle on the same bearing.
     const loopWps = (vias) => [S].concat(vias, [S]);
@@ -957,8 +969,8 @@
       if (!inTol(c.r.lenM)) { fails.tol++; return null; }
       return { r: c.r, adoptWps: c.adoptWps, overlap: overlapFrac(c.r.coords), planned: true };
     });
-    const squareJob = (bearing) => async () => {
-      let mk = (d) => this._loopVias(S, bearing, d);
+    const squareJob = (bearing, shape = "square") => async () => {
+      let mk = (d) => this._loopVias(S, bearing, d, shape);
       // route + snip in one step, so the tolerance check and fitLoopSize's size search
       // both judge the CLEANED length, so a loop whose snips pull it under target gets regrown, not binned
       const prep = async (d) => {
@@ -984,22 +996,24 @@
     };
 
     const tick = (base) => (done) => emit({ loading: true, phase: "loops", done: base + done, total });
-    const found = await this._pool(plannedJobs.concat(bearings.map(squareJob)), stale, tick(0));
+    const found = await this._pool(plannedJobs.concat(bearings.map((b) => squareJob(b))), stale, tick(0));
     if (stale()) return;
     // _diversify gives a card to a loop only when its direction differs by more than 60 degrees
     // from the earlier ones (deferred loops just fill up); fewer than three distinct directions
-    // means the unused bearings may add some
+    // means the second wave (unused bearings, other shapes) may add some
     const dirs = [];
     for (const c of found) {
       const b = loopBearingOf(S, c.r.coords);
       if (dirs.every((o) => bearingApart(o, b) > 60)) dirs.push(b);
     }
-    const wave = ranked.slice(firstN);
+    // leftover bearings as squares, then every first-batch bearing again as the alternate shapes
+    const wave = ranked.slice(firstN).map((b) => squareJob(b))
+      .concat([].concat(...ALT_SHAPES.map((sh) => bearings.map((b) => squareJob(b, sh)))));
     if (dirs.length < 3 && wave.length) {
       const base = total;
       total += wave.length;
       emit({ loading: true, phase: "loops", done: base, total });
-      found.push(...await this._pool(wave.map(squareJob), stale, tick(base)));
+      found.push(...await this._pool(wave, stale, tick(base)));
       if (stale()) return;
     }
     if (!found.length && fails.server > 0 && fails.tol === 0) {
