@@ -37,14 +37,14 @@ async function run(routable, opts = {}) {
   s.rects.push({ s: 50.9, n: 51.1, w: 13.6, e: 13.8, kind: "run" });
   const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => ({ area: 1e5, newPct: 100 }), isNew: () => true, streets: s });
   tool.mode = "loop"; tool.a = { getLatLng: () => S0 };
-  tool._loopBearings = () => opts.bearings || [0, 60, 120, 180, 240, 300, 30, 90]; // synthetic list (the real one has at most 6): first batch takes 6, the rest is the wave, which also retries the first batch as narrow and fat shapes
+  tool._loopBearings = () => opts.bearings || [0, 60, 120, 180, 240, 300, 30, 90]; // synthetic list (the real one has at most 6); no planner plans here, so the first batch takes 6; the rest is the wave, which also retries the first batch as narrow and fat shapes
   // the single via encodes the bearing and, by its distance, the shape, so the route stub can read it back
-  const VIA_M = { square: 100, narrow: 200, fat: 300 }; // the via distance tells the route stub which shape was asked
+  const VIA_M = { square: 100, narrow: 200, fat: 300, tri: 400 }; // the via distance tells the route stub which shape was asked
   tool._loopVias = (S, b, d, shape = "square") => {
     assert.ok(VIA_M[shape], `unknown shape ${shape}`); // Array.map must not leak its index in as the shape
     return [at(b, VIA_M[shape])];
   };
-  tool._loopViasTri = (S, b) => [at(b, 100)];
+  tool._loopViasTri = (S, b) => [at(b, VIA_M.tri)];
   const asked = [];
   tool._route = async (wps) => {
     const v = wps[1];
@@ -57,9 +57,10 @@ async function run(routable, opts = {}) {
     return { coords, lenM: 10000, legs: [{ coords: coords.slice(0, h) }, { coords: coords.slice(h - 1) }] };
   };
   let last = null;
-  tool.onResults = (x) => { if (x && !x.loading) last = x; };
+  const progress = [];
+  tool.onResults = (x) => { if (x && x.loading) progress.push(x); if (x && !x.loading) last = x; };
   await tool.suggest("hiking-mountain", { distM: 10000, buffer: 0.15 });
-  return { last, tool, asked };
+  return { last, tool, asked, progress };
 }
 
 (async () => {
@@ -85,6 +86,21 @@ async function run(routable, opts = {}) {
   { // ...and not when three directions are already in
     const { asked } = await run([0, 120, 240]);
     assert.ok(!asked.some((a) => a.endsWith(":narrow") || a.endsWith(":fat")), `asked ${asked}`);
+  }
+  { // another shape that fails to route is not retried as the triangle the first batch already tried
+    const { asked } = await run([], { bearings: [0] });
+    assert.equal(asked.filter((a) => a === "0:tri").length, 1, `asked ${asked}`);
+  }
+  { // the first-batch counter never grows or restarts; the wave reports on its own
+    const { progress } = await run([30, 90]);
+    const first = progress.filter((x) => x.phase === "loops"), more = progress.filter((x) => x.phase === "shapes");
+    assert.ok(first.every((x) => x.total === first[0].total), "first-batch total changed");
+    assert.ok(more.length > 0 && more[0].done === 0 && more[0].total > 0, JSON.stringify(more[0]));
+  }
+  { // shapes run one at a time: once one shape has brought three directions in, the next is not tried
+    const { asked, tool } = await run(["0:narrow", "120:narrow", "240:narrow"], { bearings: [0, 120, 240], byShape: true });
+    assert.equal(tool.results.length, 3);
+    assert.ok(asked.includes("0:narrow") && !asked.some((a) => a.endsWith(":fat")), `asked ${asked}`);
   }
   { // the helpers _diversify uses
     const east = [[13.7, 51, 0], [13.7 + 3000 / KX, 51, 0], [13.7, 51, 0]];

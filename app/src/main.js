@@ -484,6 +484,7 @@
         s.phase === "baseline" ? "Finding the fastest route…" :
         s.phase === "streets" ? "Reading the street map…" :
         s.phase === "loops" ? `Routing loops… ${s.done}/${s.total}` :
+        s.phase === "shapes" ? `Trying more loops… ${s.done}/${s.total}` :
         `Exploring detours… ${s.done}/${s.total}`}</div>`;
       return;
     }

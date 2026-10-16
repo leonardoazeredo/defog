@@ -950,7 +950,7 @@
     const ranked = this._loopBearings(S, distM);
     const firstN = planned.length >= 3 ? 3 : planned.length >= 1 ? 4 : MAX_LOOPS;
     const bearings = ranked.slice(0, firstN);
-    let total = bearings.length + planned.length;
+    const total = bearings.length + planned.length;
     emit({ loading: true, phase: "loops", done: 0, total });
 
     // Roads inflate the straight square (4a) by ~25%, so the square starts with perimeter = distM/1.25;
@@ -984,7 +984,8 @@
       };
       let dim = distM / 5;
       let c = await prep(dim);
-      if (!c) {
+      // the triangle on this bearing is shape-independent: a retry in another shape would only repeat it
+      if (!c && shape === "square") {
         mk = (d) => this._loopViasTri(S, bearing, d);
         dim = distM / 3.75;
         c = await prep(dim);
@@ -995,26 +996,30 @@
       return { r: c.r, adoptWps: c.adoptWps, overlap: overlapFrac(c.r.coords) };
     };
 
-    const tick = (base) => (done) => emit({ loading: true, phase: "loops", done: base + done, total });
-    const found = await this._pool(plannedJobs.concat(bearings.map((b) => squareJob(b))), stale, tick(0));
+    const tick = (phase, count) => (done) => emit({ loading: true, phase, done, total: count });
+    const found = await this._pool(plannedJobs.concat(bearings.map((b) => squareJob(b))), stale, tick("loops", total));
     if (stale()) return;
     // _diversify gives a card to a loop only when its direction differs by more than 60 degrees
     // from the earlier ones (deferred loops just fill up); fewer than three distinct directions
     // means the second wave (unused bearings, other shapes) may add some
-    const dirs = [];
-    // counted over what the overlap filter below will keep, or retracing loops would hide a short deck
-    for (const c of found.filter((x) => x.planned || x.overlap <= 0.3)) {
-      const b = loopBearingOf(S, c.r.coords);
-      if (dirs.every((o) => bearingApart(o, b) > 60)) dirs.push(b);
-    }
-    // leftover bearings as squares, then every first-batch bearing again as the alternate shapes
-    const wave = ranked.slice(firstN).map((b) => squareJob(b))
-      .concat([].concat(...ALT_SHAPES.map((sh) => bearings.map((b) => squareJob(b, sh)))));
-    if (dirs.length < 3 && wave.length) {
-      const base = total;
-      total += wave.length;
-      emit({ loading: true, phase: "loops", done: base, total });
-      found.push(...await this._pool(wave, stale, tick(base)));
+    const directions = () => {
+      const dirs = [];
+      // counted over what the overlap filter below will keep, or retracing loops would hide a short deck
+      for (const c of found.filter((x) => x.planned || x.overlap <= 0.3)) {
+        const b = loopBearingOf(S, c.r.coords);
+        if (dirs.every((o) => bearingApart(o, b) > 60)) dirs.push(b);
+      }
+      return dirs.length;
+    };
+    // leftover bearings as squares, then the first batch again one alternate shape at a time,
+    // each stage only while directions are still short (each stage routes every bearing again, so later stages are skipped once directions are in)
+    const stages = [ranked.slice(firstN).map((b) => squareJob(b))]
+      .concat(ALT_SHAPES.map((sh) => bearings.map((b) => squareJob(b, sh))))
+      .filter((st) => st.length);
+    for (const st of stages) {
+      if (directions() >= 3) break;
+      emit({ loading: true, phase: "shapes", done: 0, total: st.length });
+      found.push(...await this._pool(st, stale, tick("shapes", st.length)));
       if (stale()) return;
     }
     if (!found.length && fails.server > 0 && fails.tol === 0) {
