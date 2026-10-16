@@ -14,6 +14,7 @@
   const MAX_P2P_M = 30000;      // A and B farther apart than this need a street download past what we cap
   const MAX_LOOP_M = 30000;     // longer loops reach past the capped street download (bearing squares reach ~0.3x the length)
   const MAX_LOOPS = 6;          // loop bearings tried per run
+  const FIT_ROUTES = 6;         // routes per size search, including the first: length jumps where a barrier sits, so a few tries beat one rescale
   const CONCURRENCY = 3;        // jobs interleaved by the pool
   // Same neon family as the drawn route (#ff2d55): red · pink · orange, which pops against
   // the fog, deliberately far from the blue/purple/slate fog swatches.
@@ -852,6 +853,45 @@
     return mids;
   }
 
+  // Finds the square size whose cleaned route lands in tolerance. Route length is not
+  // monotone in size (a far bridge makes it jump), so bracket the target between the
+  // largest short size and the smallest long or unroutable one, and give up after a
+  // fixed budget with the closest candidate seen.
+  async function fitLoopSize(prep, dim0, first, distM, buffer, stale) {
+    const floor = distM * (1 - buffer), ceil = distM * (1 + buffer);
+    // 2 for out of tolerance, +1 for a snip the tolerance floor blocked: regrowing by the blocked amount makes the cut affordable
+    const badness = (x) => ((x.r.lenM >= floor && x.r.lenM <= ceil) ? 0 : 2) + (x.blockedM > 0 ? 1 : 0);
+    const closer = (a, b) => badness(a) < badness(b) ||
+      (badness(a) === badness(b) && Math.abs(a.r.lenM - distM) < Math.abs(b.r.lenM - distM));
+    const tried = new Set([dim0]);
+    let best = first, lo = null, hi = null, last = { dim: dim0, c: first };
+    const note = (dim, c) => {
+      if (!c || c.r.lenM > ceil) { if (!hi || dim < hi.dim) hi = { dim, lenM: c ? c.r.lenM : null }; }
+      else if (c.r.lenM < floor) { if (!lo || dim > lo.dim) lo = { dim, lenM: c.r.lenM }; }
+    };
+    note(dim0, first);
+    for (let n = 1; n < FIT_ROUTES && badness(best) > 0; n++) {
+      let dim;
+      if (lo && hi) {
+        // an unroutable hi has no length to interpolate on: bisect
+        const t = hi.lenM == null ? 0.5 : (distM - lo.lenM) / (hi.lenM - lo.lenM);
+        dim = lo.dim + Math.min(0.9, Math.max(0.1, t)) * (hi.dim - lo.dim);
+      } else if (last.c) {
+        dim = last.dim * Math.min(2.5, Math.max(0.4, (distM + last.c.blockedM) / last.c.r.lenM));
+      } else {
+        dim = hi.dim * 0.6;
+      }
+      if (tried.has(dim)) break;
+      tried.add(dim);
+      const c = await prep(dim);
+      last = { dim, c };
+      note(dim, c);
+      if (c && closer(c, best)) best = c;
+      if (stale()) break;
+    }
+    return best;
+  }
+
   SuggestTool.prototype._suggestLoop = async function (profile, distM, buffer) {
     if (!this.a || !distM) return;
     this.clearResults();
@@ -900,7 +940,7 @@
     emit({ loading: true, phase: "loops", done: 0, total });
 
     // 5: roads inflate the straight square (4a) by ~25%, so start with perimeter = D/1.25.
-    // If the routed loop misses the tolerance, retry once with a proportionally scaled shape;
+    // If the routed loop misses the tolerance, fitLoopSize searches for a size that lands in it;
     // if the square doesn't route at all, fall back to a triangle on the same bearing.
     const loopWps = (vias) => [S].concat(vias, [S]);
     const fails = { server: 0, tol: 0 };
@@ -916,8 +956,8 @@
     });
     const jobs = plannedJobs.concat(bearings.map((bearing) => async () => {
       let mk = (d) => this._loopVias(S, bearing, d);
-      // route + snip in one step, so tolerance and the rescale-retry both judge the
-      // CLEANED length, so a loop whose snips pull it under target gets regrown, not binned
+      // route + snip in one step, so the tolerance check and fitLoopSize's size search
+      // both judge the CLEANED length, so a loop whose snips pull it under target gets regrown, not binned
       const prep = async (d) => {
         const vias = mk(d);
         const raw = await this._route(loopWps(vias), profile);
@@ -935,20 +975,7 @@
         c = await prep(dim);
       }
       if (!c) { fails.server++; return null; }
-      // retry when out of tolerance OR a wanted snip was blocked by the tolerance floor;
-      // regrowing by the blocked amount makes the cut affordable on the second pass
-      const badness = (x) => (inTol(x.r.lenM) ? 0 : 2) + (x.blockedM > 0 ? 1 : 0);
-      // up to two improvement passes: a far-off first shot may need one rescale to reach
-      // tolerance and a second to regrow room for a floor-blocked snip
-      for (let attempt = 0; attempt < 2 && badness(c) > 0; attempt++) {
-        dim *= Math.min(2.5, Math.max(0.4, (distM + c.blockedM) / c.r.lenM));
-        const c2 = await prep(dim);
-        if (!c2) break;
-        const better = badness(c2) < badness(c) ||
-          (badness(c2) === badness(c) && Math.abs(c2.r.lenM - distM) < Math.abs(c.r.lenM - distM));
-        if (!better) break;
-        c = c2;
-      }
+      c = await fitLoopSize(prep, dim, c, distM, buffer, stale);
       if (!inTol(c.r.lenM)) { fails.tol++; return null; }
       return { r: c.r, adoptWps: c.adoptWps, overlap: overlapFrac(c.r.coords) };
     }));
@@ -969,6 +996,6 @@
     this._finish(runId, clean.length ? clean : found, { targetKm: distM / 1000, bufferPct });
   };
 
-  SuggestTool._internals = { snipOldSpurs, overlapFrac, rankKey, RETRACE_WEIGHT, statsFromCoords, joinPins, p2pWindow, p2pCandidates }; // for tests
+  SuggestTool._internals = { snipOldSpurs, overlapFrac, rankKey, RETRACE_WEIGHT, statsFromCoords, joinPins, p2pWindow, p2pCandidates, fitLoopSize, FIT_ROUTES }; // for tests
   global.SuggestTool = SuggestTool;
 })(window);
