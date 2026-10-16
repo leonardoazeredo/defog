@@ -16,20 +16,21 @@
   // Besides what people cover, the lists hold trunk roads, link roads and (on foot) steps:
   // routing needs their junctions, or side streets that reach the network only through
   // a main road are cut off
-  const RUN_HW = "residential|unclassified|tertiary|secondary|primary|trunk|living_street|track|path|footway|cycleway|pedestrian|steps|primary_link|secondary_link|tertiary_link|trunk_link";
-  const BIKE_HW = "residential|unclassified|tertiary|secondary|primary|trunk|living_street|cycleway|track|primary_link|secondary_link|tertiary_link|trunk_link";
+  const CONNECT_HW = "trunk|trunk_link|primary_link|secondary_link|tertiary_link";
+  const RUN_HW = "residential|unclassified|tertiary|secondary|primary|living_street|track|path|footway|cycleway|pedestrian|steps|" + CONNECT_HW;
+  const BIKE_HW = "residential|unclassified|tertiary|secondary|primary|living_street|cycleway|track|" + CONNECT_HW;
   // Which of the walked ways each other way of travelling can actually use. A
   // walking fetch also asks for these as bare ID LISTS (a few hundred KB, versus
   // about a megabyte if we asked Overpass for the tags), so the map can dim the
   // ways the chosen transport can't take without fetching anything again.
   const CLASS_HW = {
-    bike: "residential|unclassified|tertiary|secondary|primary|living_street|cycleway|track|path|trunk|primary_link|secondary_link|tertiary_link|trunk_link",
-    road: "residential|unclassified|tertiary|secondary|primary|living_street|cycleway|trunk|primary_link|secondary_link|tertiary_link|trunk_link",
-    car: "residential|unclassified|tertiary|secondary|primary|living_street|trunk|primary_link|secondary_link|tertiary_link|trunk_link"
+    bike: "residential|unclassified|tertiary|secondary|primary|living_street|cycleway|track|path|" + CONNECT_HW,
+    road: "residential|unclassified|tertiary|secondary|primary|living_street|cycleway|" + CONNECT_HW,
+    car: "residential|unclassified|tertiary|secondary|primary|living_street|" + CONNECT_HW
   };
   const CLASS_ORDER = ["bike", "road", "car"]; // the order the ID lists come back in
-  // routing profile -> travel class; the same table as streetsLayer's MODE_CLASS,
-  // keep them in step. Unlisted profiles (hiking-mountain, rail, shortest) use every way.
+  // routing profile -> travel class (also read by streetsLayer for its dimming).
+  // Unlisted profiles (hiking-mountain, rail, shortest) use every way.
   const MODE_CLASS = { trekking: "bike", fastbike: "road", "car-fast": "car" };
   const SEG_M = 50;              // ways are chopped into ~50 m scoring segments
   const GRID_M = 250;            // spatial bin size for radius queries
@@ -134,19 +135,17 @@
     const acc = `[access!~"^(private|no|military)$"]`;
     const clauses = (hw) => todo.map((r) =>
       `way[highway~"^(${hw})$"]${acc}(${bb(r)});way[highway=service]${acc}[service!~"^(driveway|parking_aisle)$"](${bb(r)});`).join("");
-    let q = `[out:json][timeout:60];(${clauses(kind === "bike" ? BIKE_HW : RUN_HW)});out skel geom;`;
-    // Ask a walking fetch for the travel-class ID lists too. Each list is
-    // introduced by its own count, so the groups stay apart in one response.
-    const lists = [];
-    if (kind !== "bike")
-      for (const k of CLASS_ORDER) { lists.push(k); q += `(${clauses(CLASS_HW[k])})->.${k};.${k} out count;.${k} out ids;`; }
-    // and the one-way ID lists (a way travelled one way, a roundabout, one travelled against its order)
+    const tagged = (hw, filter) => todo.map((r) => `way[highway~"^(${hw})$"]${acc}${filter}(${bb(r)});`).join("");
     const hw = kind === "bike" ? BIKE_HW : RUN_HW;
-    const tagged = (f) => todo.map((r) => `way[highway~"^(${hw})$"]${acc}${f}(${bb(r)});`).join("");
-    for (const [k, f] of [["oneWay", `[oneway~"^(yes|true|1)$"]`], ["reverseWay", `[oneway~"^(-1|reverse)$"]`]]) {
-      lists.push(k);
-      q += `(${tagged(f)}${k === "oneWay" ? todo.map((r) => `way[highway~"^(${hw})$"]${acc}[junction=roundabout][oneway!=no](${bb(r)});`).join("") : ""})->.${k};.${k} out count;.${k} out ids;`;
-    }
+    let q = `[out:json][timeout:60];(${clauses(hw)});out skel geom;`;
+    // Then ID lists, each introduced by its own count so the groups stay apart in one
+    // response: the travel classes (walking fetch only) and the one-ways (a way
+    // travelled one way, plus roundabouts, and one travelled against its node order).
+    const groups = (kind === "bike" ? [] : CLASS_ORDER.map((k) => [k, clauses(CLASS_HW[k])])).concat([
+      ["oneWay", tagged(hw, `[oneway~"^(yes|true|1)$"]`) + tagged(hw, `[junction=roundabout][oneway!=no]`)],
+      ["reverseWay", tagged(hw, `[oneway~"^(-1|reverse)$"]`)]
+    ]);
+    for (const [k, body] of groups) q += `(${body})->.${k};.${k} out count;.${k} out ids;`;
     const res = await fetch(OVERPASS, {
       method: "POST",
       // UA is for the Node benchmark harness (Overpass rejects Node's default);
@@ -156,13 +155,12 @@
     });
     if (!res.ok) throw new Error("overpass HTTP " + res.status);
     const gj = await res.json();
-    let group = -1; // -1 = the geometry, then one list (see `lists`) per count marker
+    let group = -1; // -1 = the geometry, then one list (see `groups`) per count marker
     for (const el of gj.elements || []) {
       if (el.type === "count") { group++; continue; }
       if (el.type !== "way") continue;
       if (group < 0) { this._addWay(el); if (kind !== "bike") this.classified.add(el.id); }
-      else if (this.classIds[lists[group]]) this.classIds[lists[group]].add(el.id);
-      else if (this[lists[group]]) this[lists[group]].add(el.id);
+      else (this.classIds[groups[group][0]] || this[groups[group][0]]).add(el.id);
     }
     for (const r of todo) this.rects.push({ s: r.s, w: r.w, n: r.n, e: r.e, kind });
   };
@@ -194,5 +192,6 @@
     return m2;
   };
 
+  StreetIndex.MODE_CLASS = MODE_CLASS;
   global.StreetIndex = StreetIndex;
 })(window);

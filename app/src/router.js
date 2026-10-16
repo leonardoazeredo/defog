@@ -1,7 +1,7 @@
 // Point-to-point routing over the street graph GraphPlanner builds from the
 // Overpass ways, so suggestions never need a routing server. Cost is plain
-// length: the cached ways carry no tags, so there are no one-ways or surface
-// preferences to weigh; profiles differ only in which ways the graph holds.
+// length: the cached ways carry no surface tags, so profiles differ only in which
+// ways the graph holds and which direction of a one-way they may take.
 (function (global) {
   const SNAP_M = 600;     // a point farther than this from every node is off the network
   const GAP_CELL_M = 250; // grid size for the closest approach between two pieces of the map
@@ -9,20 +9,9 @@
 
   function LocalRouter(planner) { this.planner = planner; }
 
-  // Nearest node of any degree: unlike planner.nearestNode a dead end is fine,
-  // the route just starts with a spur. A node in a stray fragment only counts when
-  // no real network node is in reach (the fragment is then all there is).
-  LocalRouter.prototype._snap = function (p) {
-    const pl = this.planner;
-    let best = -1, bd = SNAP_M * SNAP_M, any = -1, ad = SNAP_M * SNAP_M;
-    for (let i = 0; i < pl.lons.length; i++) {
-      const dx = (pl.lons[i] - p.lng) * pl.kx, dy = (pl.lats[i] - p.lat) * pl.ky;
-      const d = dx * dx + dy * dy;
-      if (d < ad) { ad = d; any = i; }
-      if (d < bd && pl.inNet[i]) { bd = d; best = i; }
-    }
-    return best >= 0 ? best : any;
-  };
+  // Nodes of any degree: unlike planner.nearestNode a dead end is fine, the route just
+  // starts with a spur.
+  LocalRouter.prototype._snap = function (p) { return this.planner.snap(p, SNAP_M, 1); };
 
   // Why a route does or doesn't exist, for the user and the logs: per point the snap
   // it got, how big a piece of the street map it sits on, and for a failure the reason

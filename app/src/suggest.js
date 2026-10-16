@@ -243,6 +243,17 @@
   // footways/paths (also keeps the bigger bike-range downloads sane).
   function streetKind(profile) { return profile === "hiking-mountain" ? "run" : "bike"; }
 
+  // Make sure the streets for the rects are loaded. Resolves false once the run is over:
+  // stale, or the error state was emitted because the download failed.
+  SuggestTool.prototype._loadStreets = async function (rects, profile, emit, stale) {
+    const kind = streetKind(profile);
+    // only announce a fetch when one will really happen; a rerun in the same
+    // area is served from cache and shouldn't flash "reading the street map"
+    if (this.streets.needsFetch(rects, kind)) emit({ loading: true, phase: "streets" });
+    try { await this.streets.ensureRects(rects, kind); } catch (e) { emit({ error: true, reason: "streets-fetch", why: e.message }); return false; }
+    return !stale();
+  };
+
   // The street graph for a profile: it plans high-defog loops and walks and is
   // what routing runs on. One per profile, because each may use different ways;
   // built lazily, rebuilt only when new streets arrive.
@@ -532,11 +543,7 @@
       s: Math.min(sa.lat, sb.lat) - m / ky, n: Math.max(sa.lat, sb.lat) + m / ky,
       w: Math.min(sa.lng, sb.lng) - m / kx, e: Math.max(sa.lng, sb.lng) + m / kx
     }];
-    // only announce a fetch when one will really happen; a rerun in the same
-    // area is served from cache and shouldn't flash "reading the street map"
-    if (this.streets.needsFetch(rects, streetKind(profile))) emit({ loading: true, phase: "streets" });
-    try { await this.streets.ensureRects(rects, streetKind(profile)); } catch (e) { emit({ error: true, reason: "streets-fetch", why: e.message }); return; }
-    if (stale()) return;
+    if (!(await this._loadStreets(rects, profile, emit, stale))) return;
 
     const base = await this._route([A, B], profile);
     if (stale()) return;
@@ -845,11 +852,7 @@
     const c = this.streets.snapPoint(S);
     const half = Math.min(distM * 0.45 + 800, 9000);
     const rects = [{ s: c.lat - half / ky, n: c.lat + half / ky, w: c.lng - half / kx, e: c.lng + half / kx }];
-    // only announce a fetch when one will really happen; a rerun in the same
-    // area is served from cache and shouldn't flash "reading the street map"
-    if (this.streets.needsFetch(rects, streetKind(profile))) emit({ loading: true, phase: "streets" });
-    try { await this.streets.ensureRects(rects, streetKind(profile)); } catch (e) { emit({ error: true, reason: "streets-fetch", why: e.message }); return; }
-    if (stale()) return;
+    if (!(await this._loadStreets(rects, profile, emit, stale))) return;
     const planner = this._getPlanner(profile);
     if (!planner) { emit({ error: true, reason: "no-street-data" }); return; }
 

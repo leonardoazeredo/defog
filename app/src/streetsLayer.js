@@ -32,7 +32,7 @@
   };
   const DIM_OP = 0.45; // strength of stretches the chosen transport can't use
   // Which travel class each Plan mode needs; the rest can go anywhere on foot.
-  const MODE_CLASS = { trekking: "bike", fastbike: "road", "car-fast": "car" };
+  const MODE_CLASS = global.StreetIndex.MODE_CLASS;
   function shade(hex, f) {
     const h = hex.replace("#", "");
     const c = [0, 2, 4].map((i) => Math.round(parseInt(h.substr(i, 2), 16) * f));

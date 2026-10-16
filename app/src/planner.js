@@ -296,16 +296,23 @@
     return { coords, len, gained };
   };
 
-  GraphPlanner.prototype.nearestNode = function (latlng, maxM) {
-    let best = -1, bd = (maxM || 600) * (maxM || 600);
+  // Nearest node with at least minDeg edges within maxM, preferring nodes on a real
+  // network: one in a stray fragment (courtyard, station) only counts when no network
+  // node is in reach, so a pin beside a fragment still starts on the street map.
+  GraphPlanner.prototype.snap = function (latlng, maxM, minDeg) {
+    let best = -1, bd = maxM * maxM, any = -1, ad = bd;
     for (let i = 0; i < this.lons.length; i++) {
+      if (this.adj[i].length < minDeg) continue;
       const dx = (this.lons[i] - latlng.lng) * this.kx, dy = (this.lats[i] - latlng.lat) * this.ky;
       const d = dx * dx + dy * dy;
-      // prefer proper intersections; a dead-end start makes every plan begin with a spur
-      if (d < bd && this.adj[i].length >= 2 && this.inNet[i]) { bd = d; best = i; }
+      if (d < ad) { ad = d; any = i; }
+      if (d < bd && this.inNet[i]) { bd = d; best = i; }
     }
-    return best;
+    return best >= 0 ? best : any;
   };
+
+  // Plans start on proper intersections: a dead-end start makes every plan begin with a spur.
+  GraphPlanner.prototype.nearestNode = function (latlng, maxM) { return this.snap(latlng, maxM || 600, 2); };
 
   // Rewarding way clusters on a coarse grid: what the plan visits. A pocket's
   // worth is its defoggable area WEIGHTED BY PURITY (the still-fogged share of
