@@ -1,0 +1,68 @@
+// Second wave of loop bearings and the shared direction helpers; synthetic streets, stubbed routing, no network.
+//   node bench/loop-wave.test.js
+"use strict";
+const assert = require("node:assert/strict");
+const { SuggestTool, StreetIndex } = require("./lib/load.js");
+const { loopBearingOf, bearingApart } = SuggestTool._internals;
+
+const KX = 111320 * Math.cos(51 * Math.PI / 180), KY = 110540;
+const rad = (d) => d * Math.PI / 180;
+const S0 = global.L.latLng(51, 13.7);
+const ll = (x, y) => ({ lat: 51 + y / KY, lon: 13.7 + x / KX });
+const at = (b, m) => global.L.latLng(51 + Math.cos(rad(b)) * m / KY, 13.7 + Math.sin(rad(b)) * m / KX);
+
+// a 4 km x 1 km ring (10 km) pointing along bearing b: its farthest corner sits ~14 degrees past b
+function ring(b) {
+  const u = [Math.sin(rad(b)), Math.cos(rad(b))], v = [Math.sin(rad(b + 90)), Math.cos(rad(b + 90))];
+  const pt = (a, c) => [13.7 + (u[0] * a + v[0] * c) / KX, 51 + (u[1] * a + v[1] * c) / KY, 0];
+  const out = [];
+  const edge = (p, q) => { for (let k = 0; k < 40; k++) out.push(pt(p[0] + (q[0] - p[0]) * k / 40, p[1] + (q[1] - p[1]) * k / 40)); };
+  edge([0, 0], [4000, 0]); edge([4000, 0], [4000, 1000]); edge([4000, 1000], [0, 1000]); edge([0, 1000], [0, 0]);
+  out.push(pt(0, 0));
+  return out;
+}
+
+async function run(routable) {
+  const s = new StreetIndex({ newFrac: () => 1 });
+  s._anchor(51);
+  s._addWay({ id: 1, nodes: [1, 2], geometry: [ll(-3000, 0), ll(3000, 0)] });
+  s.rects.push({ s: 50.9, n: 51.1, w: 13.6, e: 13.8, kind: "run" });
+  const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => ({ area: 1e5, newPct: 100 }), isNew: () => true, streets: s });
+  tool.mode = "loop"; tool.a = { getLatLng: () => S0 };
+  tool._loopBearings = () => [0, 60, 120, 180, 240, 300, 30, 90]; // first batch takes 6, the rest is the wave
+  // the single via encodes the bearing, so the route stub can read it back
+  tool._loopVias = tool._loopViasTri = (S, b) => [at(b, 100)];
+  const asked = [];
+  tool._route = async (wps) => {
+    const v = wps[1];
+    const b = Math.round((Math.atan2((v.lng - 13.7) * KX, (v.lat - 51) * KY) * 180 / Math.PI + 360) % 360);
+    asked.push(b);
+    if (!routable.includes(b)) return null;
+    const coords = ring(b);
+    const h = Math.floor(coords.length / 2);
+    return { coords, lenM: 10000, legs: [{ coords: coords.slice(0, h) }, { coords: coords.slice(h - 1) }] };
+  };
+  let last = null;
+  tool.onResults = (x) => { if (x && !x.loading) last = x; };
+  await tool.suggest("hiking-mountain", { distM: 10000, buffer: 0.15 });
+  return { last, tool, asked };
+}
+
+(async () => {
+  { // nothing routes in the first batch: the leftover bearings run and their loops are shown
+    const { last, tool, asked } = await run([30, 90]);
+    assert.ok(asked.includes(30) && asked.includes(90), `asked ${asked}`);
+    assert.equal(tool.results.length, 2, JSON.stringify(last && last.reason));
+  }
+  { // three directions already in: no extra wave
+    const { asked, tool } = await run([0, 120, 240]);
+    assert.equal(tool.results.length, 3);
+    assert.ok(!asked.includes(30) && !asked.includes(90), `asked ${asked}`);
+  }
+  { // the helpers _diversify uses
+    const east = [[13.7, 51, 0], [13.7 + 3000 / KX, 51, 0], [13.7, 51, 0]];
+    assert.ok(Math.abs(loopBearingOf(S0, east) - 90) < 1);
+    assert.equal(bearingApart(350, 10), 20);
+  }
+  console.log("loop-wave.test.js ok");
+})();

@@ -13,7 +13,7 @@
   const MAX_RETRACE_REROUTES = 2;   // re-routed return legs per run
   const MAX_P2P_M = 30000;      // A and B farther apart than this need a street download past what we cap
   const MAX_LOOP_M = 30000;     // longer loops reach past the capped street download (bearing squares reach ~0.3x the length)
-  const MAX_LOOPS = 6;          // loop bearings tried per run
+  const MAX_LOOPS = 6;          // first-batch bearings when the planner found no routes; the rest of the ranked list is the second wave
   const FIT_ROUTES = 6;         // routes per size search, including the first: length jumps where a barrier sits, so a few tries beat one rescale
   const CONCURRENCY = 3;        // jobs interleaved by the pool
   // Same neon family as the drawn route (#ff2d55): red · pink · orange, which pops against
@@ -324,6 +324,17 @@
     return out;
   };
 
+  // Compass bearing from S to the farthest point of a loop: what "direction" means for a loop.
+  function loopBearingOf(S, coords) {
+    let far = coords[0], fd = -1;
+    for (const p of coords) {
+      const d = (p[1] - S.lat) * (p[1] - S.lat) + (p[0] - S.lng) * (p[0] - S.lng);
+      if (d > fd) { fd = d; far = p; }
+    }
+    return (((Math.atan2(far[0] - S.lng, far[1] - S.lat) * 180 / Math.PI) + 360) % 360);
+  }
+  function bearingApart(a, b) { const d = Math.abs(a - b) % 360; return Math.min(d, 360 - d); }
+
   // Show three routes that go different ways rather than three variations on
   // one. Loops are separated by direction: a candidate is taken only if no
   // already-taken loop heads within 60 degrees of it (heading = start pin to
@@ -342,17 +353,8 @@
     let differs;
     if (loop) {
       const S = this.a.getLatLng();
-      const bearing = (c) => {
-        let far = c.r.coords[0], fd = -1;
-        for (const p of c.r.coords) {
-          const d = (p[1] - S.lat) * (p[1] - S.lat) + (p[0] - S.lng) * (p[0] - S.lng);
-          if (d > fd) { fd = d; far = p; }
-        }
-        return (((Math.atan2(far[0] - S.lng, far[1] - S.lat) * 180 / Math.PI) + 360) % 360);
-      };
-      const apart = (a, b) => { const d = Math.abs(a - b) % 360; return Math.min(d, 360 - d); };
-      for (const c of ranked) c._brg = bearing(c);
-      differs = (c, taken) => taken.every((o) => apart(o._brg, c._brg) > 60);
+      for (const c of ranked) c._brg = loopBearingOf(S, c.r.coords);
+      differs = (c, taken) => taken.every((o) => bearingApart(o._brg, c._brg) > 60);
     } else {
       differs = (c, taken) => taken.every((o) => sharedFrac(c.r.coords, o.cells, kx, ky) < SAME_CORRIDOR);
     }
@@ -688,9 +690,7 @@
     scored.sort((x, y) => y.score - x.score);
     const picked = [];
     for (const s of scored) {
-      if (picked.length >= MAX_LOOPS) break;
-      const sep = (a, b2) => { const d = Math.abs(a - b2) % 360; return Math.min(d, 360 - d); };
-      if (picked.every((p) => sep(p, s.b) >= 45)) picked.push(s.b);
+      if (picked.every((p) => bearingApart(p, s.b) >= 45)) picked.push(s.b);
     }
     return picked;
   };
@@ -933,10 +933,13 @@
     }
     // With planner candidates in hand, compass-square candidates become a
     // safety net, but a real one: in dense fringe the best square still beats
-    // the best plan at times, so keep three even when plans are plentiful.
-    const bearings = this._loopBearings(S, distM)
-      .slice(0, planned.length >= 3 ? 3 : planned.length >= 1 ? 4 : MAX_LOOPS);
-    const total = bearings.length + planned.length;
+    // the best plan at times, so the first batch is three bearings when plans are plentiful,
+    // four with one or two, and MAX_LOOPS when there are none.
+    // The ranked bearings left over are a second wave, run only if too few directions came out.
+    const ranked = this._loopBearings(S, distM);
+    const firstN = planned.length >= 3 ? 3 : planned.length >= 1 ? 4 : MAX_LOOPS;
+    const bearings = ranked.slice(0, firstN);
+    let total = bearings.length + planned.length;
     emit({ loading: true, phase: "loops", done: 0, total });
 
     // 5: roads inflate the straight square (4a) by ~25%, so start with perimeter = D/1.25.
@@ -954,7 +957,7 @@
       if (!inTol(c.r.lenM)) { fails.tol++; return null; }
       return { r: c.r, adoptWps: c.adoptWps, overlap: overlapFrac(c.r.coords), planned: true };
     });
-    const jobs = plannedJobs.concat(bearings.map((bearing) => async () => {
+    const squareJob = (bearing) => async () => {
       let mk = (d) => this._loopVias(S, bearing, d);
       // route + snip in one step, so the tolerance check and fitLoopSize's size search
       // both judge the CLEANED length, so a loop whose snips pull it under target gets regrown, not binned
@@ -978,10 +981,27 @@
       c = await fitLoopSize(prep, dim, c, distM, buffer, stale);
       if (!inTol(c.r.lenM)) { fails.tol++; return null; }
       return { r: c.r, adoptWps: c.adoptWps, overlap: overlapFrac(c.r.coords) };
-    }));
+    };
 
-    const found = await this._pool(jobs, stale, (done) => emit({ loading: true, phase: "loops", done, total }));
+    const tick = (base) => (done) => emit({ loading: true, phase: "loops", done: base + done, total });
+    const found = await this._pool(plannedJobs.concat(bearings.map(squareJob)), stale, tick(0));
     if (stale()) return;
+    // _diversify gives a card to a loop only when its direction differs by more than 60 degrees
+    // from the earlier ones (deferred loops just fill up); fewer than three distinct directions
+    // means the unused bearings may add some
+    const dirs = [];
+    for (const c of found) {
+      const b = loopBearingOf(S, c.r.coords);
+      if (dirs.every((o) => bearingApart(o, b) > 60)) dirs.push(b);
+    }
+    const wave = ranked.slice(firstN);
+    if (dirs.length < 3 && wave.length) {
+      const base = total;
+      total += wave.length;
+      emit({ loading: true, phase: "loops", done: base, total });
+      found.push(...await this._pool(wave.map(squareJob), stale, tick(base)));
+      if (stale()) return;
+    }
     if (!found.length && fails.server > 0 && fails.tol === 0) {
       // nothing routed at all, a server problem, not a tolerance problem; say so
       emit({ empty: true, reason: "server", targetKm: distM / 1000, bufferPct });
@@ -996,6 +1016,6 @@
     this._finish(runId, clean.length ? clean : found, { targetKm: distM / 1000, bufferPct });
   };
 
-  SuggestTool._internals = { snipOldSpurs, overlapFrac, rankKey, RETRACE_WEIGHT, statsFromCoords, joinPins, p2pWindow, p2pCandidates, fitLoopSize, FIT_ROUTES }; // for tests
+  SuggestTool._internals = { loopBearingOf, bearingApart, snipOldSpurs, overlapFrac, rankKey, RETRACE_WEIGHT, statsFromCoords, joinPins, p2pWindow, p2pCandidates, fitLoopSize, FIT_ROUTES }; // for tests
   global.SuggestTool = SuggestTool;
 })(window);
