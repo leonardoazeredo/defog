@@ -33,7 +33,13 @@ The synthetic-graph tests need no `Sync/` and no network:
 and `compare` cover the travel-class filter, the Overpass query and how its reply is read,
 shortest paths and one-ways, why a run fails, the Use hand-off, the retrace ranking and
 compare.js itself. `scenarios.js` also holds scenarios the baseline lacks (road bike, car,
-a 20 km loop): compare.js only scores what the baseline has.
+a 20 km loop): compare.js only scores what the baseline has. `loop-fit` and `loop-wave` cover
+the loop size search and the second wave.
+
+Loop suggestions fit each compass square's size by a bracketed search (route length jumps where
+a river or bridge sits, so one rescale is not enough). When fewer than three distinct directions
+come back, a second wave runs the unused bearings and retries the first batch as narrow and fat
+shapes; with three directions in, nothing extra runs.
 
 Acceptance against the BRouter baseline `bench/out/baseline-brouter.json` (keep a copy outside
 `bench/out`; it can't be regenerated):
