@@ -15,9 +15,12 @@ const rect = [{ s: 51, w: 13.7, n: 51.01, e: 13.71 }];
 
 (async () => {
   { // a wheeled (bike-kind) fetch asks for the travel classes too, so car and road profiles are filtered
-    replyWith({ elements: [way(1), way(2), count, ...ids(1, 2), count, ...ids(2), count, ...ids(2), count, ...ids(1), count] });
+    // geometry, then bike, road, car, oneWay, reverseWay, bikeBoth, motorway
+    replyWith({ elements: [way(1), way(2), count, ...ids(1, 2), count, ...ids(2), count, ...ids(2), count, ...ids(1), count, count, ...ids(2), count, ...ids(1)] });
     const s = new StreetIndex({ newFrac: () => 1 });
     await s.ensureRects(rect, "bike");
+    assert.deepEqual([...s.bikeBoth], [2]);
+    assert.deepEqual([...s.motorway], [1]);
     assert.deepEqual([...s.classIds.bike], [1, 2]);
     assert.deepEqual([...s.classIds.road], [2]);
     assert.deepEqual([...s.classIds.car], [2]);
@@ -37,6 +40,23 @@ const rect = [{ s: 51, w: 13.7, n: 51.01, e: 13.71 }];
     await new StreetIndex({ newFrac: () => 1 }).ensureRects(rect, "run");
     assert.equal(sent.split("51.0000,13.7000").length - 1, 2, "one highway clause and one service clause");
     assert.match(sent, /->\.all;/);
+  }
+  { // bikes are kept off bicycle=no, cars are not; a car fetch also takes motorways
+    replyWith({ elements: [] });
+    await new StreetIndex({ newFrac: () => 1 }).ensureRects(rect, "car");
+    assert.match(sent, /motorway\|motorway_link/);
+    assert.doesNotMatch(sent, /motorroad/);
+    assert.match(sent, /\.bike;|->\.bike/);
+    const bikeList = sent.slice(sent.indexOf("("), sent.length).split("->.bike")[0];
+    assert.match(bikeList.slice(bikeList.lastIndexOf("(")), /\[bicycle!=no\]/);
+    const carList = sent.split("->.road;")[1].split("->.car;")[0];
+    assert.doesNotMatch(carList, /bicycle/);
+  }
+  { // a walking fetch does not cover a request for cars (no motorways in it)
+    const s = new StreetIndex({ newFrac: () => 1 });
+    s.rects.push({ s: 50, w: 13, n: 52, e: 14, kind: "run" });
+    assert.equal(s.needsFetch(rect, "bike"), false);
+    assert.equal(s.needsFetch(rect, "car"), true);
   }
   { // walking and wheels both exclude motorroads; walking also foot=no
     replyWith({ elements: [] });

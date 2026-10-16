@@ -40,7 +40,7 @@
     this.lines = [];                       // their preview polylines
     this.selected = -1;
     this._runId = 0;
-    this._planners = {};                   // profile -> GraphPlanner
+    this._planners = {};                   // travel class -> GraphPlanner
     this._onClick = (e) => this._place(e.latlng);
   }
 
@@ -159,7 +159,8 @@
     // the new route also starts with a stub from the via pin, so compare tails
     const tail = back.coords.slice(-home.coords.length);
     if (tail.length === home.coords.length && tail.every((p, i) => p[0] === home.coords[i][0] && p[1] === home.coords[i][1])) return null;
-    return statsFromCoords(out.coords.concat(back.coords.slice(1)));
+    // the pin's stub is dropped; the way home then starts on the vertex the way out ended on
+    return statsFromCoords(dropRepeats(out.coords.concat(back.coords.slice(1))));
   };
 
   // Share of never-visited cells within ~100 m of a point, used to steer candidates
@@ -241,8 +242,8 @@
   }
 
   // Which street classes matter: on foot everything walkable, on wheels not
-  // footways/paths (also keeps the bigger bike-range downloads sane).
-  function streetKind(profile) { return profile === "hiking-mountain" ? "run" : "bike"; }
+  // footways/paths (also keeps the bigger bike-range downloads sane), by car also motorways.
+  function streetKind(profile) { return profile === "hiking-mountain" ? "run" : profile === "car-fast" ? "car" : "bike"; }
 
   // Make sure the streets for the rects are loaded. Resolves false once the run is over:
   // stale, or the error state was emitted because the download failed.
@@ -260,9 +261,11 @@
   // built lazily, rebuilt only when new streets arrive.
   SuggestTool.prototype._getPlanner = function (profile) {
     if (!this.streets || !global.GraphPlanner || !this.streets.ways.length) return null;
-    if (!this._planners[profile])
-      this._planners[profile] = new global.GraphPlanner(this.streets, this.streets.newFrac, this.streets.usableFor(profile), this.streets.onewayFor(profile));
-    return this._planners[profile];
+    // usableFor and onewayFor depend only on the travel class, so profiles sharing one share the graph
+    const key = global.StreetIndex.MODE_CLASS[profile] || "foot";
+    if (!this._planners[key])
+      this._planners[key] = new global.GraphPlanner(this.streets, this.streets.newFrac, this.streets.usableFor(profile), this.streets.onewayFor(profile));
+    return this._planners[key];
   };
 
   // Defoggable area (m²) reachable via the ways within rM of the point, or
@@ -421,6 +424,11 @@
   SuggestTool.prototype.suggest = function (profile, o) {
     o = o || {};
     const buffer = o.buffer || DEFAULT_BUFFER;
+    if (profile === "rail") { // the street map holds no rail lines to route on
+      this.clearResults();
+      if (this.onResults) this.onResults({ empty: true, reason: "mode" });
+      return Promise.resolve();
+    }
     if (this.mode === "loop") return this._suggestLoop(profile, o.distM, buffer);
     return this._suggestP2P(profile, buffer, o.targetM);
   };
@@ -796,6 +804,11 @@
     for (const s of applied) { out.push(...coords.slice(idx, s.i + 1)); idx = s.j; }
     out.push(...coords.slice(idx));
     return { coords: out, blockedM };
+  }
+
+  // The same polyline without a vertex repeated right after itself.
+  function dropRepeats(coords) {
+    return coords.filter((p, i) => i === 0 || p[0] !== coords[i - 1][0] || p[1] !== coords[i - 1][1]);
   }
 
   // Recompute length (and ascent/descent, where the coordinates carry elevation)

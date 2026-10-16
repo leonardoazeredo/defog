@@ -23,7 +23,7 @@ Data flow:
 - `streets.js`: `StreetIndex` fetches OSM ways from Overpass in tiles and scores ~50 m segments by the share of their ~30 m corridor still fogged. Shared by `streetsLayer.js` ("Streets in fog" highlight), `planner.js` and `suggest.js`.
 - `route.js`: manual route tool (the only BRouter caller: snapping, drag/insert waypoints, GPX; `setFixedRoute` takes a suggestion's geometry without a request). `export.js`: fog -> KML.
 - `planner.js`: graph search over StreetIndex ways (pockets of rewarding streets joined by reward-hungry paths, rewards spent as edges are used so loops come back on different streets). Runs locally and returns real street geometry (`coords`). Builds the street graph (components, one-way directions, travel-class filter) that `router.js` routes on.
-- `router.js`: `LocalRouter`, shortest paths over the planner graph (via points, per-edge avoid penalties, `explain` for why a route failed). Load order: after `planner.js`, before `suggest.js`.
+- `router.js`: `LocalRouter`, A* shortest paths over the planner graph (pins snap onto the street itself, via points, per-edge avoid penalties, `explain` for why a route failed). Load order: after `planner.js`, before `suggest.js`.
 - `suggest.js`: `SuggestTool` (A->B and loop modes). Never calls BRouter: fetches streets from Overpass, then routes via-point and planner candidates locally and scores each with the `computeGain` callback it is given. A failed run emits `{error, reason, why}`.
 - `main.js`: wires the UI, style controls, persistence, and defines `computeGain`/`cellIsNew` as closures over UI state.
 

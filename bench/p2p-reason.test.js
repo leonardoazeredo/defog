@@ -16,12 +16,12 @@ function streetsWith(ways) {
   s.rects.push({ s: 50.9, n: 51.1, w: 13.6, e: 13.8, kind: "run" });
   return s;
 }
-async function run(streets, a, b) {
+async function run(streets, a, b, profile = "hiking-mountain") {
   const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => null, streets });
   tool.mode = "p2p"; tool.a = pin(...a); tool.b = pin(...b);
   let last = null;
   tool.onResults = (s) => { if (s && !s.loading) last = s; };
-  await tool.suggest("hiking-mountain", { buffer: 0.15 });
+  await tool.suggest(profile, { buffer: 0.15 });
   return last;
 }
 const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]]];
@@ -56,6 +56,18 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]]]
     const r = await run(st, [0, 0], [0, 40000]);
     assert.equal(r.empty, true);
     assert.equal(r.reason, "too-far");
+  }
+  { // rail has no tracks in the street map: declined rather than routed on streets
+    const r = await run(streetsWith(street), [0, 0], [1000, 0], "rail");
+    assert.equal(r.empty, true);
+    assert.equal(r.reason, "mode");
+  }
+  { // one graph per travel class: walk, rail and direct share one, each wheeled class has its own
+    const t = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => null, streets: streetsWith(street) });
+    assert.equal(t._getPlanner("rail"), t._getPlanner("shortest"));
+    assert.equal(t._getPlanner("rail"), t._getPlanner("hiking-mountain"));
+    assert.notEqual(t._getPlanner("trekking"), t._getPlanner("fastbike"));
+    assert.notEqual(t._getPlanner("trekking"), t._getPlanner("hiking-mountain"));
   }
   { // a loop longer than the street download can cover says so, without downloading anything
     const st = streetsWith(street);

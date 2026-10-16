@@ -92,4 +92,26 @@ const A = pt(0, 0), B = pt(1000, 0);
 { // a profile that leaves no usable street at all is "no street data", not an infinite distance
   assert.equal(router([]).explain([A, B]).reason, "no-street-data");
 }
+{ // pins snap onto the street itself, not only to junctions: mid-way on a 1.4 km way
+  const long = [[1, 2, [0, 0], [1400, 0]]];
+  const r = router(long).route([pt(500, 6), pt(900, -4)]);
+  assert.ok(r, "pin 500 m from the nearest junction");
+  assert.ok(Math.abs(r.lenM - (400 + 6 + 4)) < 3, `len ${r.lenM}`);
+  assert.equal(router(long).explain([pt(500, 6), pt(900, 0)]).reason, null);
+}
+{ // along a bent way the partial piece follows the bend
+  const bent = [[1, 2, [0, 0], [300, 0]], [2, 3, [300, 0], [300, 300]]];
+  const r = router(bent).route([pt(100, 0), pt(300, 200)]);
+  assert.ok(Math.abs(r.lenM - 400) < 2, `bent ${r.lenM}`);
+}
+{ // two pins on one one-way way: only the way's direction is open
+  const rt = router([[1, 2, [0, 0], [1400, 0]]], () => 1);
+  assert.ok(rt.route([pt(300, 0), pt(800, 0)]), "with the way");
+  assert.equal(rt.route([pt(800, 0), pt(300, 0)]), null, "against it");
+  assert.deepEqual(rt.route([pt(300, 0), pt(800, 0)]).legs[0].edges, [0], "the partly walked edge counts, so a way home can avoid it");
+}
+{ // no zero-length steps in a route, even with a pin exactly on a junction
+  const r = router(straight).route([A, pt(500, 0), B]);
+  assert.ok(r.coords.every((c, i) => i === 0 || c[0] !== r.coords[i - 1][0] || c[1] !== r.coords[i - 1][1]), "repeated vertex");
+}
 console.log("router.test.js ok");

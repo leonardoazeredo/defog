@@ -72,7 +72,7 @@
     this.usable = usable || (() => true);
     this.dirOf = dirOf || (() => 0);
     this.newFrac = fracCache(newFrac);
-    this.built = 0; // ways incorporated so far; rebuild when more are fetched
+    this.builtStamp = ""; // what the graph was built from; rebuild when a fetch changed it
   }
 
   // ---- graph construction --------------------------------------------------
@@ -80,7 +80,9 @@
   // Edges: the way pieces between nodes, each with geometry, length and reward.
   GraphPlanner.prototype.build = function () {
     const ways = this.streets.ways;
-    if (this.built === ways.length && this.adj) return;
+    // new ways, or lists (classes, one-ways) that a fetch changed on ways we already hold
+    const stamp = ways.length + "." + (this.streets.version || 0);
+    if (this.builtStamp === stamp && this.adj) return;
     const t0 = Date.now();
     const uses = new Map();
     for (const w of ways) {
@@ -179,8 +181,9 @@
     for (const piece of pieces)
       if (piece.length >= NET_MIN_NODES || piece.length === biggest) for (const u of piece) this.inNet[u] = 1;
     this.plainDist = new Map(); // source node -> Float64Array of shortest lengths
+    this.plainToDist = new Map(); // target node -> Float64Array of shortest lengths from every node to it
     this.ver = 0;
-    this.built = ways.length;
+    this.builtStamp = stamp;
     this.buildMs = Date.now() - t0;
   };
 
@@ -226,10 +229,13 @@
     }
   };
 
-  // Can the edge be left from node u (one-ways only open at their entry end)?
-  GraphPlanner.prototype.canLeave = function (e, u) { return !e.dir || (e.dir > 0 ? e.a : e.b) === u; };
+  // Can the edge be left from node u (one-ways only open at their entry end)? With
+  // reverse, can it be entered at u: the search then runs against the direction of travel.
+  GraphPlanner.prototype.canLeave = function (e, u, reverse) {
+    return !e.dir || (e.dir > 0 === !reverse ? e.a : e.b) === u;
+  };
 
-  GraphPlanner.prototype._dijkstra = function (src, costFn) {
+  GraphPlanner.prototype._dijkstra = function (src, costFn, reverse) {
     const N = this.lons.length;
     const dist = new Float64Array(N).fill(Infinity);
     const prev = new Int32Array(N).fill(-1);
@@ -241,13 +247,20 @@
       if (du > dist[u]) continue;
       for (const ei of this.adj[u]) {
         const e = this.edges[ei];
-        if (!this.canLeave(e, u)) continue;
+        if (!this.canLeave(e, u, reverse)) continue;
         const v = e.a === u ? e.b : e.a;
         const nd = du + costFn(ei);
         if (nd < dist[v]) { dist[v] = nd; prev[v] = ei; h.push(v, nd); }
       }
     }
     return { dist, prev };
+  };
+
+  // Shortest length from every node TO dst (differs from _plain(dst) across one-ways).
+  GraphPlanner.prototype._plainTo = function (dst) {
+    let d = this.plainToDist.get(dst);
+    if (!d) { d = this._dijkstra(dst, (ei) => this.edges[ei].len, true).dist; this.plainToDist.set(dst, d); }
+    return d;
   };
 
   GraphPlanner.prototype._plain = function (src) {
@@ -414,7 +427,8 @@
     const pockets = this._pockets();
     if (!pockets.length) return [];
     const dS = this._plain(s);
-    const reach = pockets.filter((p) => p.node >= 0 && isFinite(dS[p.node]) && dS[p.node] <= distM * (1 + buffer) * 0.5);
+    const dBack = this._plainTo(s); // the way home can differ from the way out across one-ways
+    const reach = pockets.filter((p) => p.node >= 0 && dS[p.node] <= distM * (1 + buffer) * 0.5 && dBack[p.node] <= distM * (1 + buffer) * 0.5);
     // seeds are a UNION of two strategies. First, the richest pockets spread
     // apart (the original approach): this fields a dense area's strong loops,
     // which one-per-sector alone dropped (cost Neustadt ~18%). Second, the
@@ -534,7 +548,7 @@
     const a = this.nearestNode(A, 600), b = this.nearestNode(B, 600);
     if (a < 0 || b < 0) return [];
     const pockets = this._pockets();
-    const dA = this._plain(a), dB = this._plain(b);
+    const dA = this._plain(a), dB = this._plainTo(b);
     if (!isFinite(dA[b])) return [];
     const reach = pockets.filter((p) => p.node >= 0 && isFinite(dA[p.node]) && isFinite(dB[p.node]) &&
       dA[p.node] + dB[p.node] <= budgetM * 0.95);

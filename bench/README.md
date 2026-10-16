@@ -29,9 +29,11 @@ The synthetic-graph tests need no `Sync/` and no network:
 
     for t in bench/*.test.js; do node $t; done
 
-`planner-filter`, `router`, `p2p-reason`, `handoff` and `retrace` cover the travel-class
-filter, shortest paths and one-ways, why a run fails, the Use hand-off and the retrace
-ranking.
+`planner-filter`, `streets-fetch`, `router`, `p2p-reason`, `handoff`, `route-handoff`, `retrace`
+and `compare` cover the travel-class filter, the Overpass query and how its reply is read,
+shortest paths and one-ways, why a run fails, the Use hand-off, the retrace ranking and
+compare.js itself. `scenarios.js` also holds scenarios the baseline lacks (road bike, car,
+a 20 km loop): compare.js only scores what the baseline has.
 
 Acceptance against the BRouter baseline `bench/out/baseline-brouter.json` (keep a copy outside
 `bench/out`; it can't be regenerated):

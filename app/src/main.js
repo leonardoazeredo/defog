@@ -504,6 +504,8 @@
       sugResults.innerHTML = `<div class="muted" style="margin-top:10px">${
         s.reason === "defogged"
           ? "You've already covered the ground around here. Every route tried runs over defogged territory. Try a different area" + (s.targetKm != null ? " or a longer distance." : " or a bigger buffer.")
+          : s.reason === "mode"
+          ? "Suggestions aren't available for rail: there are no rail lines in the street map. Pick another mode."
           : s.reason === "too-far"
           ? `A and B are more than ${fmtDist(s.maxKm)} apart: the street map between them is too big to download. Try two closer points.`
           : s.reason === "too-long"

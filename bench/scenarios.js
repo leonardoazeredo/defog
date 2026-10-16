@@ -15,4 +15,8 @@ module.exports = [
   { name: "london-run-10k", mode: "loop", a: [51.507, -0.128], distM: 10000, profile: "hiking-mountain", buffer: 0.15, note: "sparse 2%" },
   // One p2p for regression context (p2p already benchmarked well in v4).
   { name: "neustadt-p2p", mode: "p2p", a: [51.0681, 13.7543], b: [51.0590, 13.7829], profile: "trekking", buffer: 0.30, note: "dense to medium" },
+  // Not in the BRouter baseline (compare.js only scores what the baseline has): wheeled classes, one-ways, motorways, a loop between 10 and 30 km.
+  { name: "neustadt-p2p-fastbike", mode: "p2p", a: [51.0681, 13.7543], b: [51.0590, 13.7829], profile: "fastbike", buffer: 0.30, note: "road bike" },
+  { name: "neustadt-p2p-car", mode: "p2p", a: [51.0681, 13.7543], b: [51.0590, 13.7829], profile: "car-fast", buffer: 0.30, note: "car" },
+  { name: "neustadt-bike-20k", mode: "loop", a: [51.0681, 13.7543], distM: 20000, profile: "trekking", buffer: 0.15, note: "dense 37%, between 10 and 30 km" },
 ];

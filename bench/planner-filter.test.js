@@ -38,4 +38,38 @@ streets.classIds.bike = new Set([10]);
   assert.equal(streets.onewayFor("hiking-mountain")(10), 0);
   assert.equal(streets.onewayFor("shortest")(10), 0);
 }
+{ // bikes may ride contraflow where tagged; cars may not
+  streets.bikeBoth = new Set([10]);
+  assert.equal(streets.onewayFor("trekking")(10), 0);
+  assert.equal(streets.onewayFor("fastbike")(10), 0);
+  assert.equal(streets.onewayFor("car-fast")(10), 1);
+}
+{ // motorways are for cars only
+  streets.motorway = new Set([12]);
+  assert.equal(streets.usableFor("car-fast")(12), true, "car");
+  assert.equal(streets.usableFor("hiking-mountain")(12), false, "walk");
+  assert.equal(streets.usableFor("trekking")(12), false, "bike");
+  assert.equal(streets.usableFor("rail")(12), false, "rail");
+}
+{ // distances run in the direction of travel: out along a one-way is finite, back is not
+  const ow = { ways: [{ id: 10, nodes: [1, 2], geometry: [{ lat: 51, lon: 13.7 }, { lat: 51, lon: 13.71 }] }] };
+  const p = new GraphPlanner(ow, () => 1, undefined, () => 1);
+  p.build();
+  const [n1, n2] = [0, 1];
+  assert.ok(isFinite(p._plain(n1)[n2]), "1 -> 2 along the way");
+  assert.ok(!isFinite(p._plain(n2)[n1]), "2 -> 1 against it");
+  assert.ok(isFinite(p._plainTo(n2)[n1]), "1 can reach 2");
+  assert.ok(!isFinite(p._plainTo(n1)[n2]), "2 cannot reach 1");
+}
+{ // a later fetch that only adds class or one-way lists (no new ways) still reaches the graph
+  const st = new StreetIndex({ newFrac: () => 1 });
+  st.ways = [{ id: 10, nodes: [1, 2], geometry: [{ lat: 51, lon: 13.7 }, { lat: 51, lon: 13.71 }] }];
+  const p = new GraphPlanner(st, () => 1, st.usableFor("trekking"), st.onewayFor("trekking"));
+  p.build();
+  assert.equal(p.edges[0].dir, 0);
+  st.oneWay.add(10);
+  st.version++; // what ensureRects does when a fetch has been read
+  p.build();
+  assert.equal(p.edges[0].dir, 1);
+}
 console.log("planner-filter.test.js ok");
