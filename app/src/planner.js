@@ -1,13 +1,13 @@
 // Graph route planner: searches the real street network for the loop or A-to-B
-// walk that defogs the most, instead of hoping a handful of via pins steers
-// BRouter there. Works on the ways already fetched by StreetIndex: shared OSM
+// walk that defogs the most, instead of hoping a handful of via pins steers a
+// router there. Works on the ways already fetched by StreetIndex: shared OSM
 // node ids give connectivity, and every edge carries a reward = the still-
 // fogged area its ~30 m corridor would clear. The search is a greedy
 // insertion over "pockets" (clusters of rewarding streets) connected by
 // reward-hungry shortest paths, with each traversed edge's reward spent so the
 // way back is pushed onto different streets: that is what makes long thin
 // loops (out one fogged street, back a parallel one) fall out naturally.
-// Everything runs locally; the winner is later snapped by one BRouter request.
+// Everything runs locally and every plan carries its own street geometry.
 (function (global) {
   const SAMPLE_M = 25;        // reward sampling step along an edge
   const CORRIDOR_M = 30;      // full width Fog of World clears as you travel
@@ -17,7 +17,10 @@
                               // starved (9 of 60 in reach at one field start)
   const MAX_ANCHORS = 9;      // start + up to 8 pockets per loop
   const RICH_PULL = 0.65;     // how strongly connecting paths bend toward reward
+  const REUSE_COST = 1.8;     // cost multiplier for re-walking an edge the plan already used
+  const RETRACE_WEIGHT = 0.5; // ranking discount for re-walked ground: predicted gain doesn't price the re-walk
   const PARALLEL_M = 22;      // spending an edge also spends parallels this close
+  const NET_MIN_NODES = 50;   // a connected piece of street map smaller than this is a fragment (courtyard, station), not a network to start from
 
   // ---- binary heap keyed by dist -------------------------------------------
   function Heap() { this.n = []; this.d = []; }
@@ -62,10 +65,14 @@
     };
   }
 
-  function GraphPlanner(streets, newFrac) {
+  // usable: wayId -> may this travel class use the way; dirOf: wayId -> 1 when the way
+  // may only be travelled along its node order, -1 against it, 0 both ways
+  function GraphPlanner(streets, newFrac, usable, dirOf) {
     this.streets = streets;
+    this.usable = usable || (() => true);
+    this.dirOf = dirOf || (() => 0);
     this.newFrac = fracCache(newFrac);
-    this.built = 0; // ways incorporated so far; rebuild when more are fetched
+    this.builtStamp = ""; // what the graph was built from; rebuild when a fetch changed it
   }
 
   // ---- graph construction --------------------------------------------------
@@ -73,10 +80,13 @@
   // Edges: the way pieces between nodes, each with geometry, length and reward.
   GraphPlanner.prototype.build = function () {
     const ways = this.streets.ways;
-    if (this.built === ways.length && this.adj) return;
+    // new ways, or lists (classes, one-ways) that a fetch changed on ways we already hold
+    const stamp = ways.length + "." + (this.streets.version || 0);
+    if (this.builtStamp === stamp && this.adj) return;
     const t0 = Date.now();
     const uses = new Map();
     for (const w of ways) {
+      if (!this.usable(w.id)) continue;
       for (let i = 0; i < w.nodes.length; i++) {
         const id = w.nodes[i];
         // interior nodes count once per way; endpoints get +1 so a dead end still splits
@@ -94,13 +104,13 @@
     const ky = 110540;
     this.kx = kx; this.ky = ky;
 
-    this.edges = [];      // {a,b,len,coords:[[lon,lat]..]}
+    this.edges = [];      // {a,b,len,coords:[[lon,lat]..],way: OSM way id,dir: 1 a->b only, -1 b->a only, 0 both}
     this.reward = [];     // base reward per edge, m² (static)
     this.spentVer = [];   // reward-claim stamp per edge (see _fresh)
     this.usedVer = [];    // traversal stamp: walked edges cost extra to re-walk
     const midGrid = new Map(); // 100 m bins of edge sample points, for parallel spend
     this.midGrid = midGrid;
-    const pushEdge = (aId, bId, coords) => {
+    const pushEdge = (aId, bId, coords, wayId, dir) => {
       let len = 0, rew = 0;
       const samples = [];
       for (let i = 1; i < coords.length; i++) {
@@ -120,7 +130,7 @@
       this.edges.push({
         a: nodeIdx(aId, coords[0][0], coords[0][1]),
         b: nodeIdx(bId, coords[coords.length - 1][0], coords[coords.length - 1][1]),
-        len, coords
+        len, coords, way: wayId, dir
       });
       this.reward.push(rew);
       this.spentVer.push(0);
@@ -133,11 +143,12 @@
       }
     };
     for (const w of ways) {
+      if (!this.usable(w.id)) continue;
       let start = 0;
       for (let i = 1; i < w.nodes.length; i++) {
         if (i === w.nodes.length - 1 || uses.get(w.nodes[i]) >= 2) {
           pushEdge(w.nodes[start], w.nodes[i],
-            w.geometry.slice(start, i + 1).map((g) => [g.lon, g.lat]));
+            w.geometry.slice(start, i + 1).map((g) => [g.lon, g.lat]), w.id, this.dirOf(w.id));
           start = i;
         }
       }
@@ -145,9 +156,34 @@
     this.lons = lons; this.lats = lats;
     this.adj = Array.from({ length: lons.length }, () => []);
     this.edges.forEach((e, i) => { this.adj[e.a].push(i); this.adj[e.b].push(i); });
+    // inNet[i] = 1 when node i belongs to a connected piece big enough to travel on
+    // (or to the biggest piece, so a small map still has a network)
+    this.inNet = new Uint8Array(lons.length);
+    const seen = new Uint8Array(lons.length);
+    const pieces = this.pieces = [];
+    this.pieceOf = new Int32Array(lons.length); // LocalRouter.explain names the piece a failed leg sits on
+    for (let i = 0; i < lons.length; i++) {
+      if (seen[i]) continue;
+      const stack = [i], piece = [];
+      seen[i] = 1;
+      while (stack.length) {
+        const u = stack.pop();
+        piece.push(u);
+        this.pieceOf[u] = pieces.length;
+        for (const ei of this.adj[u]) {
+          const v = this.edges[ei].a === u ? this.edges[ei].b : this.edges[ei].a;
+          if (!seen[v]) { seen[v] = 1; stack.push(v); }
+        }
+      }
+      pieces.push(piece);
+    }
+    const biggest = pieces.reduce((m, p) => (p.length > m ? p.length : m), 0);
+    for (const piece of pieces)
+      if (piece.length >= NET_MIN_NODES || piece.length === biggest) for (const u of piece) this.inNet[u] = 1;
     this.plainDist = new Map(); // source node -> Float64Array of shortest lengths
+    this.plainToDist = new Map(); // target node -> Float64Array of shortest lengths from every node to it
     this.ver = 0;
-    this.built = ways.length;
+    this.builtStamp = stamp;
     this.buildMs = Date.now() - t0;
   };
 
@@ -193,7 +229,13 @@
     }
   };
 
-  GraphPlanner.prototype._dijkstra = function (src, costFn) {
+  // Can the edge be left from node u (one-ways only open at their entry end)? With
+  // reverse, can it be entered at u: the search then runs against the direction of travel.
+  GraphPlanner.prototype.canLeave = function (e, u, reverse) {
+    return !e.dir || (e.dir > 0 === !reverse ? e.a : e.b) === u;
+  };
+
+  GraphPlanner.prototype._dijkstra = function (src, costFn, reverse) {
     const N = this.lons.length;
     const dist = new Float64Array(N).fill(Infinity);
     const prev = new Int32Array(N).fill(-1);
@@ -205,12 +247,20 @@
       if (du > dist[u]) continue;
       for (const ei of this.adj[u]) {
         const e = this.edges[ei];
+        if (!this.canLeave(e, u, reverse)) continue;
         const v = e.a === u ? e.b : e.a;
         const nd = du + costFn(ei);
         if (nd < dist[v]) { dist[v] = nd; prev[v] = ei; h.push(v, nd); }
       }
     }
     return { dist, prev };
+  };
+
+  // Shortest length from every node TO dst (differs from _plain(dst) across one-ways).
+  GraphPlanner.prototype._plainTo = function (dst) {
+    let d = this.plainToDist.get(dst);
+    if (!d) { d = this._dijkstra(dst, (ei) => this.edges[ei].len, true).dist; this.plainToDist.set(dst, d); }
+    return d;
   };
 
   GraphPlanner.prototype._plain = function (src) {
@@ -226,7 +276,7 @@
   GraphPlanner.prototype._richPath = function (u, v) {
     const { dist, prev } = this._dijkstra(u, (ei) => {
       const e = this.edges[ei];
-      if (this.usedVer[ei] >= this.ver) return e.len * 1.8;
+      if (this.usedVer[ei] >= this.ver) return e.len * REUSE_COST;
       const rate = this._fresh(ei) / e.len;
       return e.len * (1 - RICH_PULL * Math.min(1, rate / CORRIDOR_M));
     });
@@ -244,6 +294,7 @@
     const coords = [];
     let at = u;
     for (const ei of edgeIds) {
+      this.walks.set(ei, (this.walks.get(ei) || 0) + 1);
       const e = this.edges[ei];
       const cs = e.a === at ? e.coords : e.coords.slice().reverse();
       for (const c of cs) {
@@ -258,16 +309,23 @@
     return { coords, len, gained };
   };
 
-  GraphPlanner.prototype.nearestNode = function (latlng, maxM) {
-    let best = -1, bd = (maxM || 600) * (maxM || 600);
+  // Nearest node with at least minDeg edges within maxM, preferring nodes on a real
+  // network: one in a stray fragment (courtyard, station) only counts when no network
+  // node is in reach, so a pin beside a fragment still starts on the street map.
+  GraphPlanner.prototype.snap = function (latlng, maxM, minDeg) {
+    let best = -1, bd = maxM * maxM, any = -1, ad = bd;
     for (let i = 0; i < this.lons.length; i++) {
+      if (this.adj[i].length < minDeg) continue;
       const dx = (this.lons[i] - latlng.lng) * this.kx, dy = (this.lats[i] - latlng.lat) * this.ky;
       const d = dx * dx + dy * dy;
-      // prefer proper intersections; a dead-end start makes every plan begin with a spur
-      if (d < bd && this.adj[i].length >= 2) { bd = d; best = i; }
+      if (d < ad) { ad = d; any = i; }
+      if (d < bd && this.inNet[i]) { bd = d; best = i; }
     }
-    return best;
+    return best >= 0 ? best : any;
   };
+
+  // Plans start on proper intersections: a dead-end start makes every plan begin with a spur.
+  GraphPlanner.prototype.nearestNode = function (latlng, maxM) { return this.snap(latlng, maxM || 600, 2); };
 
   // Rewarding way clusters on a coarse grid: what the plan visits. A pocket's
   // worth is its defoggable area WEIGHTED BY PURITY (the still-fogged share of
@@ -330,6 +388,7 @@
 
   GraphPlanner.prototype._materialize = function (anchors, cyclic) {
     this.ver++;
+    this.walks = new Map();
     const seq = cyclic ? anchors.concat([anchors[0]]) : anchors;
     let coords = [], len = 0, gained = 0;
     for (let i = 1; i < seq.length; i++) {
@@ -338,7 +397,10 @@
       coords = coords.length ? coords.concat(leg.coords.slice(1)) : leg.coords;
       len += leg.len; gained += leg.gained;
     }
-    return { coords, len, gained };
+    // metres on edges walked more than once, both passes counted (as overlapFrac does)
+    let twice = 0;
+    for (const [ei, n] of this.walks) if (n > 1) twice += this.edges[ei].len * n;
+    return { coords, len, gained, retraceFrac: len ? Math.min(1, twice / len) : 0 };
   };
 
   function resampleWps(coords, n, kx, ky) {
@@ -357,7 +419,7 @@
   }
 
   // Plan up to nCands loops from S of roughly distM. Each result:
-  // { wps (for BRouter, S first and last), predM2, lenM }
+  // { wps (editor pins, S first and last), coords ([lon,lat] street path), predM2, lenM }
   GraphPlanner.prototype.planLoop = function (S, distM, buffer, nCands) {
     this.build();
     const s = this.nearestNode(S, 600);
@@ -365,7 +427,8 @@
     const pockets = this._pockets();
     if (!pockets.length) return [];
     const dS = this._plain(s);
-    const reach = pockets.filter((p) => p.node >= 0 && isFinite(dS[p.node]) && dS[p.node] <= distM * (1 + buffer) * 0.5);
+    const dBack = this._plainTo(s); // the way home can differ from the way out across one-ways
+    const reach = pockets.filter((p) => p.node >= 0 && dS[p.node] <= distM * (1 + buffer) * 0.5 && dBack[p.node] <= distM * (1 + buffer) * 0.5);
     // seeds are a UNION of two strategies. First, the richest pockets spread
     // apart (the original approach): this fields a dense area's strong loops,
     // which one-per-sector alone dropped (cost Neustadt ~18%). Second, the
@@ -390,8 +453,7 @@
       if (!seeds.includes(p)) seeds.push(p);
     }
     const out = [];
-    // BRouter snapping straightens a plan ~6-8% shorter than its graph length,
-    // so aim past the requested distance or every loop lands short of it
+    // aim 7% past the requested distance (empirical offset)
     const target = distM * 1.07;
     const ceilG = distM * (1 + buffer) * 1.04;
     for (const seed of seeds) {
@@ -402,7 +464,7 @@
       // insert pockets one at a time, re-walking the loop after each; the
       // detour allowance comes from the WALKED length's real headroom, scaled
       // by the learned plain-to-walked inflation (a global plain budget
-      // starved growth and plans arrived short, wasting their request)
+      // starved growth and plans arrived short)
       for (let it = 0; it < MAX_ANCHORS && m && m.len < target * 0.96; it++) {
         const inflate = Math.min(1.4, Math.max(1.0, m.len / Math.max(1, this._plainLen(anchors, true))));
         const node = this._growOne(anchors, true, (ceilG - m.len) / inflate, reach, used);
@@ -412,11 +474,10 @@
         stack.push(node);
         m = m2;
       }
-      // repair an overshooting loop into the window snapping can land from
-      // (shrink is ~7% but varies, and the best loops live at the edge: a
-      // tighter 1.07 ceiling binned a star card that snapped 10 m inside
-      // tolerance). Pockets are coarse, so a plain drop usually undershoots;
-      // after each drop, try to re-add a smaller pocket that fits the space.
+      // repair an overshooting loop: drop pockets until it fits under emitCeil,
+      // which is looser than the tolerance (the best loops live at the edge).
+      // Pockets are coarse, so a plain drop usually undershoots; after each
+      // drop, try to re-add a smaller pocket that fits the space.
       const emitCeil = distM * (1 + buffer) * 1.12;
       for (let r = 0; r < 4 && m && m.len > emitCeil && stack.length; r++) {
         anchors.splice(anchors.indexOf(stack.pop()), 1);
@@ -432,11 +493,9 @@
         }
         m = m2;
       }
-      // a plan outside this window can't survive snapping plus the length
-      // tolerance, so don't spend a routing request on it
+      // same empirical 1.07 on the floor; the ceiling is emitCeil
       if (!m || m.len < distM * (1 - buffer) * 1.07 || m.len > emitCeil) continue;
-      // dense waypoints: with ~1 km gaps BRouter shortcuts the plan's detail
-      // and the predicted defogging evaporates; ~550 m holds it to the streets
+      // editor pins: ~550 m apart keeps a later re-route on the plan's streets
       const nWps = Math.min(20, Math.max(6, Math.round(m.len / 550)));
       // sector of the loop's farthest reach from S, for direction-diverse emit
       let fx = 0, fy = 0, fd = -1;
@@ -445,14 +504,18 @@
         if (dx * dx + dy * dy > fd) { fd = dx * dx + dy * dy; fx = dx; fy = dy; }
       }
       const sector = Math.floor((((Math.atan2(fx, fy) * 180 / Math.PI) + 360) % 360) / 90);
-      out.push({ wps: [S].concat(resampleWps(m.coords, nWps, this.kx, this.ky), [S]), predM2: m.gained, lenM: m.len, sector });
+      out.push({
+        wps: [S].concat(resampleWps(m.coords, nWps, this.kx, this.ky), [S]),
+        coords: [[S.lng, S.lat]].concat(m.coords, [[S.lng, S.lat]]),
+        predM2: m.gained, lenM: m.len, sector
+      });
     }
     out.sort((a, b) => b.predM2 - a.predM2);
     const deduped = dedupePlans(out);
     // emit a direction-diverse set by round-robin across 90-degree sectors:
     // each direction's best plan is taken before any direction's second, so a
     // single rich direction can't fill every slot and a real alternative (a
-    // forest, a riverside) is put in front of BRouter and the ranking. The
+    // forest, a riverside) is put in front of the ranking. The
     // global best is still taken first, so the top card never weakens.
     const bySec = new Map();
     for (const p of deduped) { const g = bySec.get(p.sector) || []; g.push(p); bySec.set(p.sector, g); }
@@ -485,7 +548,7 @@
     const a = this.nearestNode(A, 600), b = this.nearestNode(B, 600);
     if (a < 0 || b < 0) return [];
     const pockets = this._pockets();
-    const dA = this._plain(a), dB = this._plain(b);
+    const dA = this._plain(a), dB = this._plainTo(b);
     if (!isFinite(dA[b])) return [];
     const reach = pockets.filter((p) => p.node >= 0 && isFinite(dA[p.node]) && isFinite(dB[p.node]) &&
       dA[p.node] + dB[p.node] <= budgetM * 0.95);
@@ -499,7 +562,7 @@
       const used = seed ? new Set([seed]) : new Set();
       const anchors = seed ? [a, seed.node, b] : [a, b];
       let m = this._materialize(anchors, false);
-      const ceilW = budgetM * 1.03; // snapping usually shortens; slight overhang ok
+      const ceilW = budgetM * 1.03; // slight overhang ok
       for (let it = 0; it < MAX_ANCHORS && m && m.len < budgetM * 0.97; it++) {
         const inflate = Math.min(1.4, Math.max(1.0, m.len / Math.max(1, this._plainLen(anchors, false))));
         if (!this._growOne(anchors, false, (ceilW - m.len) / inflate, reach, used)) break;
@@ -509,12 +572,18 @@
       }
       if (!m || m.len > budgetM * 1.1) continue;
       const nWps = Math.min(16, Math.max(2, Math.round(m.len / 550)));
-      out.push({ wps: [A].concat(resampleWps(m.coords, nWps, this.kx, this.ky), [B]), predM2: m.gained, lenM: m.len });
+      out.push({
+        wps: [A].concat(resampleWps(m.coords, nWps, this.kx, this.ky), [B]),
+        coords: [[A.lng, A.lat]].concat(m.coords, [[B.lng, B.lat]]),
+        predM2: m.gained, lenM: m.len, retraceFrac: m.retraceFrac
+      });
       if (out.length >= nCands + 1) break;
     }
-    out.sort((x, y) => y.predM2 - x.predM2);
+    const score = (p) => p.predM2 * (1 - RETRACE_WEIGHT * p.retraceFrac);
+    out.sort((x, y) => score(y) - score(x));
     return dedupePlans(out).slice(0, nCands);
   };
 
+  GraphPlanner.Heap = Heap; // LocalRouter's point-to-point search
   global.GraphPlanner = GraphPlanner;
 })(window);

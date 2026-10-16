@@ -1,7 +1,7 @@
 // Street-network context per scenario: how much street is there around each
 // start point, and how much of it is still undefogged? This is the raw material
 // any suggestion algorithm has to work with (and a preview of the Tier 2/3
-// street-aware reward). Responses are disk-cached like BRouter's.
+// street-aware reward). Responses are disk-cached like run.js's.
 //   node bench/overpass.js [scenarioFilter]
 "use strict";
 const path = require("path");

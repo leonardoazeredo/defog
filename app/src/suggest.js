@@ -1,16 +1,30 @@
 // "Surprise me" routing: suggest up to 3 routes that maximise defogging.
 // Two modes: point-to-point (A → B) and loop (start + target distance).
-// Candidates come from BRouter (its own alternatives, plus fog-seeking via-points /
-// fog-biased loop bearings we generate) and every candidate is scored client-side with
-// the caller's defog-gain function. The fog itself never leaves the device; only
-// waypoint coordinates go to BRouter, same as manual drawing.
+// Candidates are routed locally over the street graph (fog-seeking via-points /
+// fog-biased loop bearings, plus the graph planner's walks) and every candidate is
+// scored client-side with the caller's defog-gain function. The fog itself never
+// leaves the device; only the bounding box of the streets needed goes to Overpass.
 (function (global) {
-  const BROUTER = "https://brouter.de/brouter";
-  const DEFAULT_BUFFER = 0.15;  // p2p: max length over baseline; loop: tolerance around target
+  const DEFAULT_BUFFER = 0.15;  // p2p: max length over the fastest route, or ± around a wanted distance; loop: tolerance around target
   const MAX_VIAS = 6;           // fog-seeking detour candidates per p2p run
   const VIA_RETRIES = 2;        // times a via is pulled back in when its route overshoots
-  const MAX_LOOPS = 6;          // loop bearings tried per run
-  const CONCURRENCY = 3;        // parallel BRouter requests (be kind to the public server)
+  const RETRACE_WEIGHT = 0.5;   // p2p: share of a route's score lost if all of it retraces itself
+  const RETRACE_REROUTE_MIN = 0.12; // p2p: retraced share above which a via route's return leg is re-asked
+  const MAX_RETRACE_REROUTES = 2;   // re-routed return legs per run
+  const MAX_P2P_M = 30000;      // A and B farther apart than this need a street download past what we cap
+  const MAX_LOOP_M = 30000;     // longer loops reach past the capped street download (bearing squares reach ~0.3x the length)
+  const MAX_LOOPS = 6;          // first-batch bearings when the planner found no routes (the ranked list is at most six, so then only the other shapes are left for the second wave)
+  // Square-ish loop shapes as [bearing offset, distance factor] vias around the compass bearing.
+  // The same bearing at another shape takes the router over different streets, so a bearing whose
+  // square jumps from far too short to far too long (a river crossing) can still land in tolerance.
+  const LOOP_SHAPES = {
+    square: [[-45, 1], [0, Math.SQRT2], [45, 1]],
+    narrow: [[-25, 1], [0, 1.6], [25, 1]],
+    fat: [[-60, 1], [0, 1.2], [60, 1]]
+  };
+  const ALT_SHAPES = ["narrow", "fat"];
+  const FIT_ROUTES = 6;         // routes per size search, including the first: length jumps where a barrier sits, so a few tries beat one rescale
+  const CONCURRENCY = 3;        // jobs interleaved by the pool
   // Same neon family as the drawn route (#ff2d55): red · pink · orange, which pops against
   // the fog, deliberately far from the blue/purple/slate fog swatches.
   const COLORS = ["#ff2d55", "#ff4fa3", "#ff8c2d"];
@@ -36,6 +50,7 @@
     this.lines = [];                       // their preview polylines
     this.selected = -1;
     this._runId = 0;
+    this._planners = {};                   // travel class -> GraphPlanner
     this._onClick = (e) => this._place(e.latlng);
   }
 
@@ -115,36 +130,47 @@
     return { newRuns, oldRuns };
   }
 
-  // Waypoints that reproduce candidate i in the ordinary route editor. Via and loop
-  // candidates are exact (same request); BRouter alternatives are approximated by
-  // pinning their midpoint.
+  // Candidate i for the ordinary route editor: the pins to show and the exact
+  // geometry that was previewed.
   SuggestTool.prototype.adopt = function (i) {
     const c = this.results[i];
     if (!c) return null;
-    const wps = c.adoptWps.slice();
+    const out = { wps: c.adoptWps.slice(), coords: c.r.coords };
     this.clearResults();
-    return wps;
+    return out;
   };
 
   // ----- shared plumbing --------------------------------------------------------
 
-  SuggestTool.prototype._route = async function (latlngs, profile, altIdx) {
-    const lonlats = latlngs.map((ll) => ll.lng.toFixed(6) + "," + ll.lat.toFixed(6)).join("|");
-    const url = `${BROUTER}?lonlats=${lonlats}&profile=${encodeURIComponent(profile)}&alternativeidx=${altIdx}&format=geojson`;
-    try {
-      const res = await fetch(url);
-      if (!res.ok) return null;
-      const gj = await res.json();
-      const feat = gj.features && gj.features[0];
-      if (!feat) return null;
-      const coords = feat.geometry.coordinates;
-      let asc = 0, desc = 0;
-      for (let i = 1; i < coords.length; i++) {
-        const d = (coords[i][2] || 0) - (coords[i - 1][2] || 0);
-        if (d > 0) asc += d; else desc -= d;
-      }
-      return { coords, lenM: parseInt(feat.properties["track-length"], 10) || 0, ascent: Math.round(asc), descent: Math.round(desc) };
-    } catch (e) { return null; }
+  // Local shortest path through the points over the street graph for the profile;
+  // null when there is no street data, a point is off the network, or no path exists.
+  // opts.avoid: Set of graph edge ids to discourage (a leg's `edges`).
+  SuggestTool.prototype._route = async function (latlngs, profile, opts) {
+    const planner = this._getPlanner(profile);
+    return planner ? new global.LocalRouter(planner).route(latlngs, opts) : null;
+  };
+
+  // Explained so the error can name the pin or pieces that failed, not just fail.
+  SuggestTool.prototype._noRoute = function (latlngs, profile) {
+    const planner = this._getPlanner(profile);
+    if (!planner) return { error: true, reason: "no-street-data" };
+    const why = new global.LocalRouter(planner).explain(latlngs);
+    return { error: true, reason: why.reason || "no-path", why };
+  };
+
+  // Re-ask the leg after the via with the outbound streets avoided. null means keep the
+  // original: not a via route, no way home routed, or the way home is the same.
+  // The caller decides whether the new way home is worth taking.
+  SuggestTool.prototype._rerouteReturn = async function (route, via, B, profile) {
+    if (route.legs.length !== 2) return null;
+    const [out, home] = route.legs;
+    const back = await this._route([via, B], profile, { avoid: new Set(out.edges) });
+    if (!back || !back.coords.length) return null;
+    // the new route also starts with a stub from the via pin, so compare tails
+    const tail = back.coords.slice(-home.coords.length);
+    if (tail.length === home.coords.length && tail.every((p, i) => p[0] === home.coords[i][0] && p[1] === home.coords[i][1])) return null;
+    // the pin's stub is dropped; the way home then starts on the vertex the way out ended on
+    return statsFromCoords(dropRepeats(out.coords.concat(back.coords.slice(1))));
   };
 
   // Share of never-visited cells within ~100 m of a point, used to steer candidates
@@ -164,10 +190,10 @@
   };
 
   // How much of one route runs along another, used to drop near-duplicates
-  // (e.g. a via candidate that snapped onto the same roads as a BRouter
-  // alternative) and to keep the three shown routes from sharing a corridor.
+  // (e.g. a via candidate that snapped onto the same roads as a planned
+  // route) and to keep the three shown routes from sharing a corridor.
   // Routes are walked in fixed metre steps rather than by point index, so the
-  // answer doesn't depend on how densely BRouter happened to place points, and
+  // answer doesn't depend on how densely the route's coordinates are sampled, and
   // one route's path is stamped into a grid of NEAR_CELL squares and the other
   // is counted as alongside it wherever it lands within NEAR_PAD squares of a
   // stamped one. "Runs along" therefore means "within about 30 m", and
@@ -226,15 +252,30 @@
   }
 
   // Which street classes matter: on foot everything walkable, on wheels not
-  // footways/paths (also keeps the bigger bike-range downloads sane).
-  function streetKind(profile) { return profile === "hiking-mountain" ? "run" : "bike"; }
+  // footways/paths (also keeps the bigger bike-range downloads sane), by car also motorways.
+  function streetKind(profile) { return profile === "hiking-mountain" ? "run" : profile === "car-fast" ? "car" : "bike"; }
 
-  // The graph planner searches the fetched street network directly for high-
-  // defog loops and walks. Built lazily, rebuilt only when new streets arrive.
-  SuggestTool.prototype._getPlanner = function () {
+  // Make sure the streets for the rects are loaded. Resolves false once the run is over:
+  // stale, or the error state was emitted because the download failed.
+  SuggestTool.prototype._loadStreets = async function (rects, profile, emit, stale) {
+    const kind = streetKind(profile);
+    // only announce a fetch when one will really happen; a rerun in the same
+    // area is served from cache and shouldn't flash "reading the street map"
+    if (this.streets.needsFetch(rects, kind)) emit({ loading: true, phase: "streets" });
+    try { await this.streets.ensureRects(rects, kind); } catch (e) { emit({ error: true, reason: "streets-fetch", why: e.message }); return false; }
+    return !stale();
+  };
+
+  // The street graph for a profile: it plans high-defog loops and walks and is
+  // what routing runs on. One per profile, because each may use different ways;
+  // built lazily, rebuilt only when new streets arrive.
+  SuggestTool.prototype._getPlanner = function (profile) {
     if (!this.streets || !global.GraphPlanner || !this.streets.ways.length) return null;
-    if (!this._planner) this._planner = new global.GraphPlanner(this.streets, this.streets.newFrac);
-    return this._planner;
+    // usableFor and onewayFor depend only on the travel class, so profiles sharing one share the graph
+    const key = global.StreetIndex.MODE_CLASS[profile] || "foot";
+    if (!this._planners[key])
+      this._planners[key] = new global.GraphPlanner(this.streets, this.streets.newFrac, this.streets.usableFor(profile), this.streets.onewayFor(profile));
+    return this._planners[key];
   };
 
   // Defoggable area (m²) reachable via the ways within rM of the point, or
@@ -247,8 +288,8 @@
   };
 
   // Pull a generation via to the most undefogged-street-rich spot within reach,
-  // so loops are born aimed at fogged streets instead of hoping BRouter finds
-  // them. The current spot keeps a bias and distance discounts a candidate, so
+  // so loops are born aimed at fogged streets instead of hoping a route
+  // passes them. The current spot keeps a bias and distance discounts a candidate, so
   // the loop holds roughly its intended shape and length.
   SuggestTool.prototype._snapToNewStreets = function (ll, radiusM) {
     const base = this._newAreaM2(ll, 200);
@@ -272,12 +313,15 @@
   };
 
   // Run jobs (thunks returning a promise) through a small worker pool, reporting progress.
+  // Routing is synchronous, so each job waits a turn first to let the page repaint.
   SuggestTool.prototype._pool = async function (jobs, stale, onTick) {
     const out = [];
     let next = 0, done = 0;
     const worker = async () => {
       while (next < jobs.length && !stale()) {
         const j = jobs[next++];
+        await new Promise((res) => setTimeout(res));
+        if (stale()) return;
         const r = await j();
         if (stale()) return;
         done++;
@@ -288,6 +332,17 @@
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, jobs.length) }, worker));
     return out;
   };
+
+  // Compass bearing from S to the farthest point of a loop: what "direction" means for a loop.
+  function loopBearingOf(S, coords) {
+    let far = coords[0], fd = -1;
+    for (const p of coords) {
+      const d = (p[1] - S.lat) * (p[1] - S.lat) + (p[0] - S.lng) * (p[0] - S.lng);
+      if (d > fd) { fd = d; far = p; }
+    }
+    return (((Math.atan2(far[0] - S.lng, far[1] - S.lat) * 180 / Math.PI) + 360) % 360);
+  }
+  function bearingApart(a, b) { const d = Math.abs(a - b) % 360; return Math.min(d, 360 - d); }
 
   // Show three routes that go different ways rather than three variations on
   // one. Loops are separated by direction: a candidate is taken only if no
@@ -307,17 +362,8 @@
     let differs;
     if (loop) {
       const S = this.a.getLatLng();
-      const bearing = (c) => {
-        let far = c.r.coords[0], fd = -1;
-        for (const p of c.r.coords) {
-          const d = (p[1] - S.lat) * (p[1] - S.lat) + (p[0] - S.lng) * (p[0] - S.lng);
-          if (d > fd) { fd = d; far = p; }
-        }
-        return (((Math.atan2(far[0] - S.lng, far[1] - S.lat) * 180 / Math.PI) + 360) % 360);
-      };
-      const apart = (a, b) => { const d = Math.abs(a - b) % 360; return Math.min(d, 360 - d); };
-      for (const c of ranked) c._brg = bearing(c);
-      differs = (c, taken) => taken.every((o) => apart(o._brg, c._brg) > 60);
+      for (const c of ranked) c._brg = loopBearingOf(S, c.r.coords);
+      differs = (c, taken) => taken.every((o) => bearingApart(o._brg, c._brg) > 60);
     } else {
       differs = (c, taken) => taken.every((o) => sharedFrac(c.r.coords, o.cells, kx, ky) < SAME_CORRIDOR);
     }
@@ -339,10 +385,15 @@
     // a route that breaks <1% new ground isn't a suggestion, it's a re-walk
     scored = scored.filter((c) => c.gain.area > 0 && c.gain.newPct >= 1);
     if (!scored.length) { emit(Object.assign({ empty: true, reason: "defogged" }, extra)); return; }
+    // A to B also loses up to RETRACE_WEIGHT of its score in proportion to the share it
+    // retraces (rankKey); loops use the plain key below.
     // rank by area, blended with share-of-length-on-new-ground: between two
     // routes that defog the same area, the one that isn't mostly a re-walk wins
-    const key = (c) => c.gain.area * (0.7 + 0.3 * Math.min(1, c.gain.newPct / 100));
-    scored.sort((x, y) => key(y) - key(x));
+    const key = extra.baseKm != null
+      ? (c) => { c.retrace = overlapFrac(c.r.coords, false); return rankKey(c.gain, c.retrace); }
+      : (c) => c.gain.area * (0.7 + 0.3 * Math.min(1, c.gain.newPct / 100));
+    for (const c of scored) c.key = key(c);
+    scored.sort((x, y) => y.key - x.key);
     // One local metric frame for the whole run, so footprints are comparable.
     const { kx, ky } = metresPerDeg(scored[0].r.coords[0][1]);
     const unique = [];
@@ -376,6 +427,7 @@
         deltaKm: c.r.lenM / 1000 - refKm,
         ascent: c.r.ascent, descent: c.r.descent,
         area: c.gain.area, newPct: c.gain.newPct,
+        retracePct: c.retrace != null ? Math.round(c.retrace * 100) : undefined,
         isBase: !!c.isBase
       }))
     }));
@@ -384,8 +436,13 @@
   SuggestTool.prototype.suggest = function (profile, o) {
     o = o || {};
     const buffer = o.buffer || DEFAULT_BUFFER;
+    if (profile === "rail") { // the street map holds no rail lines to route on
+      this.clearResults();
+      if (this.onResults) this.onResults({ empty: true, reason: "mode" });
+      return Promise.resolve();
+    }
     if (this.mode === "loop") return this._suggestLoop(profile, o.distM, buffer);
-    return this._suggestP2P(profile, buffer);
+    return this._suggestP2P(profile, buffer, o.targetM);
   };
 
   // ----- point-to-point ---------------------------------------------------------
@@ -437,14 +494,14 @@
   // data covers them all, by fog newness otherwise.
   // Rank within each detour size, then take half from each. Far offsets always
   // look richer but often route over the length budget; medium ones fit reliably, and
-  // ranking them together would spend the whole request budget on the far side.
+  // ranking them together would fill every MAX_VIAS slot from the far side.
   SuggestTool.prototype._pickVias = function (cands) {
     for (const c of cands) {
       c.areaM2 = this._newAreaM2(c.latlng, 350);
       if (c.areaM2 === null) c.newness = this._newness(c.latlng);
     }
     const street = cands.length > 0 && cands.every((c) => c.areaM2 !== null);
-    // floors: below ~2000 m² reachable (or 5% new fog) a detour isn't worth a request
+    // floors: below ~2000 m² reachable (or 5% new fog) a detour is too thin to be worth a candidate slot
     const ok = (c) => (street ? c.areaM2 >= 2000 : c.newness >= 0.05);
     const val = (c) => (street ? c.areaM2 : c.newness);
     const rank = (sc) => cands.filter((c) => c.scale === sc && ok(c))
@@ -458,7 +515,31 @@
     return picked.slice(0, MAX_VIAS);
   };
 
-  SuggestTool.prototype._suggestP2P = async function (profile, buffer) {
+  // The length window of an A to B run. With a wanted distance it is want ± buffer, never
+  // below the fastest route; one shorter than that is clamped up to it and reported as such.
+  function p2pWindow(baseM, targetM, buffer) {
+    const want = targetM > 0 ? Math.max(targetM, baseM) : null;
+    const clamped = want != null && targetM < baseM;
+    const budget = (want || baseM) * (1 + buffer);
+    const floor = want ? Math.max(baseM, want * (1 - buffer)) : 0;
+    // where re-aimed vias should land: the wanted length, but no closer than halfway into
+    // the buffer above the fastest route, so a clamped target doesn't aim at the fastest
+    // route itself. With no wanted distance, just inside the budget: the best detours live
+    // right at the edge.
+    const aim = want ? Math.max(want, baseM * (1 + buffer / 2)) : baseM + 0.95 * (budget - baseM);
+    return { want, clamped, budget, floor, aim };
+  }
+
+  // Candidates worth ranking. The fastest route is a normal candidate unless a wanted
+  // distance puts it under the floor; then it only shows (fallback) when nothing else fits.
+  function p2pCandidates(found, base, win) {
+    const list = found.filter((c) => c.r.lenM >= win.floor);
+    const baseFits = base.r.lenM >= win.floor;
+    if (!win.want || baseFits || !list.length) list.unshift(base);
+    return { list, fallback: win.want != null && !baseFits && list.length === 1 && list[0] === base };
+  }
+
+  SuggestTool.prototype._suggestP2P = async function (profile, buffer, targetM) {
     if (!this.a || !this.b) return;
     this.clearResults();
     const runId = this._runId;
@@ -468,39 +549,37 @@
     const bufferPct = Math.round(buffer * 100);
 
     emit({ loading: true, phase: "baseline" });
-    const base = await this._route([A, B], profile, 0);
+    if (!this.streets) { emit({ error: true, reason: "no-street-data" }); return; }
+
+    // Streets first: routing runs on them. The budget isn't known until A to B is
+    // routed, so size the box for a fastest route up to 1.5x the straight line and
+    // pad it by how far sideways the longest allowed detour can reach.
+    const { kx, ky } = metresPerDeg((A.lat + B.lat) / 2);
+    const straightM = Math.hypot((B.lng - A.lng) * kx, (B.lat - A.lat) * ky);
+    if (straightM > MAX_P2P_M) { emit({ empty: true, reason: "too-far", maxKm: MAX_P2P_M / 1000 }); return; }
+    const reachM = Math.max(targetM || 0, straightM * 1.5) * (1 + buffer);
+    const pad = Math.min(4000, Math.sqrt(Math.max(0, reachM * reachM - straightM * straightM)) / 2 + 300);
+    // pins snapped to the cache grid (as for loops); the extra 400 m absorbs the snap offset
+    const sa = this.streets.snapPoint(A), sb = this.streets.snapPoint(B), m = pad + 400;
+    const rects = [{
+      s: Math.min(sa.lat, sb.lat) - m / ky, n: Math.max(sa.lat, sb.lat) + m / ky,
+      w: Math.min(sa.lng, sb.lng) - m / kx, e: Math.max(sa.lng, sb.lng) + m / kx
+    }];
+    if (!(await this._loadStreets(rects, profile, emit, stale))) return;
+
+    const base = await this._route([A, B], profile);
     if (stale()) return;
-    if (!base) { emit({ error: true }); return; }
-    const budget = base.lenM * (1 + buffer);
-
-    // Fetch street data so candidates can chase undefogged streets. Short
-    // trips get one rect covering everywhere the budget could reach, which
-    // also feeds the graph planner; longer ones just get discs around the via
-    // candidates. On any failure, carry on with fog-only scoring.
+    if (!base) { emit(this._noRoute([A, B], profile)); return; }
+    const win = p2pWindow(base.lenM, targetM, buffer);
+    const { want, clamped, budget, floor, aim } = win;
     const rawVias = this._viaCandidates(budget);
-    if (this.streets) {
-      let rects = null;
-      if (budget <= 12000) {
-        const mid = this.streets.snapPoint(L.latLng((A.lat + B.lat) / 2, (A.lng + B.lng) / 2));
-        const half = budget * 0.55 + 400;
-        const { kx, ky } = metresPerDeg(mid.lat);
-        rects = [{ s: mid.lat - half / ky, n: mid.lat + half / ky, w: mid.lng - half / kx, e: mid.lng + half / kx }];
-      } else if (rawVias.length) {
-        rects = this.streets.discRects(rawVias.map((c) => c.latlng), 500);
-      }
-      // only announce a fetch when one will really happen; a rerun in the same
-      // area is served from cache and shouldn't flash "reading the street map"
-      if (rects && this.streets.needsFetch(rects, streetKind(profile))) emit({ loading: true, phase: "streets" });
-      try { if (rects) await this.streets.ensureRects(rects, streetKind(profile)); } catch (e) {}
-      if (stale()) return;
-    }
 
-    // The graph planner proposes whole A-to-B walks through rewarding streets;
-    // each costs one BRouter request to become a real route. Skipped in
-    // mostly-virgin areas, where simple detours already defog near the ceiling.
+    // The graph planner proposes whole A-to-B walks through rewarding streets.
+    // Skipped in mostly-virgin areas, where simple detours already defog near
+    // the ceiling.
     let planned = [];
     if (budget <= 12000) {
-      const planner = this._getPlanner();
+      const planner = this._getPlanner(profile);
       if (planner) {
         const mid = L.latLng((A.lat + B.lat) / 2, (A.lng + B.lng) / 2);
         try {
@@ -510,26 +589,20 @@
       }
     }
 
-    // candidate jobs: BRouter's alternatives + our street/fog-seeking via-points
+    let reroutes = 0;
+    // candidate jobs: the planner's walks + our street/fog-seeking via-points
     const jobs = [];
-    for (let idx = 1; idx <= 3; idx++)
-      jobs.push(async () => {
-        const r = await this._route([A, B], profile, idx);
-        if (!r || !r.lenM || r.lenM > budget) return null;
-        const mid = r.coords[Math.floor(r.coords.length / 2)];
-        return { r, adoptWps: [A, L.latLng(mid[1], mid[0]), B] };
-      });
     for (const pl of planned)
       jobs.push(async () => {
-        const r = await this._route(pl.wps, profile, 0);
-        if (!r || !r.lenM || r.lenM > budget * 1.02) return null;
-        const snip = snipOldSpurs(r.coords, this.computeGain, 0);
+        const r = statsFromCoords(pl.coords);
+        if (r.lenM > budget * 1.02) return null;
+        const snip = snipOldSpurs(r.coords, this.computeGain, floor);
         if (snip.coords) return { r: statsFromCoords(snip.coords), adoptWps: [A].concat(resampleMids(snip.coords, 4), [B]) };
         return { r, adoptWps: pl.wps };
       });
     // planner plans ADD to the via candidates, they don't replace them: the
     // geometric vias are proven earners and cutting them for weaker plans
-    // dropped p2p's best card. Trim only slightly to bound the request count.
+    // dropped p2p's best card. Trim only slightly to bound the run time.
     for (const v of this._pickVias(rawVias).slice(0, planned.length ? MAX_VIAS - 1 : MAX_VIAS))
       jobs.push(async () => {
         // Real streets inflate the straight-line ellipse the via was placed
@@ -538,20 +611,19 @@
         // rescaling from the length just measured rather than from the first
         // guess: one shot assumes routed length grows evenly with the offset,
         // and around a barrier like a river it doesn't. Where it did, every
-        // detour overshot twice over and was binned, leaving only BRouter's own
-        // alternatives, which are minor variations on a single line.
+        // detour overshot twice over and was binned, leaving only the plain
+        // fastest route and the planner's walks.
         let ll = v.latlng, d = v.d;
-        let r = await this._route([A, ll, B], profile, 0);
+        let r = await this._route([A, ll, B], profile);
         let best = r, bestLl = ll;
         for (let k = 0; k < VIA_RETRIES; k++) {
           // 3: past this the via is in the wrong place entirely, not just too far out
           if (!r || !r.lenM || r.lenM <= budget || r.lenM <= base.lenM || r.lenM > budget * 3) break;
-          // 0.95: aim just inside the budget, because the best detours live right at the edge
-          const shrink = Math.max(0.2, Math.min(0.9, 0.95 * (budget - base.lenM) / (r.lenM - base.lenM)));
+          const shrink = Math.max(0.2, Math.min(0.9, (aim - base.lenM) / (r.lenM - base.lenM)));
           const d2 = d * shrink;
           const ll2 = d2 >= 120 ? this._viaPoint(v.t, v.side, d2) : null;
           if (!ll2) break;
-          const r2 = await this._route([A, ll2, B], profile, 0);
+          const r2 = await this._route([A, ll2, B], profile);
           if (!r2 || !r2.lenM) break;
           // pulling the via in usually shortens the route but not always, so keep
           // the shortest seen rather than the last: the loop stops at the first
@@ -560,19 +632,43 @@
           r = r2; ll = ll2; d = d2;
         }
         r = best; ll = bestLl;
-        // 1.02: don't bin a paid-for route for skimming the budget by metres
+        // a wanted distance also has a floor: one regrow pass when the via fell short of it
+        if (want && r && r.lenM && r.lenM < floor && r.lenM > base.lenM) {
+          const grow = Math.max(1.1, Math.min(3, (aim - base.lenM) / (r.lenM - base.lenM)));
+          const ll2 = this._viaPoint(v.t, v.side, d * grow);
+          const r2 = ll2 ? await this._route([A, ll2, B], profile) : null;
+          if (r2 && r2.lenM && r2.lenM > r.lenM && r2.lenM <= budget * 1.02) { r = r2; ll = ll2; }
+        }
+        // 1.02: don't bin a route for skimming the budget by metres
         if (!r || !r.lenM || r.lenM > budget * 1.02) return null;
-        const snip = snipOldSpurs(r.coords, this.computeGain, 0);
+        let adoptWps = joinPins(r, A, B);
+        const gainOf = (x) => this.computeGain(x.coords) || { area: 0, newPct: 0 };
+        const retrace = overlapFrac(r.coords, false);
+        if (retrace >= RETRACE_REROUTE_MIN && reroutes < MAX_RETRACE_REROUTES) {
+          reroutes++;
+          const rr = await this._rerouteReturn(r, ll, B, profile);
+          if (stale()) return null;
+          if (rr && rr.lenM >= floor && rr.lenM <= budget * 1.02 &&
+              rankKey(gainOf(rr), overlapFrac(rr.coords, false)) > rankKey(gainOf(r), retrace)) {
+            r = rr;
+            // the editor can't avoid streets: pin the new way home with waypoints
+            adoptWps = [A].concat(resampleMids(r.coords, Math.max(4, Math.min(8, Math.round(r.lenM / 500)))), [B]);
+          }
+        }
+        const snip = snipOldSpurs(r.coords, this.computeGain, floor);
         if (snip.coords) return { r: statsFromCoords(snip.coords), adoptWps: [A].concat(resampleMids(snip.coords, 3), [B]) };
-        return { r, adoptWps: [A, ll, B] };
+        return { r, adoptWps };
       });
 
     const total = jobs.length;
     emit({ loading: true, phase: "detours", done: 0, total });
     const found = await this._pool(jobs, stale, (done) => emit({ loading: true, phase: "detours", done, total }));
     if (stale()) return;
-    found.unshift({ r: base, adoptWps: [A, B], isBase: true });
-    this._finish(runId, found, { baseKm: base.lenM / 1000, bufferPct });
+    const { list, fallback } = p2pCandidates(found, { r: base, adoptWps: [A, B], isBase: true }, win);
+    this._finish(runId, list, {
+      baseKm: base.lenM / 1000, bufferPct,
+      wantKm: want ? want / 1000 : null, clamped, fallback
+    });
   };
 
   // ----- loops ------------------------------------------------------------------
@@ -603,29 +699,27 @@
     scored.sort((x, y) => y.score - x.score);
     const picked = [];
     for (const s of scored) {
-      if (picked.length >= MAX_LOOPS) break;
-      const sep = (a, b2) => { const d = Math.abs(a - b2) % 360; return Math.min(d, 360 - d); };
-      if (picked.every((p) => sep(p, s.b) >= 45)) picked.push(s.b);
+      if (picked.every((p) => bearingApart(p, s.b) >= 45)) picked.push(s.b);
     }
     return picked;
   };
 
-  // Square-ish loop S → v1 → v2 → v3 → S out along a bearing (S and three vias as the
-  // corners, edge a metres, straight perimeter 4a). Benchmarked against 2-via triangles:
-  // three vias give BRouter much less room to fold the loop into out-and-back spurs
-  // (mean retraced length 8% vs 25%) and hit the distance tolerance more often.
-  SuggestTool.prototype._loopVias = function (S, bearingDeg, a) {
+  // Loop S → v1 → v2 → v3 → S out along a bearing; `shape` picks a LOOP_SHAPES entry. For
+  // "square" (S and three vias as the corners) a is the edge and the straight perimeter 4a;
+  // the other shapes use a as their via distance only. Three vias give the router much
+  // less room than a 2-via triangle to fold the loop into out-and-back spurs.
+  SuggestTool.prototype._loopVias = function (S, bearingDeg, a, shape = "square") {
     const { kx, ky } = metresPerDeg(S.lat);
     const at = (thDeg, m) => {
       const th = thDeg * Math.PI / 180;
       return L.latLng(S.lat + (Math.cos(th) * m) / ky, S.lng + (Math.sin(th) * m) / kx);
     };
-    return [at(bearingDeg - 45, a), at(bearingDeg, a * Math.SQRT2), at(bearingDeg + 45, a)]
+    return LOOP_SHAPES[shape].map(([off, f]) => at(bearingDeg + off, a * f))
       .map((v) => this._snapToNewStreets(v, a * 0.3));
   };
 
-  // Triangle fallback (2 vias, side D/3.75): used when the square's vias hit somewhere
-  // BRouter can't route from (water, restricted areas). Fewer points, fewer chances to fail.
+  // Triangle fallback (2 vias, side D/3.75): used when the square's vias land
+  // where the router can't start (water, restricted areas, off the street network). Fewer points, fewer chances to fail.
   SuggestTool.prototype._loopViasTri = function (S, bearingDeg, side) {
     const { kx, ky } = metresPerDeg(S.lat);
     const at = (thDeg) => {
@@ -637,7 +731,9 @@
 
   // Share of the route's length that runs within ~25 m of another, path-distant part of
   // itself. High values mean out-and-back spurs rather than a proper loop.
-  function overlapFrac(coords) {
+  // closed=false (A to B): the start and end are unrelated, so no wrap-around adjacency,
+  // and high values mean the route re-walks earlier ground.
+  function overlapFrac(coords, closed = true) {
     const { kx, ky } = metresPerDeg(coords.length ? coords[0][1] : 0);
     const d2 = (p, q) => { const dx = (p.x - q.x), dy = (p.y - q.y); return dx * dx + dy * dy; };
     const pts = [];
@@ -654,11 +750,15 @@
       total += p.len;
       for (const q of pts) {
         const along = Math.abs(p.at - q.at);
-        if (Math.min(along, acc - along) < 250) continue; // path-adjacent (loop-circular)
+        if ((closed ? Math.min(along, acc - along) : along) < 250) continue; // closed: start and end are adjacent, so wrap the path distance
         if (d2(p, q) < 25 * 25) { overlap += p.len; break; }
       }
     }
     return total ? overlap / total : 0;
+  }
+
+  function rankKey(gain, retrace) {
+    return gain.area * (0.7 + 0.3 * Math.min(1, gain.newPct / 100)) * (1 - RETRACE_WEIGHT * retrace);
   }
 
   // Cut "there and back" excursions that don't pull their weight: an excursion is a
@@ -667,8 +767,8 @@
   // That catches dead-end re-walks of covered ground (rate ≈ 0) and marginal wiggles,
   // while keeping spurs INTO fog, which are ugly but often the point of the suggestion.
   // Returns { coords, blockedM }: coords is the spliced geometry (null if nothing was
-  // cut) and blockedM the length of cuts wanted but skipped to respect minLenM, so the
-  // caller can regrow the loop by that much and retry.
+  // cut) and blockedM the length of cuts wanted but skipped to respect minLenM. Loop
+  // callers regrow by that much and retry; p2p callers ignore it.
   function snipOldSpurs(coords, computeGain, minLenM) {
     const none = { coords: null, blockedM: 0 };
     if (!computeGain || coords.length < 10) return none;
@@ -698,7 +798,7 @@
       if (lost / exLen < 0.5 * routeEff) snips.push({ i, j: found, cut: exLen });
       i = found;
     }
-    // apply biggest cuts first, skip overlapping ones, never fall below the tolerance floor
+    // apply biggest cuts first, skip overlapping ones, never fall below minLenM
     snips.sort((a, b) => b.cut - a.cut);
     const applied = [];
     let remaining = total, blockedM = 0;
@@ -717,20 +817,36 @@
     return { coords: out, blockedM };
   }
 
-  // Recompute length/ascent/descent after geometry surgery.
+  // The same polyline without a vertex repeated right after itself.
+  function dropRepeats(coords) {
+    return coords.filter((p, i) => i === 0 || p[0] !== coords[i - 1][0] || p[1] !== coords[i - 1][1]);
+  }
+
+  // Recompute length (and ascent/descent, where the coordinates carry elevation)
+  // after geometry surgery.
   function statsFromCoords(coords) {
     const { kx, ky } = metresPerDeg(coords[0][1]);
+    const hasZ = coords[0].length > 2;
     let len = 0, asc = 0, desc = 0;
     for (let i = 1; i < coords.length; i++) {
       len += Math.hypot((coords[i][0] - coords[i - 1][0]) * kx, (coords[i][1] - coords[i - 1][1]) * ky);
+      if (!hasZ) continue;
       const d = (coords[i][2] || 0) - (coords[i - 1][2] || 0);
       if (d > 0) asc += d; else desc -= d;
     }
-    return { coords, lenM: Math.round(len), ascent: Math.round(asc), descent: Math.round(desc) };
+    return { coords, lenM: Math.round(len), ascent: hasZ ? Math.round(asc) : undefined, descent: hasZ ? Math.round(desc) : undefined };
+  }
+
+  // Editor pins for a routed candidate: its ends plus the street vertices its legs join at.
+  // A via pin may sit off the street, and a pin floating off the line would send the first
+  // edit's re-route through that point.
+  function joinPins(route, from, to) {
+    const joins = route.legs.slice(0, -1).map((l) => { const c = l.coords[l.coords.length - 1]; return L.latLng(c[1], c[0]); });
+    return [from].concat(joins, [to]);
   }
 
   // Evenly spaced points along a snipped route's cleaned shape, used as adoption
-  // waypoints so BRouter follows the same streets instead of re-growing the spur.
+  // waypoints so a later re-route follows the same streets instead of re-growing the spur.
   function resampleMids(coords, n) {
     const { kx, ky } = metresPerDeg(coords[0][1]);
     const cum = [0];
@@ -747,6 +863,45 @@
     return mids;
   }
 
+  // Finds the square size whose cleaned route lands in tolerance. Route length is not
+  // monotone in size (a far bridge makes it jump), so bracket the target between the
+  // largest short size and the smallest long or unroutable one, and give up after a
+  // fixed budget with the closest candidate seen.
+  async function fitLoopSize(prep, dim0, first, distM, buffer, stale) {
+    const floor = distM * (1 - buffer), ceil = distM * (1 + buffer);
+    // 2 for out of tolerance, +1 for a snip the tolerance floor blocked: regrowing by the blocked amount makes the cut affordable
+    const badness = (x) => ((x.r.lenM >= floor && x.r.lenM <= ceil) ? 0 : 2) + (x.blockedM > 0 ? 1 : 0);
+    const closer = (a, b) => badness(a) < badness(b) ||
+      (badness(a) === badness(b) && Math.abs(a.r.lenM - distM) < Math.abs(b.r.lenM - distM));
+    const tried = new Set([dim0]);
+    let best = first, lo = null, hi = null, last = { dim: dim0, c: first };
+    const note = (dim, c) => {
+      if (!c || c.r.lenM > ceil) { if (!hi || dim < hi.dim) hi = { dim, lenM: c ? c.r.lenM : null }; }
+      else if (c.r.lenM < floor) { if (!lo || dim > lo.dim) lo = { dim, lenM: c.r.lenM }; }
+    };
+    note(dim0, first);
+    for (let n = 1; n < FIT_ROUTES && badness(best) > 0; n++) {
+      let dim;
+      if (lo && hi) {
+        // an unroutable hi has no length to interpolate on: bisect
+        const t = hi.lenM == null ? 0.5 : (distM - lo.lenM) / (hi.lenM - lo.lenM);
+        dim = lo.dim + Math.min(0.9, Math.max(0.1, t)) * (hi.dim - lo.dim);
+      } else if (last.c) {
+        dim = last.dim * Math.min(2.5, Math.max(0.4, (distM + last.c.blockedM) / last.c.r.lenM));
+      } else {
+        dim = hi.dim * 0.6;
+      }
+      if (tried.has(dim)) break;
+      tried.add(dim);
+      const c = await prep(dim);
+      last = { dim, c };
+      note(dim, c);
+      if (c && closer(c, best)) best = c;
+      if (stale()) break;
+    }
+    return best;
+  }
+
   SuggestTool.prototype._suggestLoop = async function (profile, distM, buffer) {
     if (!this.a || !distM) return;
     this.clearResults();
@@ -755,72 +910,58 @@
     const emit = (s) => { if (!stale() && this.onResults) this.onResults(s); };
     const S = this.a.getLatLng();
     const bufferPct = Math.round(buffer * 100);
+    if (distM > MAX_LOOP_M) { emit({ empty: true, reason: "too-long", targetKm: distM / 1000, bufferPct, maxKm: MAX_LOOP_M / 1000 }); return; }
     const inTol = (lenM) => Math.abs(lenM - distM) <= buffer * distM;
 
-    // Fetch street data first so bearings and vias chase undefogged
-    // streets rather than raw fog. Short loops get one rect around the whole
-    // reach (via snapping needs area coverage); long loops fetch discs around
-    // the bearing sample points only, to keep the download sane. On any
-    // failure, carry on with fog-only scoring; suggestions must never die
-    // because Overpass is busy.
-    if (this.streets) {
-      const { kx, ky } = metresPerDeg(S.lat);
-      let rects;
-      if (distM <= 16000) {
-        // build the fetch area around a grid-snapped centre so a rerun (same
-        // or slightly nudged pin) reuses the cache; the planner still uses the
-        // true S, and the area's 800 m margin absorbs the snap offset
-        const c = this.streets.snapPoint(S);
-        const half = distM * 0.45 + 800;
-        rects = [{ s: c.lat - half / ky, n: c.lat + half / ky, w: c.lng - half / kx, e: c.lng + half / kx }];
-      } else {
-        const pts = [];
-        for (let b = 0; b < 360; b += 30) for (const f of [0.25, 0.4]) {
-          const th = b * Math.PI / 180;
-          pts.push(L.latLng(S.lat + (Math.cos(th) * distM * f) / ky, S.lng + (Math.sin(th) * distM * f) / kx));
-        }
-        rects = this.streets.discRects(pts, bearingRadius(distM) + 200);
-      }
-      // only announce a fetch when one will really happen; a rerun in the same
-      // area is served from cache and shouldn't flash "reading the street map"
-      if (this.streets.needsFetch(rects, streetKind(profile))) emit({ loading: true, phase: "streets" });
-      try { await this.streets.ensureRects(rects, streetKind(profile)); } catch (e) {}
-      if (stale()) return;
-    }
+    // Streets first: routing runs on them, and bearings and vias chase undefogged
+    // streets rather than raw fog. One rect around the whole reach, capped so a
+    // very long loop downloads a bounded area (its far side may then be out of
+    // reach).
+    if (!this.streets) { emit({ error: true, reason: "no-street-data" }); return; }
+    const { kx, ky } = metresPerDeg(S.lat);
+    // build the fetch area around a grid-snapped centre so a rerun (same
+    // or slightly nudged pin) reuses the cache; the planner still uses the
+    // true S, and the area's 800 m margin absorbs the snap offset
+    const c = this.streets.snapPoint(S);
+    const half = Math.min(distM * 0.45 + 800, 9000);
+    const rects = [{ s: c.lat - half / ky, n: c.lat + half / ky, w: c.lng - half / kx, e: c.lng + half / kx }];
+    if (!(await this._loadStreets(rects, profile, emit, stale))) return;
+    const planner = this._getPlanner(profile);
+    if (!planner) { emit({ error: true, reason: "no-street-data" }); return; }
 
     // Search the street network itself for high-defog loops (thin shapes, odd
-    // topologies: whatever the fog asks for). Each plan then costs one BRouter
-    // request to become a real route. Only for distances whose whole reach was
-    // fetched as one street rect, and only where new ground is scarce enough
-    // that shape matters: in mostly-virgin areas wide simple loops already
-    // defog near the ceiling and planned walks measured worse.
+    // topologies: whatever the fog asks for). Only for distances the capped rect
+    // reaches whole, and only where new ground is scarce enough that shape
+    // matters: in mostly-virgin areas wide simple loops already defog near the
+    // ceiling and planned walks measured worse.
     let planned = [];
     if (distM <= 16000) {
-      const planner = this._getPlanner();
-      if (planner) {
-        try {
-          if (planner.meanFracNear(S, Math.min(1800, distM * 0.18)) < 0.82)
-            planned = planner.planLoop(S, distM, buffer, 4);
-        } catch (e) {}
-      }
+      try {
+        if (planner.meanFracNear(S, Math.min(1800, distM * 0.18)) < 0.82)
+          planned = planner.planLoop(S, distM, buffer, 4);
+      } catch (e) {}
     }
     // With planner candidates in hand, compass-square candidates become a
     // safety net, but a real one: in dense fringe the best square still beats
-    // the best plan at times, so keep three even when plans are plentiful.
-    const bearings = this._loopBearings(S, distM)
-      .slice(0, planned.length >= 3 ? 3 : planned.length >= 1 ? 4 : MAX_LOOPS);
+    // the best plan at times, so the first batch is three bearings when plans are plentiful,
+    // four with one or two, and MAX_LOOPS when there are none.
+    // The ranked bearings left over, and the first batch again as other shapes, are a second
+    // wave, run only if too few directions came out.
+    const ranked = this._loopBearings(S, distM);
+    const firstN = planned.length >= 3 ? 3 : planned.length >= 1 ? 4 : MAX_LOOPS;
+    const bearings = ranked.slice(0, firstN);
     const total = bearings.length + planned.length;
     emit({ loading: true, phase: "loops", done: 0, total });
 
-    // 5: roads inflate the straight square (4a) by ~25%, so start with perimeter = D/1.25.
-    // If the routed loop misses the tolerance, retry once with a proportionally scaled shape;
+    // Roads inflate the straight square (4a) by ~25%, so the square starts with perimeter = distM/1.25;
+    // the other shapes start at the same size and rely on fitLoopSize.
+    // If the routed loop misses the tolerance, fitLoopSize searches for a size that lands in it;
     // if the square doesn't route at all, fall back to a triangle on the same bearing.
     const loopWps = (vias) => [S].concat(vias, [S]);
     const fails = { server: 0, tol: 0 };
     const floor = distM * (1 - buffer);
     const plannedJobs = planned.map((pl) => async () => {
-      const raw = await this._route(pl.wps, profile, 0);
-      if (!raw || !raw.lenM) { fails.server++; return null; }
+      const raw = statsFromCoords(pl.coords);
       const snip = snipOldSpurs(raw.coords, this.computeGain, floor);
       const c = snip.coords
         ? { r: statsFromCoords(snip.coords), adoptWps: [S].concat(resampleMids(snip.coords, 6), [S]) }
@@ -828,54 +969,66 @@
       if (!inTol(c.r.lenM)) { fails.tol++; return null; }
       return { r: c.r, adoptWps: c.adoptWps, overlap: overlapFrac(c.r.coords), planned: true };
     });
-    const jobs = plannedJobs.concat(bearings.map((bearing) => async () => {
-      let mk = (d) => this._loopVias(S, bearing, d);
-      // route + snip in one step, so tolerance and the rescale-retry both judge the
-      // CLEANED length, so a loop whose snips pull it under target gets regrown, not binned
+    const squareJob = (bearing, shape = "square") => async () => {
+      let mk = (d) => this._loopVias(S, bearing, d, shape);
+      // route + snip in one step, so the tolerance check and fitLoopSize's size search
+      // both judge the CLEANED length, so a loop whose snips pull it under target gets regrown, not binned
       const prep = async (d) => {
         const vias = mk(d);
-        const raw = await this._route(loopWps(vias), profile, 0);
+        const raw = await this._route(loopWps(vias), profile);
         if (!raw || !raw.lenM) return null;
         const snip = snipOldSpurs(raw.coords, this.computeGain, floor);
         return snip.coords
           ? { r: statsFromCoords(snip.coords), adoptWps: [S].concat(resampleMids(snip.coords, 4), [S]), blockedM: snip.blockedM }
-          : { r: raw, adoptWps: loopWps(vias), blockedM: snip.blockedM };
+          : { r: raw, adoptWps: joinPins(raw, S, S), blockedM: snip.blockedM };
       };
       let dim = distM / 5;
       let c = await prep(dim);
-      if (!c) {
+      // the triangle on this bearing is shape-independent: a retry in another shape would only repeat it
+      if (!c && shape === "square") {
         mk = (d) => this._loopViasTri(S, bearing, d);
         dim = distM / 3.75;
         c = await prep(dim);
       }
       if (!c) { fails.server++; return null; }
-      // retry when out of tolerance OR a wanted snip was blocked by the tolerance floor;
-      // regrowing by the blocked amount makes the cut affordable on the second pass
-      const badness = (x) => (inTol(x.r.lenM) ? 0 : 2) + (x.blockedM > 0 ? 1 : 0);
-      // up to two improvement passes: a far-off first shot may need one rescale to reach
-      // tolerance and a second to regrow room for a floor-blocked snip
-      for (let attempt = 0; attempt < 2 && badness(c) > 0; attempt++) {
-        dim *= Math.min(2.5, Math.max(0.4, (distM + c.blockedM) / c.r.lenM));
-        const c2 = await prep(dim);
-        if (!c2) break;
-        const better = badness(c2) < badness(c) ||
-          (badness(c2) === badness(c) && Math.abs(c2.r.lenM - distM) < Math.abs(c.r.lenM - distM));
-        if (!better) break;
-        c = c2;
-      }
+      c = await fitLoopSize(prep, dim, c, distM, buffer, stale);
       if (!inTol(c.r.lenM)) { fails.tol++; return null; }
       return { r: c.r, adoptWps: c.adoptWps, overlap: overlapFrac(c.r.coords) };
-    }));
+    };
 
-    const found = await this._pool(jobs, stale, (done) => emit({ loading: true, phase: "loops", done, total }));
+    const tick = (phase, count) => (done) => emit({ loading: true, phase, done, total: count });
+    const found = await this._pool(plannedJobs.concat(bearings.map((b) => squareJob(b))), stale, tick("loops", total));
     if (stale()) return;
+    // _diversify gives a card to a loop only when its direction differs by more than 60 degrees
+    // from the earlier ones (deferred loops just fill up); fewer than three distinct directions
+    // means the second wave (unused bearings, other shapes) may add some
+    const directions = () => {
+      const dirs = [];
+      // counted over what the overlap filter below will keep, or retracing loops would hide a short deck
+      for (const c of found.filter((x) => x.planned || x.overlap <= 0.3)) {
+        const b = loopBearingOf(S, c.r.coords);
+        if (dirs.every((o) => bearingApart(o, b) > 60)) dirs.push(b);
+      }
+      return dirs.length;
+    };
+    // leftover bearings as squares, then the first batch again one alternate shape at a time,
+    // each stage only while directions are still short (each stage routes every bearing again, so later stages are skipped once directions are in)
+    const stages = [ranked.slice(firstN).map((b) => squareJob(b))]
+      .concat(ALT_SHAPES.map((sh) => bearings.map((b) => squareJob(b, sh))))
+      .filter((st) => st.length);
+    for (const st of stages) {
+      if (directions() >= 3) break;
+      emit({ loading: true, phase: "shapes", done: 0, total: st.length });
+      found.push(...await this._pool(st, stale, tick("shapes", st.length)));
+      if (stale()) return;
+    }
     if (!found.length && fails.server > 0 && fails.tol === 0) {
       // nothing routed at all, a server problem, not a tolerance problem; say so
       emit({ empty: true, reason: "server", targetKm: distM / 1000, bufferPct });
       return;
     }
     // Drop square candidates that retrace >30% of themselves: for THEM overlap
-    // is a generation defect (BRouter folding a square into out-and-back
+    // is a generation defect (a square folding into out-and-back
     // spurs). Planned routes are exempt: when the planner retraces, it decided
     // the retrace pays (e.g. a bridge is the only way over and back, and a
     // "lollipop" out to rich streets beats a forced giant detour).
@@ -883,6 +1036,6 @@
     this._finish(runId, clean.length ? clean : found, { targetKm: distM / 1000, bufferPct });
   };
 
-  SuggestTool._internals = { snipOldSpurs, overlapFrac, statsFromCoords }; // for tests
+  SuggestTool._internals = { loopBearingOf, bearingApart, snipOldSpurs, overlapFrac, rankKey, RETRACE_WEIGHT, statsFromCoords, joinPins, p2pWindow, p2pCandidates, fitLoopSize, FIT_ROUTES }; // for tests
   global.SuggestTool = SuggestTool;
 })(window);

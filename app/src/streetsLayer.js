@@ -32,7 +32,7 @@
   };
   const DIM_OP = 0.45; // strength of stretches the chosen transport can't use
   // Which travel class each Plan mode needs; the rest can go anywhere on foot.
-  const MODE_CLASS = { trekking: "bike", fastbike: "road", "car-fast": "car" };
+  const MODE_CLASS = global.StreetIndex.MODE_CLASS;
   function shade(hex, f) {
     const h = hex.replace("#", "");
     const c = [0, 2, 4].map((i) => Math.round(parseInt(h.substr(i, 2), 16) * f));
@@ -265,8 +265,8 @@
     const b = this.map.getBounds().pad(0.2);
     const s = b.getSouth(), n = b.getNorth(), w = b.getWest(), e = b.getEast();
     // a way we haven't classified yet counts as usable, so nothing fades in late
-    const usable = (id) => !this.travelClass || !this.streets.classified.has(id) ||
-      this.streets.classIds[this.travelClass].has(id);
+    const usable = (id) => (this.travelClass === "car" || !this.streets.motorway.has(id)) &&
+      (!this.travelClass || !this.streets.classified.has(id) || this.streets.classIds[this.travelClass].has(id));
     const shown = [], faint = [];
     for (const r of this.runs)
       if (r.m >= MIN_RUN_M && r.n >= s && r.s <= n && r.e >= w && r.w <= e) (usable(r.id) ? shown : faint).push(r.ll);

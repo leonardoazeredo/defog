@@ -357,7 +357,7 @@
       ? `<div class="statline gain"><span>defogs ~${fmtArea(lastGain.area)}</span><span>${fmtPct(lastGain.newPct)} new ground</span></div>` : "";
     statsWrap.innerHTML =
       `<div class="card"><span class="statbig">${fmtDist(s.km)}</span> <span class="statsub">${MODE_LABEL[profile] || ""}</span>` +
-      `<div class="statline"><span>↑ ${fmtEle(s.ascent)}</span><span>↓ ${fmtEle(s.descent)}</span></div>${gain}</div>`;
+      (s.ascent != null ? `<div class="statline"><span>↑ ${fmtEle(s.ascent)}</span><span>↓ ${fmtEle(s.descent)}</span></div>` : "") + `${gain}</div>`;
   }
 
   function renderWps(list) {
@@ -434,7 +434,9 @@
   const sugModeSeg = $("sugModeSeg"), sugBufSeg = $("sugBufSeg");
   wireHelp("sugBufHelp", "sugBufHelpText");
   const sugDistRow = $("sugDistRow"), sugDist = $("sugDist"), sugDistUnit = $("sugDistUnit");
+  const sugTargetRow = $("sugTargetRow"), sugTarget = $("sugTarget"), sugTargetUnit = $("sugTargetUnit");
   let lastSug = null;
+  let p2pKm = parseFloat(localStorage.getItem("f2m_p2pkm")) || null; // null = no wanted distance
   let sugBuffer = parseInt(localStorage.getItem("f2m_sugbuf") || "15", 10);
   let loopKm = parseFloat(localStorage.getItem("f2m_loopkm") || "10");
 
@@ -468,33 +470,60 @@
     sugDist.value = (units === "imperial" ? loopKm * 0.621371 : loopKm).toFixed(1).replace(/\.0$/, "");
   }
   syncDistInput();
+  function syncTargetInput() {
+    sugTargetUnit.textContent = units === "imperial" ? "mi" : "km";
+    sugTarget.value = p2pKm ? (units === "imperial" ? p2pKm * 0.621371 : p2pKm).toFixed(1).replace(/\.0$/, "") : "";
+  }
+  syncTargetInput();
 
   function renderSug() {
     const s = lastSug;
-    if (!s) { sugResults.innerHTML = ""; return; }
+    if (!s) { sugResults.innerHTML = ""; sugTarget.placeholder = "optional"; return; }
     if (s.loading) {
       sugResults.innerHTML = `<div class="muted" style="margin-top:10px">${
         s.phase === "baseline" ? "Finding the fastest route…" :
         s.phase === "streets" ? "Reading the street map…" :
         s.phase === "loops" ? `Routing loops… ${s.done}/${s.total}` :
+        s.phase === "shapes" ? `Trying more loops… ${s.done}/${s.total}` :
         `Exploring detours… ${s.done}/${s.total}`}</div>`;
       return;
     }
     if (s.error) {
-      sugResults.innerHTML = `<div class="muted" style="margin-top:10px">Couldn't reach the routing server. Try again in a moment.</div>`;
+      console.debug("[suggest]", s.reason, s.why);
+      const w = s.why || {};
+      const pin = (i) => (suggest.mode === "loop" ? "The start" : i ? "B" : "A");
+      const msg = s.reason === "streets-fetch" ? `Couldn't download the street map (${String(w).replace(/[<&]/g, " ")}). Try again in a minute.`
+        : s.reason === "no-street-data" ? "No streets were found around here."
+        : s.reason === "off-network" ? `${pin(w.point)} is more than ${fmtDist(0.6)} from any street junction or end this mode can use. Move the pin closer to a street.`
+        : s.reason === "one-way" ? "A and B are on the same street network, but one-way streets block every way between them for this mode."
+        : s.reason === "no-path" ? `A and B sit on separate pieces of the street map for this mode${w.gap ? ` (about ${fmtDist(w.gap.m / 1000)} apart)` : ""}. Try another mode or move a pin.`
+        : "Couldn't find a route. Try again in a moment.";
+      sugResults.innerHTML = `<div class="muted" style="margin-top:10px">${msg}</div>`;
       return;
     }
     if (s.empty) {
       sugResults.innerHTML = `<div class="muted" style="margin-top:10px">${
         s.reason === "defogged"
           ? "You've already covered the ground around here. Every route tried runs over defogged territory. Try a different area" + (s.targetKm != null ? " or a longer distance." : " or a bigger buffer.")
+          : s.reason === "mode"
+          ? "Suggestions aren't available for rail: there are no rail lines in the street map. Pick another mode."
+          : s.reason === "too-far"
+          ? `A and B are more than ${fmtDist(s.maxKm)} apart: the street map between them is too big to download. Try two closer points.`
+          : s.reason === "too-long"
+          ? `Loops over ${fmtDist(s.maxKm)} aren't supported: the street map for one that long is too big to download. Try a shorter loop.`
           : s.reason === "server"
-          ? "The routing server didn't return any routes. It may be busy right now, or this start may be hard to route from. Try again in a minute, or move the start pin."
+          ? "No routes could be found from here. The start may be off the street network, or the streets around it unreachable. Move the start pin and try again."
           : `No loops landed within ±${s.bufferPct}% of ${fmtDist(s.targetKm)}. Try a bigger buffer or a different distance.`}</div>`;
       return;
     }
     const isLoop = s.targetKm != null;
-    const header = isLoop
+    if (s.baseKm != null) sugTarget.placeholder = "≥ " + fmtDist(s.baseKm);
+    const header = s.fallback
+      ? `Nothing fits near ${fmtDist(s.wantKm)} (±${s.bufferPct}%). This is the fastest route, ${fmtDist(s.baseKm)}. Tap it to preview:`
+      : s.wantKm != null
+      ? (s.clamped ? `The fastest route is ${fmtDist(s.baseKm)}, longer than the distance you asked for. ` : "") +
+        `Routes near ${fmtDist(s.wantKm)} (±${s.bufferPct}%, never under the fastest route), ranked by defogging. Tap one to preview:`
+      : isLoop
       ? `Loops near ${fmtDist(s.targetKm)} (±${s.bufferPct}%), ranked by defogging. Tap one to preview:`
       : `Your best options within ${fmtDist(s.baseKm * (1 + s.bufferPct / 100))} (the fastest route plus ${s.bufferPct}%). Tap one to preview:`;
     const deltaLabel = (c) => {
@@ -508,8 +537,8 @@
           <div class="sugTop"><span class="chip" style="background:${c.color}"></span><b>${fmtDist(c.km)}</b>
             <span class="muted">${deltaLabel(c)}</span>
             <button class="use act" data-use="${i}">Use</button></div>
-          <div class="sugGain"><span>defogs ~${fmtArea(c.area)}</span><span>${fmtPct(c.newPct)} new ground</span></div>
-          <div class="sugSub"><span>↑ ${fmtEle(c.ascent)}</span><span>↓ ${fmtEle(c.descent)}</span></div>
+          <div class="sugGain"><span>defogs ~${fmtArea(c.area)}</span><span>${fmtPct(c.newPct)} new ground</span>${c.retracePct >= 10 ? `<span>retraces ${c.retracePct}%</span>` : ""}</div>
+          ${c.ascent != null ? `<div class="sugSub"><span>↑ ${fmtEle(c.ascent)}</span><span>↓ ${fmtEle(c.descent)}</span></div>` : ""}
         </div>`).join("");
     sugResults.querySelectorAll(".sugCard").forEach((el) => el.addEventListener("click", () => {
       suggest.select(parseInt(el.dataset.i, 10));
@@ -517,9 +546,9 @@
     }));
     sugResults.querySelectorAll("[data-use]").forEach((el) => el.addEventListener("click", (e) => {
       e.stopPropagation();
-      const wps = suggest.adopt(parseInt(el.dataset.use, 10));
-      if (!wps) return;
-      route.setWaypoints(wps);
+      const adopted = suggest.adopt(parseInt(el.dataset.use, 10));
+      if (!adopted) return;
+      route.setFixedRoute(adopted.wps, adopted.coords);
       setSeg("draw"); // hand over to the editor: tweak pins, see the two-colour path, export
     }));
   }
@@ -542,6 +571,7 @@
   sugModeSeg.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
     sugModeSeg.querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
     sugDistRow.style.display = b.dataset.m === "loop" ? "" : "none";
+    sugTargetRow.style.display = b.dataset.m === "loop" ? "none" : "";
     suggest.setMode(b.dataset.m); // fires onPoints -> status text + button state
   }));
 
@@ -563,9 +593,17 @@
     suggest.clearResults();
   });
 
+  sugTarget.addEventListener("change", () => {
+    const v = parseFloat(sugTarget.value);
+    p2pKm = v > 0 ? Math.min(300, units === "imperial" ? v / 0.621371 : v) : null;
+    if (p2pKm) localStorage.setItem("f2m_p2pkm", String(p2pKm)); else localStorage.removeItem("f2m_p2pkm");
+    syncTargetInput();
+    suggest.clearResults();
+  });
+
   sugGo.addEventListener("click", () => {
     route.clear(); // don't leave a hand-drawn route tangled under the previews
-    suggest.suggest(profile, { buffer: sugBuffer / 100, distM: loopKm * 1000 });
+    suggest.suggest(profile, { buffer: sugBuffer / 100, distM: loopKm * 1000, targetM: p2pKm ? p2pKm * 1000 : 0 });
   });
   sugReset.addEventListener("click", () => suggest.reset());
 
@@ -587,7 +625,7 @@
     b.addEventListener("click", () => {
       units = b.dataset.u; localStorage.setItem("f2m_units", units);
       unitSeg.querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
-      renderStats(); renderElev(); renderSug(); syncDistInput();
+      renderStats(); renderElev(); renderSug(); syncDistInput(); syncTargetInput();
     });
   });
 

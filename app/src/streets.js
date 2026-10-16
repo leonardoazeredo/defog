@@ -13,18 +13,26 @@
   const OVERPASS = "https://overpass-api.de/api/interpreter";
   // Streets someone would plausibly cover on foot vs on a bike. Driveways and
   // parking aisles are excluded: they're numerous and nobody hunts them.
-  const RUN_HW = "residential|unclassified|tertiary|secondary|primary|living_street|track|path|footway|cycleway|pedestrian";
-  const BIKE_HW = "residential|unclassified|tertiary|secondary|primary|living_street|cycleway|track";
+  // Besides what people cover, the lists hold trunk roads, link roads and (on foot) steps:
+  // routing needs their junctions, or side streets that reach the network only through
+  // a main road are cut off
+  const CONNECT_HW = "trunk|trunk_link|primary_link|secondary_link|tertiary_link";
+  const RUN_HW = "residential|unclassified|tertiary|secondary|primary|living_street|track|path|footway|cycleway|pedestrian|steps|" + CONNECT_HW;
+  const BIKE_HW = "residential|unclassified|tertiary|secondary|primary|living_street|cycleway|track|" + CONNECT_HW;
+  const CAR_HW = "residential|unclassified|tertiary|secondary|primary|living_street|motorway|motorway_link|" + CONNECT_HW;
   // Which of the walked ways each other way of travelling can actually use. A
-  // walking fetch also asks for these as bare ID LISTS (a few hundred KB, versus
+  // fetch also asks for these as bare ID LISTS (a few hundred KB, versus
   // about a megabyte if we asked Overpass for the tags), so the map can dim the
   // ways the chosen transport can't take without fetching anything again.
   const CLASS_HW = {
-    bike: "residential|unclassified|tertiary|secondary|primary|living_street|cycleway|track|path",
-    road: "residential|unclassified|tertiary|secondary|primary|living_street|cycleway",
-    car: "residential|unclassified|tertiary|secondary|primary|living_street"
+    bike: "residential|unclassified|tertiary|secondary|primary|living_street|cycleway|track|path|" + CONNECT_HW,
+    road: "residential|unclassified|tertiary|secondary|primary|living_street|cycleway|" + CONNECT_HW,
+    car: "residential|unclassified|tertiary|secondary|primary|living_street|motorway|motorway_link|" + CONNECT_HW
   };
   const CLASS_ORDER = ["bike", "road", "car"]; // the order the ID lists come back in
+  // routing profile -> travel class (also read by streetsLayer for its dimming).
+  // Unlisted profiles (hiking-mountain, rail, shortest) use every way.
+  const MODE_CLASS = { trekking: "bike", fastbike: "road", "car-fast": "car" };
   const SEG_M = 50;              // ways are chopped into ~50 m scoring segments
   const GRID_M = 250;            // spatial bin size for radius queries
   const MAX_SEGS = 400000;       // memory guard (~40 MB worst case)
@@ -37,9 +45,14 @@
     this.wayIds = new Set();     // dedupe across overlapping fetches
     this.classIds = { bike: new Set(), road: new Set(), car: new Set() };
     this.classified = new Set(); // ways we know the travel classes of (blank = assume usable)
+    this.oneWay = new Set();     // one-way along the way's node order (incl. roundabouts)
+    this.reverseWay = new Set(); // one-way against it (oneway=-1)
+    this.bikeBoth = new Set();   // one-way streets bikes may still ride both ways (contraflow lanes)
+    this.motorway = new Set();   // motorways and their links: cars only (fetched for cars only)
     this.ways = [];              // raw {id,nodes,geometry}: shared node ids give the
                                  // route planner its graph connectivity for free
     this.segCount = 0;
+    this.version = 0;            // bumped by every fetch that was read, so graphs built from this notice list changes
     this.kx = null; this.ky = 110540; // metre frame, anchored on first fetch
   }
 
@@ -75,17 +88,38 @@
 
   // A rect counts as covered when an earlier fetch contains it AND fetched at
   // least the streets asked for now: the walking set is a superset of the bike
-  // set, so a "run" fetch satisfies a later "bike" request but not vice versa.
+  // set, so a "run" fetch satisfies a later "bike" request but not vice versa. A car
+  // fetch holds motorways, which nothing else does, so only a car fetch covers cars.
   StreetIndex.prototype._uncovered = function (rects, kind) {
     return rects.filter((r) =>
       !this.rects.some((o) => r.s >= o.s && r.n <= o.n && r.w >= o.w && r.e <= o.e &&
-        (o.kind === "run" || o.kind === kind)));
+        (o.kind === kind || (o.kind === "run" && kind !== "car"))));
   };
 
-  // Would ensureRects/ensureDiscs actually hit the network for these, or is it
+  // Would ensureRects actually hit the network for these, or is it
   // all already cached from an earlier run? Lets callers show the "reading the
   // street map" note only when there's a real fetch, not on every rerun.
   StreetIndex.prototype.needsFetch = function (rects, kind) { return this._uncovered(rects, kind).length > 0; };
+
+  // Which way a routing profile may travel each way: 1 along its node order only, -1
+  // against it, 0 both. One-ways bind the profiles on wheels, not walking, rail or the
+  // straight line; bikes are exempt where a contraflow lane is tagged.
+  StreetIndex.prototype.onewayFor = function (profile) {
+    const cls = MODE_CLASS[profile];
+    if (!cls) return () => 0;
+    const bike = cls === "bike" || cls === "road";
+    return (id) => (bike && this.bikeBoth.has(id) ? 0 : this.oneWay.has(id) ? 1 : this.reverseWay.has(id) ? -1 : 0);
+  };
+
+  // Which ways a routing profile may use, by the same rule streetsLayer dims
+  // them with. A way we hold no class for counts as usable. Motorways are in the shared
+  // way list once a car fetch has run, and only cars may use them.
+  StreetIndex.prototype.usableFor = function (profile) {
+    const cls = MODE_CLASS[profile];
+    if (!cls) return (id) => !this.motorway.has(id);
+    if (cls === "car") return (id) => !this.classified.has(id) || this.classIds.car.has(id);
+    return (id) => !this.motorway.has(id) && (!this.classified.has(id) || this.classIds[cls].has(id));
+  };
 
   // Round a point to a ~0.006 degree grid (~450-650 m). Callers build the fetch
   // area around the rounded centre, so any run whose pin lands in the same grid
@@ -96,32 +130,37 @@
     g = g || 0.006;
     return L.latLng(Math.round(latlng.lat / g) * g, Math.round(latlng.lng / g) * g);
   };
-  StreetIndex.prototype.discRects = function (points, rM) {
-    return points.map((p) => {
-      const kx = 111320 * Math.cos(p.lat * Math.PI / 180);
-      return { s: p.lat - rM / 110540, n: p.lat + rM / 110540, w: p.lng - rM / kx, e: p.lng + rM / kx };
-    });
-  };
 
   // Fetch streets for the given rects (skipping ones already covered), one
-  // Overpass query. kind: "run" | "bike". Throws on failure; callers fall back
-  // to fog-only scoring, suggestions must keep working without street data.
+  // Overpass query. kind: "run" | "bike" | "car". Throws on failure; suggestions end in
+  // their error state, since routing needs the streets.
   StreetIndex.prototype.ensureRects = async function (rects, kind) {
     const todo = this._uncovered(rects, kind);
     if (!todo.length) return;
     this._anchor(todo[0].s);
     const bb = (r) => [r.s, r.w, r.n, r.e].map((x) => x.toFixed(4)).join(",");
-    // access filter: the graph must not route through ways the router (and
-    // the person!) can't use; a military base on a plan once 400'd the whole
-    // route request because a waypoint landed inside it
-    const acc = `[access!~"^(private|no|military)$"]`;
+    // access filter: planned and routed trips must not cross ways the person can't
+    // use (motorroads are for motor vehicles; foot=no only matters on foot)
+    const acc = `[access!~"^(private|no|military)$"]` + (kind === "car" ? "" : `[motorroad!=yes]`) + (kind === "run" ? `[foot!=no]` : "");
     const clauses = (hw) => todo.map((r) =>
       `way[highway~"^(${hw})$"]${acc}(${bb(r)});way[highway=service]${acc}[service!~"^(driveway|parking_aisle)$"](${bb(r)});`).join("");
-    let q = `[out:json][timeout:60];(${clauses(kind === "bike" ? BIKE_HW : RUN_HW)});out skel geom;`;
-    // Ask a walking fetch for the travel-class ID lists too. Each list is
-    // introduced by its own count, so the groups stay apart in one response.
-    if (kind !== "bike")
-      for (const k of CLASS_ORDER) q += `(${clauses(CLASS_HW[k])})->.${k};.${k} out count;.${k} out ids;`;
+    const hw = kind === "bike" ? BIKE_HW : kind === "car" ? CAR_HW : RUN_HW;
+    // the box is scanned once into .all; each list below filters that set (scanning the
+    // box again per list ran Overpass out of time on a town-sized box)
+    let q = `[out:json][timeout:60];(${clauses(hw)})->.all;.all out skel geom;`;
+    const tagged = (list, filter) => `way.all[highway~"^(${list})$"]${filter};`;
+    const withService = (list, filter) => tagged(list, filter) + `way.all[highway=service]${filter};`;
+    // Then ID lists, each introduced by its own count so the groups stay apart in one
+    // response: the travel classes (bikes keep off bicycle=no), the one-ways (a way
+    // travelled one way, plus roundabouts, and one travelled against its node order),
+    // the one-ways bikes may ride both ways, and the motorways.
+    const groups = CLASS_ORDER.map((k) => [k, withService(CLASS_HW[k], k === "car" ? "" : "[bicycle!=no]")]).concat([
+      ["oneWay", withService(hw, `[oneway~"^(yes|true|1)$"]`) + tagged(hw, `[junction=roundabout][oneway!=no]`)],
+      ["reverseWay", withService(hw, `[oneway~"^(-1|reverse)$"]`)],
+      ["bikeBoth", tagged(hw, `[~"^oneway:bicycle$"~"^no$"]`) + tagged(hw, `[cycleway~"^opposite"]`) + tagged(hw, `[~"^cycleway:(left|right|both)$"~"^opposite"]`)],
+      ["motorway", tagged("motorway|motorway_link", "")]
+    ]);
+    for (const [k, body] of groups) q += `(${body})->.${k};.${k} out count;.${k} out ids;`;
     const res = await fetch(OVERPASS, {
       method: "POST",
       // UA is for the Node benchmark harness (Overpass rejects Node's default);
@@ -131,19 +170,17 @@
     });
     if (!res.ok) throw new Error("overpass HTTP " + res.status);
     const gj = await res.json();
-    let group = -1; // -1 = the geometry, then one travel class per count marker
+    // a timeout or out-of-memory still answers 200, with whatever it had by then
+    if (gj.remark) throw new Error("overpass: " + gj.remark);
+    let group = -1; // -1 = the geometry, then one list (see `groups`) per count marker
     for (const el of gj.elements || []) {
       if (el.type === "count") { group++; continue; }
       if (el.type !== "way") continue;
-      if (group < 0) { this._addWay(el); if (kind !== "bike") this.classified.add(el.id); }
-      else if (CLASS_ORDER[group]) this.classIds[CLASS_ORDER[group]].add(el.id);
+      if (group < 0) { this._addWay(el); this.classified.add(el.id); }
+      else (this.classIds[groups[group][0]] || this[groups[group][0]]).add(el.id);
     }
+    this.version++;
     for (const r of todo) this.rects.push({ s: r.s, w: r.w, n: r.n, e: r.e, kind });
-  };
-
-  // Convenience: coverage discs of radius rM around a list of L.latLng points.
-  StreetIndex.prototype.ensureDiscs = function (points, rM, kind) {
-    return this.ensureRects(this.discRects(points, rM), kind);
   };
 
   // Defoggable area (m²) reachable by travelling the ways within rM of the
@@ -173,5 +210,6 @@
     return m2;
   };
 
+  StreetIndex.MODE_CLASS = MODE_CLASS;
   global.StreetIndex = StreetIndex;
 })(window);

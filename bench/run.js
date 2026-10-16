@@ -1,7 +1,7 @@
 // Run the CURRENT suggestion algorithm headless over bench/scenarios.js and
 // report defog + shape metrics per suggestion card.
 //   node bench/run.js [outName] [scenarioFilter]
-// BRouter responses are disk-cached (bench/cache/), so re-runs are free and
+// Overpass responses are disk-cached (bench/cache/), so re-runs are free and
 // reproducible; delete the cache to re-measure against the live server.
 "use strict";
 const fs = require("fs");
