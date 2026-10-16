@@ -1,13 +1,13 @@
 // Graph route planner: searches the real street network for the loop or A-to-B
-// walk that defogs the most, instead of hoping a handful of via pins steers
-// BRouter there. Works on the ways already fetched by StreetIndex: shared OSM
+// walk that defogs the most, instead of hoping a handful of via pins steers a
+// router there. Works on the ways already fetched by StreetIndex: shared OSM
 // node ids give connectivity, and every edge carries a reward = the still-
 // fogged area its ~30 m corridor would clear. The search is a greedy
 // insertion over "pockets" (clusters of rewarding streets) connected by
 // reward-hungry shortest paths, with each traversed edge's reward spent so the
 // way back is pushed onto different streets: that is what makes long thin
 // loops (out one fogged street, back a parallel one) fall out naturally.
-// Everything runs locally; the winner is later snapped by one BRouter request.
+// Everything runs locally and every plan carries its own street geometry.
 (function (global) {
   const SAMPLE_M = 25;        // reward sampling step along an edge
   const CORRIDOR_M = 30;      // full width Fog of World clears as you travel
@@ -64,8 +64,9 @@
     };
   }
 
-  function GraphPlanner(streets, newFrac) {
+  function GraphPlanner(streets, newFrac, usable) {
     this.streets = streets;
+    this.usable = usable || (() => true);
     this.newFrac = fracCache(newFrac);
     this.built = 0; // ways incorporated so far; rebuild when more are fetched
   }
@@ -79,6 +80,7 @@
     const t0 = Date.now();
     const uses = new Map();
     for (const w of ways) {
+      if (!this.usable(w.id)) continue;
       for (let i = 0; i < w.nodes.length; i++) {
         const id = w.nodes[i];
         // interior nodes count once per way; endpoints get +1 so a dead end still splits
@@ -96,13 +98,13 @@
     const ky = 110540;
     this.kx = kx; this.ky = ky;
 
-    this.edges = [];      // {a,b,len,coords:[[lon,lat]..]}
+    this.edges = [];      // {a,b,len,coords:[[lon,lat]..],way: OSM way id}
     this.reward = [];     // base reward per edge, m² (static)
     this.spentVer = [];   // reward-claim stamp per edge (see _fresh)
     this.usedVer = [];    // traversal stamp: walked edges cost extra to re-walk
     const midGrid = new Map(); // 100 m bins of edge sample points, for parallel spend
     this.midGrid = midGrid;
-    const pushEdge = (aId, bId, coords) => {
+    const pushEdge = (aId, bId, coords, wayId) => {
       let len = 0, rew = 0;
       const samples = [];
       for (let i = 1; i < coords.length; i++) {
@@ -122,7 +124,7 @@
       this.edges.push({
         a: nodeIdx(aId, coords[0][0], coords[0][1]),
         b: nodeIdx(bId, coords[coords.length - 1][0], coords[coords.length - 1][1]),
-        len, coords
+        len, coords, way: wayId
       });
       this.reward.push(rew);
       this.spentVer.push(0);
@@ -135,11 +137,12 @@
       }
     };
     for (const w of ways) {
+      if (!this.usable(w.id)) continue;
       let start = 0;
       for (let i = 1; i < w.nodes.length; i++) {
         if (i === w.nodes.length - 1 || uses.get(w.nodes[i]) >= 2) {
           pushEdge(w.nodes[start], w.nodes[i],
-            w.geometry.slice(start, i + 1).map((g) => [g.lon, g.lat]));
+            w.geometry.slice(start, i + 1).map((g) => [g.lon, g.lat]), w.id);
           start = i;
         }
       }
@@ -364,7 +367,7 @@
   }
 
   // Plan up to nCands loops from S of roughly distM. Each result:
-  // { wps (for BRouter, S first and last), predM2, lenM }
+  // { wps (editor pins, S first and last), coords ([lon,lat] street path), predM2, lenM }
   GraphPlanner.prototype.planLoop = function (S, distM, buffer, nCands) {
     this.build();
     const s = this.nearestNode(S, 600);
@@ -397,8 +400,7 @@
       if (!seeds.includes(p)) seeds.push(p);
     }
     const out = [];
-    // BRouter snapping straightens a plan ~6-8% shorter than its graph length,
-    // so aim past the requested distance or every loop lands short of it
+    // aim 7% past the requested distance (empirical offset)
     const target = distM * 1.07;
     const ceilG = distM * (1 + buffer) * 1.04;
     for (const seed of seeds) {
@@ -409,7 +411,7 @@
       // insert pockets one at a time, re-walking the loop after each; the
       // detour allowance comes from the WALKED length's real headroom, scaled
       // by the learned plain-to-walked inflation (a global plain budget
-      // starved growth and plans arrived short, wasting their request)
+      // starved growth and plans arrived short)
       for (let it = 0; it < MAX_ANCHORS && m && m.len < target * 0.96; it++) {
         const inflate = Math.min(1.4, Math.max(1.0, m.len / Math.max(1, this._plainLen(anchors, true))));
         const node = this._growOne(anchors, true, (ceilG - m.len) / inflate, reach, used);
@@ -419,11 +421,10 @@
         stack.push(node);
         m = m2;
       }
-      // repair an overshooting loop into the window snapping can land from
-      // (shrink is ~7% but varies, and the best loops live at the edge: a
-      // tighter 1.07 ceiling binned a star card that snapped 10 m inside
-      // tolerance). Pockets are coarse, so a plain drop usually undershoots;
-      // after each drop, try to re-add a smaller pocket that fits the space.
+      // repair an overshooting loop: drop pockets until it fits under emitCeil,
+      // which is looser than the tolerance (the best loops live at the edge).
+      // Pockets are coarse, so a plain drop usually undershoots; after each
+      // drop, try to re-add a smaller pocket that fits the space.
       const emitCeil = distM * (1 + buffer) * 1.12;
       for (let r = 0; r < 4 && m && m.len > emitCeil && stack.length; r++) {
         anchors.splice(anchors.indexOf(stack.pop()), 1);
@@ -439,11 +440,9 @@
         }
         m = m2;
       }
-      // a plan outside this window can't survive snapping plus the length
-      // tolerance, so don't spend a routing request on it
+      // same empirical 1.07 on the floor; the ceiling is emitCeil
       if (!m || m.len < distM * (1 - buffer) * 1.07 || m.len > emitCeil) continue;
-      // dense waypoints: with ~1 km gaps BRouter shortcuts the plan's detail
-      // and the predicted defogging evaporates; ~550 m holds it to the streets
+      // editor pins: ~550 m apart keeps a later re-route on the plan's streets
       const nWps = Math.min(20, Math.max(6, Math.round(m.len / 550)));
       // sector of the loop's farthest reach from S, for direction-diverse emit
       let fx = 0, fy = 0, fd = -1;
@@ -452,14 +451,18 @@
         if (dx * dx + dy * dy > fd) { fd = dx * dx + dy * dy; fx = dx; fy = dy; }
       }
       const sector = Math.floor((((Math.atan2(fx, fy) * 180 / Math.PI) + 360) % 360) / 90);
-      out.push({ wps: [S].concat(resampleWps(m.coords, nWps, this.kx, this.ky), [S]), predM2: m.gained, lenM: m.len, sector });
+      out.push({
+        wps: [S].concat(resampleWps(m.coords, nWps, this.kx, this.ky), [S]),
+        coords: [[S.lng, S.lat]].concat(m.coords, [[S.lng, S.lat]]),
+        predM2: m.gained, lenM: m.len, sector
+      });
     }
     out.sort((a, b) => b.predM2 - a.predM2);
     const deduped = dedupePlans(out);
     // emit a direction-diverse set by round-robin across 90-degree sectors:
     // each direction's best plan is taken before any direction's second, so a
     // single rich direction can't fill every slot and a real alternative (a
-    // forest, a riverside) is put in front of BRouter and the ranking. The
+    // forest, a riverside) is put in front of the ranking. The
     // global best is still taken first, so the top card never weakens.
     const bySec = new Map();
     for (const p of deduped) { const g = bySec.get(p.sector) || []; g.push(p); bySec.set(p.sector, g); }
@@ -506,7 +509,7 @@
       const used = seed ? new Set([seed]) : new Set();
       const anchors = seed ? [a, seed.node, b] : [a, b];
       let m = this._materialize(anchors, false);
-      const ceilW = budgetM * 1.03; // snapping usually shortens; slight overhang ok
+      const ceilW = budgetM * 1.03; // slight overhang ok
       for (let it = 0; it < MAX_ANCHORS && m && m.len < budgetM * 0.97; it++) {
         const inflate = Math.min(1.4, Math.max(1.0, m.len / Math.max(1, this._plainLen(anchors, false))));
         if (!this._growOne(anchors, false, (ceilW - m.len) / inflate, reach, used)) break;
@@ -516,7 +519,11 @@
       }
       if (!m || m.len > budgetM * 1.1) continue;
       const nWps = Math.min(16, Math.max(2, Math.round(m.len / 550)));
-      out.push({ wps: [A].concat(resampleWps(m.coords, nWps, this.kx, this.ky), [B]), predM2: m.gained, lenM: m.len, retraceFrac: m.retraceFrac });
+      out.push({
+        wps: [A].concat(resampleWps(m.coords, nWps, this.kx, this.ky), [B]),
+        coords: [[A.lng, A.lat]].concat(m.coords, [[B.lng, B.lat]]),
+        predM2: m.gained, lenM: m.len, retraceFrac: m.retraceFrac
+      });
       if (out.length >= nCands + 1) break;
     }
     const score = (p) => p.predM2 * (1 - RETRACE_WEIGHT * p.retraceFrac);
@@ -524,5 +531,6 @@
     return dedupePlans(out).slice(0, nCands);
   };
 
+  GraphPlanner.Heap = Heap; // LocalRouter's point-to-point search
   global.GraphPlanner = GraphPlanner;
 })(window);

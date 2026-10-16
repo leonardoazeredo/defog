@@ -25,6 +25,9 @@
     car: "residential|unclassified|tertiary|secondary|primary|living_street"
   };
   const CLASS_ORDER = ["bike", "road", "car"]; // the order the ID lists come back in
+  // routing profile -> travel class; the same table as streetsLayer's MODE_CLASS,
+  // keep them in step. Unlisted profiles (hiking-mountain, rail, shortest) use every way.
+  const MODE_CLASS = { trekking: "bike", fastbike: "road", "car-fast": "car" };
   const SEG_M = 50;              // ways are chopped into ~50 m scoring segments
   const GRID_M = 250;            // spatial bin size for radius queries
   const MAX_SEGS = 400000;       // memory guard (~40 MB worst case)
@@ -82,10 +85,18 @@
         (o.kind === "run" || o.kind === kind)));
   };
 
-  // Would ensureRects/ensureDiscs actually hit the network for these, or is it
+  // Would ensureRects actually hit the network for these, or is it
   // all already cached from an earlier run? Lets callers show the "reading the
   // street map" note only when there's a real fetch, not on every rerun.
   StreetIndex.prototype.needsFetch = function (rects, kind) { return this._uncovered(rects, kind).length > 0; };
+
+  // Which ways a routing profile may use, by the same rule streetsLayer dims
+  // them with. A way we hold no class for (a bike-kind fetch) counts as usable.
+  StreetIndex.prototype.usableFor = function (profile) {
+    const cls = MODE_CLASS[profile];
+    if (!cls) return () => true;
+    return (id) => !this.classified.has(id) || this.classIds[cls].has(id);
+  };
 
   // Round a point to a ~0.006 degree grid (~450-650 m). Callers build the fetch
   // area around the rounded centre, so any run whose pin lands in the same grid
@@ -96,24 +107,17 @@
     g = g || 0.006;
     return L.latLng(Math.round(latlng.lat / g) * g, Math.round(latlng.lng / g) * g);
   };
-  StreetIndex.prototype.discRects = function (points, rM) {
-    return points.map((p) => {
-      const kx = 111320 * Math.cos(p.lat * Math.PI / 180);
-      return { s: p.lat - rM / 110540, n: p.lat + rM / 110540, w: p.lng - rM / kx, e: p.lng + rM / kx };
-    });
-  };
 
   // Fetch streets for the given rects (skipping ones already covered), one
-  // Overpass query. kind: "run" | "bike". Throws on failure; callers fall back
-  // to fog-only scoring, suggestions must keep working without street data.
+  // Overpass query. kind: "run" | "bike". Throws on failure; suggestions end in
+  // their error state, since routing needs the streets.
   StreetIndex.prototype.ensureRects = async function (rects, kind) {
     const todo = this._uncovered(rects, kind);
     if (!todo.length) return;
     this._anchor(todo[0].s);
     const bb = (r) => [r.s, r.w, r.n, r.e].map((x) => x.toFixed(4)).join(",");
-    // access filter: the graph must not route through ways the router (and
-    // the person!) can't use; a military base on a plan once 400'd the whole
-    // route request because a waypoint landed inside it
+    // access filter: planned and routed walks must not cross ways the person
+    // can't use
     const acc = `[access!~"^(private|no|military)$"]`;
     const clauses = (hw) => todo.map((r) =>
       `way[highway~"^(${hw})$"]${acc}(${bb(r)});way[highway=service]${acc}[service!~"^(driveway|parking_aisle)$"](${bb(r)});`).join("");
@@ -139,11 +143,6 @@
       else if (CLASS_ORDER[group]) this.classIds[CLASS_ORDER[group]].add(el.id);
     }
     for (const r of todo) this.rects.push({ s: r.s, w: r.w, n: r.n, e: r.e, kind });
-  };
-
-  // Convenience: coverage discs of radius rM around a list of L.latLng points.
-  StreetIndex.prototype.ensureDiscs = function (points, rM, kind) {
-    return this.ensureRects(this.discRects(points, rM), kind);
   };
 
   // Defoggable area (m²) reachable by travelling the ways within rM of the
