@@ -38,8 +38,8 @@ the loop size search and the second wave.
 
 Loop suggestions fit each compass square's size by a bracketed search (route length jumps where
 a river or bridge sits, so one rescale is not enough). When fewer than three distinct directions
-come back, a second wave runs the unused bearings and retries the first batch as narrow and fat
-shapes; with three directions in, nothing extra runs.
+come back, a second wave retries the first batch as narrow and fat shapes (plus any unused bearings, which
+exist only when the planner returned plans); with three directions in, nothing extra runs.
 
 Acceptance against the BRouter baseline `bench/out/baseline-brouter.json` (keep a copy outside
 `bench/out`; it can't be regenerated):

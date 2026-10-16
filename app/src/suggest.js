@@ -13,7 +13,7 @@
   const MAX_RETRACE_REROUTES = 2;   // re-routed return legs per run
   const MAX_P2P_M = 30000;      // A and B farther apart than this need a street download past what we cap
   const MAX_LOOP_M = 30000;     // longer loops reach past the capped street download (bearing squares reach ~0.3x the length)
-  const MAX_LOOPS = 6;          // first-batch bearings when the planner found no routes; the rest of the ranked list, and the first batch again as other shapes, is the second wave
+  const MAX_LOOPS = 6;          // first-batch bearings when the planner found no routes (the ranked list is at most six, so then only the other shapes are left for the second wave)
   // Square-ish loop shapes as [bearing offset, distance factor] vias around the compass bearing.
   // The same bearing at another shape takes the router over different streets, so a bearing whose
   // square jumps from far too short to far too long (a river crossing) can still land in tolerance.
@@ -1002,7 +1002,8 @@
     // from the earlier ones (deferred loops just fill up); fewer than three distinct directions
     // means the second wave (unused bearings, other shapes) may add some
     const dirs = [];
-    for (const c of found) {
+    // counted over what the overlap filter below will keep, or retracing loops would hide a short deck
+    for (const c of found.filter((x) => x.planned || x.overlap <= 0.3)) {
       const b = loopBearingOf(S, c.r.coords);
       if (dirs.every((o) => bearingApart(o, b) > 60)) dirs.push(b);
     }
