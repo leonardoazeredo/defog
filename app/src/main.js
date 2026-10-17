@@ -19,12 +19,12 @@
   map.getPane("fog").style.zIndex = 350;
 
   const BASEMAPS = {
-    standard: { url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", max: 19, attribution: "&copy; OpenStreetMap" },
-    cycle:    { url: "https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png", max: 20, sub: "abc", attribution: "&copy; CyclOSM &copy; OpenStreetMap" },
+    standard: { url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", max: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors' },
+    cycle:    { url: "https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png", max: 20, sub: "abc", attribution: '<a href="https://www.cyclosm.org" target="_blank" rel="noopener">CyclOSM</a> | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors' },
     // Dark: the standard OSM tiles inverted with the hues put back, so water stays blue and
     // parks green. Keyless and no extra provider (CARTO's Voyager and dark tiles now need an
     // API key, so Voyager was dropped).
-    dark:     { url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", max: 19, attribution: "&copy; OpenStreetMap", dark: true,
+    dark:     { url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", max: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors', dark: true,
                 filter: "invert(1) hue-rotate(180deg) brightness(.82) contrast(.88) saturate(.7)" }
   };
   let baseLayer = null, streetsLayer = null, lastLightBasemap = "standard";

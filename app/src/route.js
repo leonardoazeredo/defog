@@ -340,6 +340,10 @@
     }).join("\n");
     return `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="FogToMaps" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <link href="https://www.openstreetmap.org/copyright"><text>Map data © OpenStreetMap contributors</text></link>
+    <copyright author="OpenStreetMap contributors"><license>https://opendatacommons.org/licenses/odbl/</license></copyright>
+  </metadata>
   <trk>
     <name>${name}</name>
     <trkseg>
@@ -357,6 +361,7 @@ ${pts}
     return `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2"><Document>
   <name>${name}</name>
+  <description>Map data © OpenStreetMap contributors, ODbL (https://opendatacommons.org/licenses/odbl/)</description>
   <Style id="r"><LineStyle><color>ff5522ff</color><width>4</width></LineStyle></Style>
   <Placemark><name>${name}</name><styleUrl>#r</styleUrl>
     <LineString><tessellate>1</tessellate><coordinates>${coords}</coordinates></LineString>
