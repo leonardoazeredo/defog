@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  expo-share-intent@8.0.1: fff9b2ebf548cef8b63bed87f1299f09ad5f6511467159d8eb114e0c63260170
+  expo-share-intent@8.0.1: ffb2ea0e49487581f0649cdbbdd7e97b51c7b904509e486bee6b7e03fc9f8b7c
 
 importers:
 
@@ -40,7 +40,7 @@ importers:
         version: 58.0.20(f8c2144e3b8fdd16a67d495a199700f9)
       expo-share-intent:
         specifier: ^8.0.1
-        version: 8.0.1(patch_hash=fff9b2ebf548cef8b63bed87f1299f09ad5f6511467159d8eb114e0c63260170)(expo-constants@58.0.12)(expo-linking@58.0.13)(expo@58.0.11)(react-native@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.87.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.3.0)(supports-color@8.1.1))(react@19.3.0)(supports-color@8.1.1)(typescript@7.0.2)
+        version: 8.0.1(patch_hash=ffb2ea0e49487581f0649cdbbdd7e97b51c7b904509e486bee6b7e03fc9f8b7c)(expo-constants@58.0.12)(expo-linking@58.0.13)(expo@58.0.11)(react-native@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.87.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.3.0)(supports-color@8.1.1))(react@19.3.0)(supports-color@8.1.1)(typescript@7.0.2)
       expo-sharing:
         specifier: ~58.0.18
         version: 58.0.18(expo@58.0.11)(react-native@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.87.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.3.0)(supports-color@8.1.1))(react@19.3.0)(supports-color@8.1.1)(typescript@7.0.2)
@@ -7330,7 +7330,7 @@ snapshots:
 
   expo-server@58.0.5: {}
 
-  expo-share-intent@8.0.1(patch_hash=fff9b2ebf548cef8b63bed87f1299f09ad5f6511467159d8eb114e0c63260170)(expo-constants@58.0.12)(expo-linking@58.0.13)(expo@58.0.11)(react-native@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.87.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.3.0)(supports-color@8.1.1))(react@19.3.0)(supports-color@8.1.1)(typescript@7.0.2):
+  expo-share-intent@8.0.1(patch_hash=ffb2ea0e49487581f0649cdbbdd7e97b51c7b904509e486bee6b7e03fc9f8b7c)(expo-constants@58.0.12)(expo-linking@58.0.13)(expo@58.0.11)(react-native@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.87.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.3.0)(supports-color@8.1.1))(react@19.3.0)(supports-color@8.1.1)(typescript@7.0.2):
     dependencies:
       '@expo/config-plugins': 57.0.9(supports-color@8.1.1)(typescript@7.0.2)
       expo: 58.0.11(6266c10a40b0185e5ea1015da5ff9f53)

@@ -12,6 +12,7 @@ const gpx = RouteTool.prototype.toGPX.call(tool);
 assert.match(gpx, /<metadata>[\s\S]*<copyright author="OpenStreetMap contributors">[\s\S]*<license>https:\/\/opendatacommons\.org\/licenses\/odbl\/<\/license>[\s\S]*<\/metadata>/);
 assert.match(gpx, /<link href="https:\/\/www\.openstreetmap\.org\/copyright">/);
 assert.ok(gpx.indexOf("<metadata>") < gpx.indexOf("<trk>"), "GPX 1.1 puts metadata before trk");
+assert.ok(gpx.indexOf("<copyright") < gpx.indexOf("<link"), "GPX 1.1 metadataType puts copyright before link");
 assert.match(gpx, /<trkpt lat="51\.000000" lon="13\.700000"><ele>120\.5<\/ele><\/trkpt>/, "track points unchanged");
 
 const kml = RouteTool.prototype.toKML.call(tool);

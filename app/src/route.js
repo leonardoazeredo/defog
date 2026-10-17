@@ -341,8 +341,8 @@
     return `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="FogToMaps" xmlns="http://www.topografix.com/GPX/1/1">
   <metadata>
-    <link href="https://www.openstreetmap.org/copyright"><text>Map data © OpenStreetMap contributors</text></link>
     <copyright author="OpenStreetMap contributors"><license>https://opendatacommons.org/licenses/odbl/</license></copyright>
+    <link href="https://www.openstreetmap.org/copyright"><text>Map data © OpenStreetMap contributors</text></link>
   </metadata>
   <trk>
     <name>${name}</name>

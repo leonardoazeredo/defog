@@ -1,4 +1,5 @@
-// Overpass.post: endpoint order, fallback, backoff after 429/406, one request in flight; fakes.
+// Overpass.post: endpoint order, fallback, holds after 429/406 and failed fetches, timeout, one
+// request in flight; fake fetch, fake clock.
 //   node bench/overpass-endpoints.test.js
 "use strict";
 const assert = require("node:assert/strict");
@@ -28,6 +29,11 @@ function reset() {
   global.fetch = fakeFetch;
 }
 const rejection = (p) => p.then(() => assert.fail("expected a rejection"), (e) => e);
+// A post() that never settles leaves nothing scheduled, and Node would exit 0 without a verdict.
+let finished = false;
+process.on("exit", (code) => {
+  if (!finished && code === 0) { console.error("overpass-endpoints.test.js did not finish"); process.exitCode = 1; }
+});
 
 (async () => {
   { // 1. default order: private.coffee first
@@ -125,5 +131,54 @@ const rejection = (p) => p.then(() => assert.fail("expected a rejection"), (e) =
     assert.equal(calls.length, 2);
     assert.equal(maxInFlight, 1);
   }
+  { // 12. a request that never settles times out; the next endpoint answers and later posts go out
+    reset();
+    Overpass._timeoutMs = 20;
+    let signalled = true;
+    global.fetch = (url, opts) => {
+      calls.push(url);
+      if (!opts.signal) { signalled = false; return Promise.reject(new Error("no abort signal")); }
+      if (url === C) return new Promise((_, reject) => opts.signal.addEventListener("abort", () => reject(opts.signal.reason)));
+      return Promise.resolve({ ok: true, status: 200, headers: { get: () => null }, json: async () => ({ from: url }) });
+    };
+    // Node's AbortSignal.timeout timer does not keep the process alive; this one does.
+    const keepAlive = setTimeout(() => {}, 5_000);
+    assert.deepEqual(await Overpass.post("data=x"), { from: M });
+    clearTimeout(keepAlive);
+    assert.ok(signalled, "every request carries an abort signal");
+    assert.deepEqual(calls, [C, M]);
+    calls = [];
+    assert.deepEqual(await Overpass.post("data=y"), { from: M }, "the queue is not stuck");
+    assert.deepEqual(calls, [M], "the stalled endpoint is on hold");
+  }
+  { // 13. a failure the page cannot read holds that endpoint 30 s
+    //     (a TypeError, which is also how a 429 without CORS headers arrives)
+    reset();
+    global.fetch = (url) => {
+      calls.push(url);
+      if (url === C) return Promise.reject(new TypeError("Failed to fetch"));
+      return Promise.resolve({ ok: true, status: 200, headers: { get: () => null }, json: async () => ({ from: url }) });
+    };
+    assert.deepEqual(await Overpass.post("data=x"), { from: M });
+    calls = []; t = start + 29_999;
+    await Overpass.post("data=x");
+    assert.deepEqual(calls, [M]);
+    calls = []; t = start + 30_001;
+    await Overpass.post("data=x");
+    assert.deepEqual(calls, [C, M]);
+  }
+  { // 14. every endpoint unreachable: reject with the last fetch error and retryAt;
+    //     nothing is sent before then
+    reset();
+    global.fetch = (url) => { calls.push(url); return Promise.reject(new TypeError("Failed to fetch")); };
+    const e = await rejection(Overpass.post("data=x"));
+    assert.equal(e.retryAt, start + 30_000);
+    assert.match(e.message, /Failed to fetch/);
+    assert.doesNotMatch(e.message, /rate-limited/);
+    t = start + 1_000;
+    await rejection(Overpass.post("data=x"));
+    assert.deepEqual(calls, [C, M]);
+  }
+  finished = true;
   console.log("overpass-endpoints.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });
