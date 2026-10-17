@@ -1,5 +1,5 @@
-// Overpass.post: endpoint order, fallback, holds after 429/406 and failed fetches, timeout, one
-// request in flight; fake fetch, fake clock.
+// Overpass.post: endpoint order, fallback, one request in flight, timeouts; holds after 429/406,
+// failed fetches and stalled bodies; no hold after a 500 or a non-JSON 200. Fake fetch, fake clock.
 //   node bench/overpass-endpoints.test.js
 "use strict";
 const assert = require("node:assert/strict");
@@ -178,6 +178,39 @@ process.on("exit", (code) => {
     t = start + 1_000;
     await rejection(Overpass.post("data=x"));
     assert.deepEqual(calls, [C, M]);
+  }
+  // 15. a 200 whose body is not JSON (a captive portal, a proxy's error page) moves on to the next
+  //     endpoint at once and, like a 500, puts no hold on the first; Chromium and Node reject with
+  //     a SyntaxError, WebKit with a DOMException named SyntaxError
+  for (const notJson of [new SyntaxError("Unexpected token '<'"), new DOMException("The string did not match the expected pattern.", "SyntaxError")]) {
+    reset();
+    global.fetch = (url) => {
+      calls.push(url);
+      const json = url === C ? async () => { throw notJson; } : async () => ({ from: url });
+      return Promise.resolve({ ok: true, status: 200, headers: { get: () => null }, json });
+    };
+    assert.deepEqual(await Overpass.post("data=x"), { from: M });
+    calls = [];
+    await Overpass.post("data=x");
+    assert.deepEqual(calls, [C, M], "coffee is not on hold after a " + notJson.constructor.name);
+  }
+  { // 16. the timeout fires while the body is still arriving: the next endpoint answers and the
+    //     stalled one is on hold
+    reset();
+    Overpass._timeoutMs = 20;
+    global.fetch = (url, opts) => {
+      calls.push(url);
+      const json = url === C
+        ? () => new Promise((_, reject) => opts.signal.addEventListener("abort", () => reject(opts.signal.reason)))
+        : async () => ({ from: url });
+      return Promise.resolve({ ok: true, status: 200, headers: { get: () => null }, json });
+    };
+    const keepAlive = setTimeout(() => {}, 5_000); // the abort timer does not keep Node alive (case 12)
+    assert.deepEqual(await Overpass.post("data=x"), { from: M });
+    calls = [];
+    await Overpass.post("data=y");
+    clearTimeout(keepAlive);
+    assert.deepEqual(calls, [M], "the stalled endpoint is on hold");
   }
   finished = true;
   console.log("overpass-endpoints.test.js ok");

@@ -609,11 +609,6 @@
       "license": "MIT"
     },
     {
-      "name": "@noxcturnal/noxcturnal-darwin-arm64",
-      "version": "0.1.1",
-      "license": "MIT"
-    },
-    {
       "name": "@oxc-project/types",
       "version": "0.141.0",
       "license": "MIT"
@@ -832,11 +827,6 @@
       "name": "@types/yargs-parser",
       "version": "21.0.3",
       "license": "MIT"
-    },
-    {
-      "name": "@typescript/typescript-darwin-arm64",
-      "version": "7.0.2",
-      "license": "Apache-2.0"
     },
     {
       "name": "@ungap/structured-clone",
@@ -1635,11 +1625,6 @@
     },
     {
       "name": "lightningcss",
-      "version": "1.33.0",
-      "license": "MPL-2.0"
-    },
-    {
-      "name": "lightningcss-darwin-arm64",
       "version": "1.33.0",
       "license": "MPL-2.0"
     },

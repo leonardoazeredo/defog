@@ -4,7 +4,7 @@
 // keep running into 429 or 406 get banned sooner
 // (community.openstreetmap.org/t/overpass-api-performance-issues/140598/157). A request that fails
 // without a readable status (no network, a timeout, or an answer without CORS headers, which can
-// hide a 429) gets the same hold.
+// hide a 429), or whose body stops arriving, gets the same hold.
 // private.coffee goes first: its page (overpass.private.coffee) states no rate limit.
 (function (global) {
   const ENDPOINTS = {
@@ -61,7 +61,16 @@
         lastError = new Error("overpass HTTP " + res.status);
         continue;
       }
-      return res.json();
+      try {
+        return await res.json();
+      } catch (e) {
+        // A SyntaxError means a 200 whose body is not JSON (a captive portal, a proxy): like a 500,
+        // it moves on at once. Matched by name, not instanceof, because WebKit rejects with a
+        // DOMException named SyntaxError. Anything else is the body read failing (the timeout, a
+        // dropped connection) and is held like a failed fetch.
+        if (e.name !== "SyntaxError") blockedUntil[url] = Overpass._now() + MIN_BACKOFF_MS;
+        lastError = e;
+      }
     }
     const err = lastError || new Error("overpass: every endpoint is on hold");
     const later = order.map((k) => blockedUntil[ENDPOINTS[k]] || 0).filter((at) => at > Overpass._now());
@@ -69,10 +78,9 @@
     throw err;
   }
 
-  // Resolves with the first endpoint's JSON. Rejects with the last error; its retryAt (on the
-  // Overpass._now clock) is set only when every endpoint is blocked, and nothing is sent before it.
-  // A 200 whose body is not JSON, or whose body is still arriving when the timeout fires, rejects
-  // without a hold and without trying the next endpoint.
+  // Resolves with the JSON of the first endpoint, in order, whose body parses. Rejects with the
+  // last error; its retryAt (on the Overpass._now clock) is set only when every endpoint is
+  // blocked, and nothing is sent before it.
   function post(body) {
     const run = queue.then(() => tryEndpoints(body));
     queue = run.catch(() => {});
