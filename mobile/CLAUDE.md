@@ -1,6 +1,6 @@
 # Cross the Fog (Expo app)
 
-Read `AGENTS.md` first: Expo APIs change every SDK, so fetch the versioned docs (`expo` is `~57`, `https://docs.expo.dev/versions/v57.0.0/`) before touching an Expo, EAS or React Native API.
+Read `AGENTS.md` first: Expo APIs change every SDK, so fetch the versioned docs (`expo` is `~58`, `https://docs.expo.dev/versions/v58.0.0/`) before touching an Expo, EAS or React Native API.
 
 ## Commands
 

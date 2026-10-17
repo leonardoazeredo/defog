@@ -35,7 +35,7 @@ export function createExpoFileStore(dir: Directory): FileStore {
       const f = fileAt(name);
       if (f.exists) throw new FileExistsError(name);
       const tmp = fileAt(`${name}.tmp`);
-      tmp.write(text);
+      await tmp.write(text);
       await tmp.move(f);
     },
 

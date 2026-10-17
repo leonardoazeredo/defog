@@ -21,6 +21,10 @@ import { createExpoFileStore } from "./platform/expoFileStore.js";
 import { makeReleaseSource, shareExport } from "./platform/nativeHandlers.js";
 import { sha256Hex } from "./platform/sha256.js";
 
+// react-native-webview 14 defaults its props generic to `undefined`, which makes the props type
+// `never` for a bare `WebView` type. Drop this alias if that default changes.
+type ShellWebView = WebView<object>;
+
 // Page background colour so safe areas match the page.
 const PAGE_BG = "#e7e9ee";
 
@@ -58,7 +62,7 @@ function notify(text: string): void {
 }
 
 function buildController(
-  webViewRef: React.RefObject<WebView | null>,
+  webViewRef: React.RefObject<ShellWebView | null>,
   setWebKey: (fn: (k: number) => number) => void,
   initialLoadDone: React.RefObject<boolean>,
   setBusy: (on: boolean) => void,
@@ -104,7 +108,7 @@ function buildController(
 export function WebShell(): React.JSX.Element {
   const [webKey, setWebKey] = useState(0);
   const [busy, setBusy] = useState(false);
-  const webViewRef = useRef<WebView | null>(null);
+  const webViewRef = useRef<ShellWebView | null>(null);
   const initialLoadDone = useRef(false);
 
   // Lazy-initialise the controller once; never rebuild it across re-renders.

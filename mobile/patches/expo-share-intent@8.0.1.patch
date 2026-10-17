@@ -32,3 +32,20 @@ index ff5b1001e7bb3443482727cec48c22579465c73b..524bfab0109cd74586004ed05e3fccfd
  
              var mediaWidth: String? = null;
              var mediaHeight: String? = null;
+diff --git a/build/utils.js b/build/utils.js
+index 3d343c633b4bb267a1ee994352516997f8e058b3..763db9d468d98340fac99b07f4894f05c3b172fe 100644
+--- a/build/utils.js
++++ b/build/utils.js
+@@ -97,9 +97,11 @@ export const parseShareIntent = (value, options) => {
+                     return [
+                         ...acc,
+                         {
++                            // The content URI carries the sender's read grant; the file path
++                            // needs storage access this app lacks, so copying from it fails.
+                             path: file.path ||
+-                                (file.filePath ? `file://${file.filePath}` : null) ||
+                                 file.contentUri ||
++                                (file.filePath ? `file://${file.filePath}` : null) ||
+                                 null,
+                             mimeType: file.mimeType || null,
+                             fileName: file.fileName || null,

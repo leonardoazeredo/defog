@@ -57,6 +57,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     },
   },
   plugins: [
+    "expo-asset",
+    "expo-sharing",
+    "expo-status-bar",
     "expo-router",
     "./plugins/withExpoSceneDelegate",
     ["expo-share-intent", { disableIOS: true, androidIntentFilters: shareMime }],
