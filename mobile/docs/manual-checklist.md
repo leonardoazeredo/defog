@@ -1,8 +1,10 @@
 # Manual checklist
 
+_Run every row on Android only. iOS is paused until the Android phone app and the Wear OS app are done, tested and released; the iOS results below are from earlier runs._
+
 ## Native shell
 
-_Latest re-run: Android emulator (API 36, userdebug image) and iOS simulator (iPhone 17, iOS 27.0). Each result names its platform; a plain ✓ means every platform that applies passed._
+_Latest re-run: Android emulator (API 36, userdebug image). Results marked iOS come from an earlier iOS simulator run (iPhone 17, iOS 27.0); a plain ✓ means Android passed._
 
 | # | Step | Result |
 |---|------|--------|
@@ -26,17 +28,17 @@ _Latest re-run: Android emulator (API 36, userdebug image) and iOS simulator (iP
 
 ## Share-to-app
 
-_Tested on: Android emulator (API 36): all rows except S2 and S5. iOS simulator (iPhone 17, iOS 27.0): S1a, S1b, S3a and S3b pass, with the share simulated by `xcrun simctl openurl file://…/standard.zip`. S2 and S5 still need a real iPhone._
+_Tested on: Android emulator (API 36): all rows except S2, which waits for the hardware pass (no cloud apps on the emulator). Earlier iOS simulator run (iPhone 17, iOS 27.0): S1a, S1b, S3a and S3b passed, with the share simulated by `xcrun simctl openurl file://…/standard.zip`._
 
 | # | Step | Result |
 |---|------|--------|
 | S1a | **From Files (nothing saved):** share `standard.zip` from Files to Cross the Fog; imports immediately | ✓ |
 | S1b | **From Files (saved fog):** share `standard.zip` again; app asks "Replace your saved fog with standard.zip?"; Replace imports; Cancel changes nothing | ✓ |
-| S2 | **Other apps:** same flow from Google Drive and Dropbox, on both platforms | skip — no cloud apps on emulator |
+| S2 | **Other apps:** same flow from Google Drive and Dropbox | skip — no cloud apps on emulator |
 | S3a | **Cold start:** share a zip with the app closed; app opens and imports | ✓ |
 | S3b | **Warm start:** share a zip with the app open; imports without relaunching | ✓ |
 | S4 | **Non-zip share:** a non-zip offered as `application/octet-stream` shows "Cross the Fog can only import .zip backups." | ✓ (Android). iOS: not reachable. The app only registers the zip document type, so iOS never offers a non-zip file to it |
-| S5 | **iOS cleanup:** after an import, app's `Documents/Inbox` is empty (verify in Xcode → Devices → container) | skip — iOS not tested in this run (requires device + Xcode); Android: cache copy deleted after each import ✓ |
+| S5 | **Cleanup:** after an import, the app keeps no copy of the shared file in its cache | ✓ (Android: the cache copy is deleted after each import) |
 
 ## About screen
 
@@ -60,12 +62,11 @@ _A2–A6 were checked on Android._
 | B2 | **Target SDK:** `check-apk.sh` prints `OK targetSdk` (36) | ✓ |
 | B3 | **Zip alignment:** `check-apk.sh` prints `OK zipalign` | ✓ |
 | B4 | **16 KB ELF pages:** `check-apk.sh` prints `OK 16k-elf` (a static check of the APK, so it needs no device) | ✓ |
-| B5 | **iOS privacy manifest:** `privacy-union.ts` output pasted into `app.config.ts`; generated `PrivacyInfo.xcprivacy` lists all categories | ✓ (the Pods union matches `app.config.ts`; the generated manifest also lists UserDefaults `CA92.1` from the Expo template) |
 | B6 | **EAS preview APK:** `eas build -p android --profile preview` produces a download link; `check-apk.sh` passes on that APK | ✓ (B1–B4 also pass on a local release APK and on the existing preview build, which is from an older commit; no new cloud build was started) |
 
 ## Maestro e2e flows
 
-Run with `CROSSFOG_E2E=1 pnpm android` (or `ios`) to build, then `pnpm e2e`. Use a Release build (embedded JS bundle, no Metro): on Android `CROSSFOG_E2E=1 npx expo run:android --variant release --device <avd>`; on iOS prebuild with `CROSSFOG_E2E=1` and build the Release configuration for a simulator. The flows share app state, so `.maestro/config.yaml` pins their order.
+Build a Release app (embedded JS bundle, no Metro): `CROSSFOG_E2E=1 pnpm generate`, then `CROSSFOG_E2E=1 npx expo run:android --variant release --device <avd>` (clear the Gradle release bundle first, as `mobile/CLAUDE.md` describes), then `pnpm e2e`. The flows share app state, so `.maestro/config.yaml` pins their order.
 
 _Tested on: Android emulator API 36 (AVD `chase-cashew-test`): 7/7 passed in 1m 59s. iOS simulator (iPhone 17, iOS 27.0): 7/7 passed in 2m 35s; an earlier iOS run failed once in `export`, which passed on the next run._
 

@@ -6,11 +6,14 @@ A React Native shell that embeds [defog](https://github.com/szalapak/defog) in a
 
 The app wraps the defog web app in a full-screen WebView. A thin web adapter injected at build time bridges the native side (file system, share sheet, back button) to the page. The `app/` directory from the upstream defog repo is never edited; native behaviour is added entirely through the adapter.
 
+## Platforms
+
+Android only for now. iOS is paused until the Android phone app and the Wear OS app are done, tested and released: the iOS settings in `app.config.ts`, the `pnpm ios` script and `scripts/privacy-union.ts` stay, but nothing is built or tested for iOS.
+
 ## Requirements
 
 - **Node** ≥ 26
 - **pnpm** 11
-- **Xcode** 26 (iOS builds)
 - **Android SDK** with build-tools and NDK r27+ (Android builds and `check-apk.sh`)
 - **Maestro** (e2e flows) — install from <https://maestro.mobile.dev>
 
@@ -21,15 +24,13 @@ The app wraps the defog web app in a full-screen WebView. A thin web adapter inj
 | `pnpm generate` | Builds `generated/web.ts` and `generated/licenses.json` |
 | `pnpm start` | Generates, then starts the Expo dev server |
 | `pnpm android` | Generates, then builds and launches on Android |
-| `pnpm ios` | Generates, then builds and launches on iOS |
 | `pnpm typecheck` | Generates, then runs `tsc --noEmit` on all tsconfigs |
 | `pnpm lint` | Runs Biome |
 | `pnpm test` | Runs unit and adapter tests with Vitest |
 | `pnpm verify` | Full check: typecheck, lint, tests, contract, build:web, knip |
-| `pnpm e2e` | Runs Maestro flows against a running device or simulator |
+| `pnpm e2e` | Runs Maestro flows against a running device or emulator |
 | `pnpm run licenses` | Regenerates `generated/licenses.json` |
 | `scripts/check-apk.sh <apk>` | Checks permissions, targetSdk, zip-align and 16 KB ELF alignment |
-| `scripts/privacy-union.ts` | Unions Pod privacy manifests; output goes into `app.config.ts` |
 
 ## How the page is built
 
@@ -42,12 +43,7 @@ The host policy (`scripts/web/hostPolicy.ts`) enforces a static allowlist of ext
 Build the app with the `e2e` flag, then run Maestro:
 
 ```bash
-# Android
 CROSSFOG_E2E=1 pnpm android
-pnpm e2e
-
-# iOS (simulator only)
-CROSSFOG_E2E=1 pnpm ios
 pnpm e2e
 ```
 
