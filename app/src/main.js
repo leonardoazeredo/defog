@@ -215,6 +215,14 @@
     setBasemap(e.target.value);
     syncControls(); applyLayers();
   });
+  function setOverpassOrder(first) {
+    if (first !== "main") first = "coffee";
+    Overpass.setOrder(first === "main" ? ["main", "coffee"] : ["coffee", "main"]);
+    $("overpass").value = first;
+    localStorage.setItem("f2m_overpass", first);
+  }
+  setOverpassOrder(localStorage.getItem("f2m_overpass"));
+  $("overpass").addEventListener("change", (e) => setOverpassOrder(e.target.value));
 
   // ---- data loading -----------------------------------------------------------
   const loadStatus = $("loadStatus");

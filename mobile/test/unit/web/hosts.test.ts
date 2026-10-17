@@ -21,6 +21,7 @@ it.skipIf(!!process.env.STRYKER_MUTATOR_WORKER)("finds exactly the reviewed host
     "onedrive.live.com",
     "opendatacommons.org",
     "overpass-api.de",
+    "overpass.private.coffee",
     "szapalak.goatcounter.com",
     "tile.openstreetmap.org",
     "www.cyclosm.org",
