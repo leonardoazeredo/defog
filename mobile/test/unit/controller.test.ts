@@ -4,7 +4,7 @@ import type { NativeToWeb, WebToNative } from "../../src/bridge/protocol.js";
 import type { Controller } from "../../src/controller.js";
 import { createController } from "../../src/controller.js";
 import { COPY } from "../../src/copy.js";
-import { createRestoreGuard } from "../../src/fog/restoreGuard.js";
+import { createReloadGuard } from "../../src/fog/reloadGuard.js";
 import type { SourceFile } from "../../src/fog/store.js";
 import { createFogStore } from "../../src/fog/store.js";
 import type { MemoryFileStore } from "../support/memoryFileStore.js";
@@ -63,7 +63,7 @@ function createHarness(): Harness {
     sha256Hex: (b) => Promise.resolve(sha(b)),
     now: () => clock.value,
   });
-  const guard = createRestoreGuard(fs);
+  const guard = createReloadGuard(fs);
   const sent: NativeToWeb[] = [];
   const remounts = { count: 0 };
   const notified: string[] = [];
@@ -142,7 +142,7 @@ it("first run sends none", async () => {
   expect(h.sent).toEqual([{ v: 1, type: "none" }]);
 });
 
-it("restores the saved copy", async () => {
+it("reloads the saved copy", async () => {
   const h = createHarness();
   await saveToStore(h.store, aSrc, "a.zip");
   await h.c.start();
@@ -150,7 +150,7 @@ it("restores the saved copy", async () => {
   expect(h.sent).toEqual([
     {
       v: 1,
-      type: "restore",
+      type: "reload",
       fingerprint: sha(A),
       name: "a.zip",
       savedAt: "2026-10-01T09:00:00.000Z",
@@ -182,7 +182,7 @@ it("imports a picked backup and keeps it after a good load", async () => {
   expect(h.remounts.count).toBe(1);
   expect(h.released).toContain(bSrc);
   await h.c.onWebMessage(ready);
-  expect(h.sent.at(-1)).toMatchObject({ type: "restore", role: "pending", fingerprint: sha(B) });
+  expect(h.sent.at(-1)).toMatchObject({ type: "reload", role: "pending", fingerprint: sha(B) });
   await h.c.onWebMessage({ v: 1, type: "loaded", fingerprint: sha(B), ok: true, tiles: 2 });
   expect((await h.store.current())?.sha256).toBe(sha(B));
   expect(h.remounts.count).toBe(1);
@@ -207,7 +207,7 @@ it("a bad import keeps the saved fog and says so", async () => {
   expect(h.remounts.count).toBe(2);
   h.sent.length = 0;
   await h.c.onWebMessage(ready);
-  expect(h.sent.at(-2)).toMatchObject({ type: "restore", role: "current", fingerprint: sha(A) });
+  expect(h.sent.at(-2)).toMatchObject({ type: "reload", role: "current", fingerprint: sha(A) });
   expect(h.sent.at(-1)).toEqual({ v: 1, type: "notice", text: COPY.notABackup });
 });
 
@@ -297,7 +297,7 @@ it("RF5: a non-zip share or pick gets the toast and no import", async () => {
   expect(h.released).toContain("file:///x/photo.jpg");
 });
 
-it("trips the guard after two crashed restores", async () => {
+it("trips the guard after two crashed reloads", async () => {
   const h = createHarness();
   await saveToStore(h.store, aSrc, "a.zip");
   await h.c.start();
@@ -308,7 +308,7 @@ it("trips the guard after two crashed restores", async () => {
   await h.c.onWebMessage(ready);
   expect(h.sent.at(-1)).toEqual({
     v: 1,
-    type: "restoreSuspended",
+    type: "reloadSuspended",
     savedAt: "2026-10-01T09:00:00.000Z",
   });
 });
@@ -322,9 +322,9 @@ it("Retry lifts the suspension", async () => {
   await h.c.onWebMessage(ready);
   await h.c.onProcessGone();
   await h.c.onWebMessage(ready);
-  await h.c.onWebMessage({ v: 1, type: "retryRestore" });
+  await h.c.onWebMessage({ v: 1, type: "retryReload" });
   await h.c.onWebMessage(ready);
-  expect(h.sent.at(-1)).toMatchObject({ type: "restore", role: "current" });
+  expect(h.sent.at(-1)).toMatchObject({ type: "reload", role: "current" });
 });
 
 it("Clear asks first, then empties the store", async () => {
@@ -353,7 +353,7 @@ it("an import that crashes the WebView is discarded with a notice", async () => 
   expect(h.remounts.count).toBe(2);
   h.sent.length = 0;
   await h.c.onWebMessage(ready);
-  expect(h.sent.at(-2)).toMatchObject({ type: "restore", role: "current", fingerprint: sha(A) });
+  expect(h.sent.at(-2)).toMatchObject({ type: "reload", role: "current", fingerprint: sha(A) });
   expect(h.sent.at(-1)).toEqual({ v: 1, type: "notice", text: COPY.importFailed });
 });
 
@@ -364,7 +364,7 @@ it("an import left over from an app crash is discarded at start", async () => {
   await h.c.start();
   expect(await h.store.pending()).toBeNull();
   await h.c.onWebMessage(ready);
-  expect(h.sent.at(-2)).toMatchObject({ type: "restore", role: "current", fingerprint: sha(A) });
+  expect(h.sent.at(-2)).toMatchObject({ type: "reload", role: "current", fingerprint: sha(A) });
   expect(h.sent.at(-1)).toEqual({ v: 1, type: "notice", text: COPY.importFailed });
 });
 
@@ -446,7 +446,7 @@ it("back:result with handled=true does not exit or notify", async () => {
   expect(h.notified).toHaveLength(0);
 });
 
-it("a successful restore resets the crash guard so a later crash does not suspend", async () => {
+it("a successful reload resets the crash guard so a later crash does not suspend", async () => {
   const h = createHarness();
   await saveToStore(h.store, aSrc, "a.zip");
   await h.c.start();
@@ -457,7 +457,7 @@ it("a successful restore resets the crash guard so a later crash does not suspen
   await h.c.onProcessGone();
   h.sent.length = 0;
   await h.c.onWebMessage(ready);
-  expect(h.sent.at(-1)).toMatchObject({ type: "restore", role: "current" });
+  expect(h.sent.at(-1)).toMatchObject({ type: "reload", role: "current" });
 });
 
 it("loaded with wrong fingerprint and no pending is a no-op", async () => {

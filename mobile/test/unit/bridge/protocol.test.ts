@@ -51,7 +51,7 @@ const webSamples = [
     reason: "unknown" as const,
   },
   { v: 1 as const, type: "clearSavedFog" as const },
-  { v: 1 as const, type: "retryRestore" as const },
+  { v: 1 as const, type: "retryReload" as const },
   {
     v: 1 as const,
     type: "export" as const,
@@ -67,7 +67,7 @@ const webSamples = [
 const nativeSamples = [
   {
     v: 1 as const,
-    type: "restore" as const,
+    type: "reload" as const,
     fingerprint: fp,
     name: "a.zip",
     savedAt: "2026-10-01T09:00:00.000Z",
@@ -76,7 +76,7 @@ const nativeSamples = [
   },
   {
     v: 1 as const,
-    type: "restore" as const,
+    type: "reload" as const,
     fingerprint: fp,
     name: "a.zip",
     savedAt: "2026-10-01T09:00:00.000Z",
@@ -102,7 +102,7 @@ const nativeSamples = [
   { v: 1 as const, type: "none" as const },
   {
     v: 1 as const,
-    type: "restoreSuspended" as const,
+    type: "reloadSuspended" as const,
     savedAt: "2026-10-01T09:00:00.000Z",
   },
   { v: 1 as const, type: "notice" as const, text: "hello" },
@@ -155,7 +155,7 @@ describe("protocol", () => {
       "a negative size",
       {
         v: 1,
-        type: "restore",
+        type: "reload",
         fingerprint: fp,
         name: "a.zip",
         savedAt: "2026-10-01T09:00:00.000Z",
@@ -163,7 +163,7 @@ describe("protocol", () => {
         role: "current",
       },
     ],
-    ["a vague date", { v: 1, type: "restoreSuspended", savedAt: "yesterday" }],
+    ["a vague date", { v: 1, type: "reloadSuspended", savedAt: "yesterday" }],
     ["an empty notice", { v: 1, type: "notice", text: "" }],
     ["a long notice", { v: 1, type: "notice", text: "x".repeat(501) }],
   ])("drops %s from native", (_, msg) => expect(parseNativeToWeb(JSON.stringify(msg))).toBeNull());
@@ -176,10 +176,10 @@ describe("protocol", () => {
   });
 
   it("rejects dates without exact ISO-8601 Z suffix", () => {
-    const noZ = JSON.stringify({ v: 1, type: "restoreSuspended", savedAt: "2026-10-01T09:00:00" });
+    const noZ = JSON.stringify({ v: 1, type: "reloadSuspended", savedAt: "2026-10-01T09:00:00" });
     const extra = JSON.stringify({
       v: 1,
-      type: "restoreSuspended",
+      type: "reloadSuspended",
       savedAt: "2026-10-01T09:00:00.000Z!",
     });
     expect(parseNativeToWeb(noZ)).toBeNull();

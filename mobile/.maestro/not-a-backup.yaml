@@ -16,7 +16,7 @@ appId: codes.madera.crossfog
     visible: "NOT A BACKUP"
     timeout: 15000
 - tapOn: "NOT A BACKUP"
-# Two WebView remounts follow: (1) load the bad zip, (2) reject and restore fog.
+# Two WebView remounts follow: (1) load the bad zip, (2) reject and reload the saved fog.
 # waitForAnimationToEnd waits for both remounts and the final fog-load to settle.
 - waitForAnimationToEnd:
     timeout: 40000

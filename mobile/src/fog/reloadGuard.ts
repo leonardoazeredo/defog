@@ -1,11 +1,12 @@
 import type { FileStore } from "./fileStore.js";
 
-export interface RestoreGuard {
-  beforeRestore(fingerprint: string): Promise<"restore" | "suspended">;
+export interface ReloadGuard {
+  beforeReload(fingerprint: string): Promise<"reload" | "suspended">;
   onLoaded(): Promise<void>;
   reset(): Promise<void>;
 }
 
+// Kept as-is so an updated app reads the marker the previous build left.
 const RECORD_FILE = "restoring.json";
 
 interface GuardRecord {
@@ -32,7 +33,7 @@ function parseRecord(text: string): GuardRecord | null {
   }
 }
 
-export function createRestoreGuard(fs: FileStore, maxAttempts = 2): RestoreGuard {
+export function createReloadGuard(fs: FileStore, maxAttempts = 2): ReloadGuard {
   async function readRecord(): Promise<GuardRecord | null> {
     const text = await fs.readText(RECORD_FILE);
     return text != null ? parseRecord(text) : null;
@@ -44,12 +45,12 @@ export function createRestoreGuard(fs: FileStore, maxAttempts = 2): RestoreGuard
   }
 
   return {
-    async beforeRestore(fingerprint) {
+    async beforeReload(fingerprint) {
       const rec = await readRecord();
       const attempts = rec?.fingerprint === fingerprint ? rec.attempts : 0;
       if (attempts >= maxAttempts) return "suspended";
       await writeRecord({ fingerprint, attempts: attempts + 1 });
-      return "restore";
+      return "reload";
     },
 
     async onLoaded() {

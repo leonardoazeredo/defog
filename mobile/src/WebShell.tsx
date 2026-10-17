@@ -12,7 +12,7 @@ import { encode, isTrustedSource, ORIGIN, parseWebToNative } from "./bridge/prot
 import { type Controller, createController } from "./controller.js";
 import { COPY } from "./copy.js";
 import { pickE2eFixture } from "./e2e/fixturePicker.js";
-import { createRestoreGuard } from "./fog/restoreGuard.js";
+import { createReloadGuard } from "./fog/reloadGuard.js";
 import { createFogStore } from "./fog/store.js";
 import { CHUNK_BYTES } from "./fog/transfer.js";
 import { subscribeIncoming } from "./import/incomingQueue.js";
@@ -70,7 +70,7 @@ function buildController(
   const fogDir = new Directory(Paths.document, "fog");
   const fs = createExpoFileStore(fogDir);
   const store = createFogStore(fs, { sha256Hex, now: Date.now });
-  const guard = createRestoreGuard(fs);
+  const guard = createReloadGuard(fs);
   const releaseSource = makeReleaseSource({
     cache: Paths.cache.uri,
     inbox: `${Paths.document.uri}Inbox/`,
