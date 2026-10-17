@@ -11,6 +11,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   icon: "./assets/icon.png",
   android: {
     package: "codes.madera.crossfog",
+    allowBackup: false,
     permissions: [],
     blockedPermissions: [
       "android.permission.ACCESS_FINE_LOCATION",
@@ -62,6 +63,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     "expo-status-bar",
     "expo-router",
     "./plugins/withExpoSceneDelegate",
+    "./plugins/withNoBackup.cjs",
     ["expo-share-intent", { disableIOS: true, androidIntentFilters: shareMime }],
   ],
   extra: {
