@@ -13,10 +13,13 @@ export interface LicenseEntry {
 interface PnpmLicenseRecord {
   name: string;
   versions: string[];
+  paths: string[];
   license: string;
 }
 
-export function parsePnpmLicenses(json: string): LicenseEntry[] {
+export type ReadManifest = (packageDir: string) => { os?: unknown; cpu?: unknown; libc?: unknown };
+
+export function parsePnpmLicenses(json: string, readManifest: ReadManifest): LicenseEntry[] {
   const parsed: unknown = JSON.parse(json);
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new Error(
@@ -28,6 +31,15 @@ export function parsePnpmLicenses(json: string): LicenseEntry[] {
   for (const [license, records] of Object.entries(byLicense)) {
     if (!Array.isArray(records)) throw new Error(`Expected array for license ${license}`);
     for (const record of records as PnpmLicenseRecord[]) {
+      const dir = record.paths[0];
+      if (dir === undefined) throw new Error(`Expected an install path for ${record.name}`);
+      // A package that declares os, cpu or libc is taken to be one platform's build of a listed
+      // parent with the same license (lightningcss-darwin-arm64 for lightningcss). pnpm installs
+      // only the host's build, so keeping it would make the file differ by build machine. The
+      // parent is not checked: a platform-only package with no listed parent would lose its
+      // license line silently. The first install path decides for every version of the record.
+      const { os, cpu, libc } = readManifest(dir);
+      if (os !== undefined || cpu !== undefined || libc !== undefined) continue;
       for (const version of record.versions) {
         entries.push({ name: record.name, version, license });
       }
@@ -49,7 +61,9 @@ if (fileURLToPath(import.meta.url) === process.argv[1]) {
   const pakoLicense = readFileSync(resolve(mobileDir, "licenses/pako-LICENSE.txt"), "utf-8").trim();
 
   const pnpmJson = execSync("pnpm licenses list --prod --json", { cwd: mobileDir }).toString();
-  const dependencies = parsePnpmLicenses(pnpmJson);
+  const dependencies = parsePnpmLicenses(pnpmJson, (dir) =>
+    JSON.parse(readFileSync(resolve(dir, "package.json"), "utf-8")),
+  );
 
   const out = { defog: defogLicense, leaflet: leafletLicense, pako: pakoLicense, dependencies };
   const dest = resolve(ROOT, "generated/licenses.json");

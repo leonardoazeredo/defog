@@ -67,13 +67,13 @@ export function createStatus(doc: Document, actions: StatusActions, now: () => n
   const hintEl = doc.getElementById("hint");
   const hintText = hintEl?.textContent ?? "";
 
-  function restoreHint(): void {
+  function resetHint(): void {
     if (hintEl != null) hintEl.textContent = hintText;
   }
 
   return {
     showSaved({ name, savedAt }) {
-      restoreHint();
+      resetHint();
       lineEl.textContent = "";
       const days = Math.floor((now() - Date.parse(savedAt)) / 86_400_000);
       const age = ageLabel(days);
@@ -107,7 +107,7 @@ export function createStatus(doc: Document, actions: StatusActions, now: () => n
     },
 
     showRetry(kind) {
-      restoreHint();
+      resetHint();
       lineEl.textContent = "";
       const msg = doc.createElement("span");
       msg.textContent =
@@ -128,7 +128,7 @@ export function createStatus(doc: Document, actions: StatusActions, now: () => n
     },
 
     hide() {
-      restoreHint();
+      resetHint();
       lineEl.textContent = "";
     },
   };

@@ -1,7 +1,7 @@
 import type { NativeToWeb, WebToNative } from "./bridge/protocol.js";
 import { COPY } from "./copy.js";
 import type { FileStore } from "./fog/fileStore.js";
-import type { RestoreGuard } from "./fog/restoreGuard.js";
+import type { ReloadGuard } from "./fog/reloadGuard.js";
 import type { FogStore, SourceFile } from "./fog/store.js";
 import { zipName } from "./fog/store.js";
 import { streamCopy } from "./fog/transfer.js";
@@ -9,7 +9,7 @@ import { acceptIncoming } from "./import/incoming.js";
 
 export interface ControllerDeps {
   store: FogStore;
-  guard: RestoreGuard;
+  guard: ReloadGuard;
   fs: FileStore;
   send(msg: NativeToWeb): void;
   remount(): void;
@@ -84,7 +84,7 @@ export function createController(deps: ControllerDeps): Controller {
       activeFingerprint = pending.sha256;
       deps.send({
         v: 1,
-        type: "restore",
+        type: "reload",
         fingerprint: pending.sha256,
         name: pending.name,
         savedAt: pending.savedAt,
@@ -94,15 +94,15 @@ export function createController(deps: ControllerDeps): Controller {
     } else {
       const current = await store.current();
       if (current) {
-        const result = await guard.beforeRestore(current.sha256);
+        const result = await guard.beforeReload(current.sha256);
         if (result === "suspended") {
           activeFingerprint = null;
-          deps.send({ v: 1, type: "restoreSuspended", savedAt: current.savedAt });
+          deps.send({ v: 1, type: "reloadSuspended", savedAt: current.savedAt });
         } else {
           activeFingerprint = current.sha256;
           deps.send({
             v: 1,
-            type: "restore",
+            type: "reload",
             fingerprint: current.sha256,
             name: current.name,
             savedAt: current.savedAt,
@@ -267,7 +267,7 @@ export function createController(deps: ControllerDeps): Controller {
             await doRemount();
           }
           break;
-        case "retryRestore":
+        case "retryReload":
           await guard.reset();
           await doRemount();
           break;

@@ -26,7 +26,7 @@ const webToNativeSchema = z.union([
     reason: z.enum(["unzip", "noTiles", "memory", "checksum", "unknown"]),
   }),
   z.object({ v: z.literal(1), type: z.literal("clearSavedFog") }),
-  z.object({ v: z.literal(1), type: z.literal("retryRestore") }),
+  z.object({ v: z.literal(1), type: z.literal("retryReload") }),
   z.object({
     v: z.literal(1),
     type: z.literal("export"),
@@ -46,7 +46,7 @@ const webToNativeSchema = z.union([
 const nativeToWebSchema = z.union([
   z.object({
     v: z.literal(1),
-    type: z.literal("restore"),
+    type: z.literal("reload"),
     fingerprint,
     name: shortName,
     savedAt,
@@ -64,7 +64,7 @@ const nativeToWebSchema = z.union([
     })
     .refine((c) => c.index < c.total, "index must be less than total"),
   z.object({ v: z.literal(1), type: z.literal("none") }),
-  z.object({ v: z.literal(1), type: z.literal("restoreSuspended"), savedAt }),
+  z.object({ v: z.literal(1), type: z.literal("reloadSuspended"), savedAt }),
   z.object({
     v: z.literal(1),
     type: z.literal("notice"),

@@ -118,7 +118,7 @@ export async function runContractCheck(
 
       await dispatch({
         v: 1,
-        type: "restore",
+        type: "reload",
         fingerprint,
         name: fixture.name,
         savedAt: new Date().toISOString(),

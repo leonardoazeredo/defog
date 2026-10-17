@@ -19,11 +19,15 @@ it.skipIf(!!process.env.STRYKER_MUTATOR_WORKER)("finds exactly the reviewed host
     "brouter.de",
     "drive.google.com",
     "onedrive.live.com",
+    "opendatacommons.org",
     "overpass-api.de",
+    "overpass.private.coffee",
     "szapalak.goatcounter.com",
     "tile.openstreetmap.org",
+    "www.cyclosm.org",
     "www.google.com",
     "www.opengis.net",
+    "www.openstreetmap.org",
     "www.topografix.com",
   ]);
   expect(unknownHosts(found)).toEqual([]);

@@ -21,7 +21,7 @@
   const DONE_WITHIN_M = 20;  // a piece is done if a defogged cell lies this close (forgives GPS wobble)
   const MIN_RUN_M = 25;      // shorter leftover stretches aren't drawn (confetti at crossings)
   const SLICE_MS = 12;       // classify in slices this long so big cities don't freeze the page
-  const RETRY_MS = 10000;    // after a failed download, wait this long before trying again on a move
+  const RETRY_MS = 10000;    // after a failed download, wait at least this long before retrying
   const SECOND_TRY_MS = 3000; // Overpass answers 504 when momentarily busy: one quiet retry first
   // One colour serves both maps: as-is on the dark map, deepened a little on the
   // light one so it still reads against pale ground while staying bright.
@@ -189,14 +189,20 @@
     this._busy = true;
     try {
       if (this.streets.needsFetch(tiles, "run")) this._say("Reading the street map…");
-      let ok = false;
+      let ok = false, err = null;
       for (let attempt = 0; attempt < 2 && !ok; attempt++) {
         try { await this.streets.ensureRects(tiles, "run"); ok = true; }
-        catch (e) { if (attempt === 0) await new Promise((r) => setTimeout(r, SECOND_TRY_MS)); }
+        catch (e) {
+          err = e;
+          // every endpoint is blocked until retryAt and nothing is sent before then: no quiet retry
+          if (e && e.retryAt) break;
+          if (attempt === 0) await new Promise((r) => setTimeout(r, SECOND_TRY_MS));
+        }
         if (!this.enabled) return;
       }
+      if (!this.enabled) return;
       if (!ok) {
-        this._retryAt = Date.now() + RETRY_MS;
+        this._retryAt = Math.max(Date.now() + RETRY_MS, (err && err.retryAt) || 0);
         this._say("Couldn't load the street map. Move the map to try again in a moment.");
         return;
       }

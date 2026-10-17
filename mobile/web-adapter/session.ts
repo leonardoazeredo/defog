@@ -21,7 +21,7 @@ export function createStatusActions(send: Send): StatusActions {
     update: () => send({ v: 1, type: "pickBackup" }),
     clear: () => send({ v: 1, type: "clearSavedFog" }),
     about: () => send({ v: 1, type: "openAbout" }),
-    retry: () => send({ v: 1, type: "retryRestore" }),
+    retry: () => send({ v: 1, type: "retryReload" }),
   };
 }
 
@@ -70,7 +70,7 @@ export function createSession(deps: SessionDeps): { onMessage(msg: NativeToWeb):
           status.hide();
           break;
 
-        case "restore": {
+        case "reload": {
           const cached = await cache.get(msg.fingerprint);
           if (cached != null) {
             const outcome = await load(cached, msg.name);
@@ -130,7 +130,7 @@ export function createSession(deps: SessionDeps): { onMessage(msg: NativeToWeb):
           }
           break;
 
-        case "restoreSuspended":
+        case "reloadSuspended":
           status.showRetry("suspended");
           break;
 

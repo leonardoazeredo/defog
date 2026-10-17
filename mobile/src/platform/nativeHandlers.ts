@@ -12,7 +12,7 @@ export async function shareExport(file: {
   const exportsDir = new Directory(Paths.cache, "exports");
   if (!exportsDir.exists) exportsDir.create();
   const dest = new File(exportsDir, safe);
-  dest.write(file.text);
+  await dest.write(file.text);
   const uti = utiFor(file.filename);
   await Sharing.shareAsync(dest.uri, {
     mimeType: file.mime,

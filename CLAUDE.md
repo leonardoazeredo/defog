@@ -9,7 +9,7 @@ Defog: a browser-only tool that reads a Fog of World `Sync/` folder (or backup .
 ## Running and deploying
 
 - No build, package manager or linter; tests are plain Node scripts in `bench/*.test.js` (offline, synthetic data). `app/` is the site root: serve it with any static file server and open `index.html`.
-- Pushing to `main` deploys `app/` to GitHub Pages via `.github/workflows/deploy.yml`. Anything outside `app/` is not published.
+- No GitHub Pages site: `app/` ships only inside the phone app in `mobile/` (bundled into `generated/web.ts` by `pnpm generate`).
 - `Sync/` (personal location history) is gitignored: never commit it or anything derived from it.
 - Third-party libs are vendored in `app/vendor/`; there is nothing to install.
 
@@ -20,6 +20,7 @@ Every file in `app/src/` is a plain IIFE that hangs its API on `window` (e.g. `F
 Data flow:
 - `unzip.js` / `parser.js`: Sync tiles (zlib) -> `FogMap` of visited cells. Fog grid is 2^22 cells wide, 1 cell = 1 px at map zoom 14; `parser.js` also owns the cell <-> lng/lat math everything else uses.
 - `fogLayer.js`: Leaflet GridLayer painting the fog (paints one side, composites with a CSS blend mode on the pane).
+- `overpass.js`: `Overpass.post`, the only Overpass caller: endpoints in a user-set order (private.coffee, then overpass-api.de), one request in flight, a hold of at least 30 s on an endpoint (longer when Retry-After says so) after 429/406, after a rejected fetch (network error, the 120 s timeout before a status arrives, or a CORS-hidden answer) and after a body that stops arriving; any other non-2xx answer, or a 200 whose body is not JSON, moves on to the next endpoint with no hold. Load order: before `streets.js`.
 - `streets.js`: `StreetIndex` fetches OSM ways from Overpass in tiles and scores ~50 m segments by the share of their ~30 m corridor still fogged. Shared by `streetsLayer.js` ("Streets in fog" highlight), `planner.js` and `suggest.js`.
 - `route.js`: manual route tool (the only BRouter caller: snapping, drag/insert waypoints, GPX; `setFixedRoute` takes a suggestion's geometry without a request). `export.js`: fog -> KML.
 - `planner.js`: graph search over StreetIndex ways (pockets of rewarding streets joined by reward-hungry paths, rewards spent as edges are used so loops come back on different streets). Runs locally and returns real street geometry (`coords`). Builds the street graph (components, one-way directions, travel-class filter) that `router.js` routes on.
@@ -37,7 +38,7 @@ Headless Node run of the shipping suggestion code against a real `Sync/` folder 
     node bench/compare.js <baseline.json> <candidate.json>   # acceptance check, see bench/README.md
     for t in bench/*.test.js; do node $t; done               # synthetic-graph tests, no network
 
-- `bench/lib/load.js` `require`s `parser.js`, `streets.js`, `planner.js`, `router.js`, `suggest.js` over `bench/lib/leaflet-stub.js`; a new app file that suggest code depends on must be added there too.
+- `bench/lib/load.js` `require`s `parser.js`, `overpass.js`, `streets.js`, `planner.js`, `router.js`, `suggest.js` over `bench/lib/leaflet-stub.js`; a new app file that suggest code depends on must be added there too. It sets the Overpass order to overpass-api.de first, because `bench/cache/` holds answers from that instance.
 - `bench/lib/gain.js` is a hand copy of `computeGain`/`cellIsNew` from `main.js`. Change one, change the other.
 - Overpass responses are cached in `bench/cache/` (gitignored); delete it to re-measure live. Overpass answers 502 under load and the run then ends in the error state: rerun after a minute, only failed requests refetch. `bench/cache/brouter/` is leftover from before suggestions went local; nothing reads or writes it. The acceptance baseline is the saved `bench/out/baseline-brouter.json`.
 - Results go to `bench/out/<name>.json` (gitignored).

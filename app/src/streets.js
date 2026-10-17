@@ -10,7 +10,6 @@
 // same class of information the basemap tile servers already get. The fog
 // itself never leaves the device (segments are scored against it locally).
 (function (global) {
-  const OVERPASS = "https://overpass-api.de/api/interpreter";
   // Streets someone would plausibly cover on foot vs on a bike. Driveways and
   // parking aisles are excluded: they're numerous and nobody hunts them.
   // Besides what people cover, the lists hold trunk roads, link roads and (on foot) steps:
@@ -161,15 +160,7 @@
       ["motorway", tagged("motorway|motorway_link", "")]
     ]);
     for (const [k, body] of groups) q += `(${body})->.${k};.${k} out count;.${k} out ids;`;
-    const res = await fetch(OVERPASS, {
-      method: "POST",
-      // UA is for the Node benchmark harness (Overpass rejects Node's default);
-      // browsers filter the header out as forbidden, which is fine.
-      headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "FogToMaps/1.0 (defog route suggestions)" },
-      body: "data=" + encodeURIComponent(q)
-    });
-    if (!res.ok) throw new Error("overpass HTTP " + res.status);
-    const gj = await res.json();
+    const gj = await global.Overpass.post("data=" + encodeURIComponent(q));
     // a timeout or out-of-memory still answers 200, with whatever it had by then
     if (gj.remark) throw new Error("overpass: " + gj.remark);
     let group = -1; // -1 = the geometry, then one list (see `groups`) per count marker

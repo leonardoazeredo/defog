@@ -85,7 +85,7 @@ it("createStatusActions wires all four actions to protocol messages", () => {
     { v: 1, type: "pickBackup" },
     { v: 1, type: "clearSavedFog" },
     { v: 1, type: "openAbout" },
-    { v: 1, type: "retryRestore" },
+    { v: 1, type: "retryReload" },
   ]);
 });
 
@@ -106,7 +106,7 @@ it("shows partial progress as chunks arrive", async () => {
   const sess = makeSession();
   await sess.onMessage({
     v: 1,
-    type: "restore",
+    type: "reload",
     fingerprint: bigFp,
     name,
     savedAt,
@@ -124,7 +124,7 @@ it("sends exactly one retry needBytes on the first mismatch", async () => {
   const sess = makeSession();
   await sess.onMessage({
     v: 1,
-    type: "restore",
+    type: "reload",
     fingerprint: fp,
     name,
     savedAt,
@@ -160,13 +160,13 @@ it("first run: none empties the cache and hides the line", async () => {
   expect(sent).toEqual([]);
 });
 
-it("restores from the cache without asking native", async () => {
+it("reloads from the cache without asking native", async () => {
   cache = makeCache(new Map([[fp, bytes]]));
   loadOutcomes = [{ ok: true, tiles: 2 }];
   const sess = makeSession();
   await sess.onMessage({
     v: 1,
-    type: "restore",
+    type: "reload",
     fingerprint: fp,
     name,
     savedAt,
@@ -184,7 +184,7 @@ it("asks for the bytes on a miss, and caches them after a good load", async () =
   const sess = makeSession();
   await sess.onMessage({
     v: 1,
-    type: "restore",
+    type: "reload",
     fingerprint: fp,
     name,
     savedAt,
@@ -208,7 +208,7 @@ it("a failed import leaves the old cache entry alone", async () => {
   const sess = makeSession();
   await sess.onMessage({
     v: 1,
-    type: "restore",
+    type: "reload",
     fingerprint: fp,
     name,
     savedAt,
@@ -235,7 +235,7 @@ it("a failed saved copy shows the retry panel", async () => {
   const sess = makeSession();
   await sess.onMessage({
     v: 1,
-    type: "restore",
+    type: "reload",
     fingerprint: fp,
     name,
     savedAt,
@@ -249,7 +249,7 @@ it("retries a checksum mismatch once, then reports checksum", async () => {
   const sess = makeSession();
   await sess.onMessage({
     v: 1,
-    type: "restore",
+    type: "reload",
     fingerprint: fp,
     name,
     savedAt,
@@ -282,7 +282,7 @@ it("ignores chunks for another fingerprint when active", async () => {
   const sess = makeSession();
   await sess.onMessage({
     v: 1,
-    type: "restore",
+    type: "reload",
     fingerprint: fp,
     name,
     savedAt,
@@ -301,9 +301,9 @@ it("ignores chunks for another fingerprint when active", async () => {
   expect(sent.filter((m) => m.type === "loaded")).toHaveLength(0);
 });
 
-it("restoreSuspended shows the suspended panel", async () => {
+it("reloadSuspended shows the suspended panel", async () => {
   const sess = makeSession();
-  await sess.onMessage({ v: 1, type: "restoreSuspended", savedAt });
+  await sess.onMessage({ v: 1, type: "reloadSuspended", savedAt });
   expect(status.calls).toContainEqual(["showRetry", "suspended"]);
 });
 

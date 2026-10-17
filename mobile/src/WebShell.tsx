@@ -12,7 +12,7 @@ import { encode, isTrustedSource, ORIGIN, parseWebToNative } from "./bridge/prot
 import { type Controller, createController } from "./controller.js";
 import { COPY } from "./copy.js";
 import { pickE2eFixture } from "./e2e/fixturePicker.js";
-import { createRestoreGuard } from "./fog/restoreGuard.js";
+import { createReloadGuard } from "./fog/reloadGuard.js";
 import { createFogStore } from "./fog/store.js";
 import { CHUNK_BYTES } from "./fog/transfer.js";
 import { subscribeIncoming } from "./import/incomingQueue.js";
@@ -20,6 +20,10 @@ import { pickBackupFile } from "./import/pick.js";
 import { createExpoFileStore } from "./platform/expoFileStore.js";
 import { makeReleaseSource, shareExport } from "./platform/nativeHandlers.js";
 import { sha256Hex } from "./platform/sha256.js";
+
+// react-native-webview 14 defaults its props generic to `undefined`, which makes the props type
+// `never` for a bare `WebView` type. Drop this alias if that default changes.
+type ShellWebView = WebView<object>;
 
 // Page background colour so safe areas match the page.
 const PAGE_BG = "#e7e9ee";
@@ -58,7 +62,7 @@ function notify(text: string): void {
 }
 
 function buildController(
-  webViewRef: React.RefObject<WebView | null>,
+  webViewRef: React.RefObject<ShellWebView | null>,
   setWebKey: (fn: (k: number) => number) => void,
   initialLoadDone: React.RefObject<boolean>,
   setBusy: (on: boolean) => void,
@@ -66,7 +70,7 @@ function buildController(
   const fogDir = new Directory(Paths.document, "fog");
   const fs = createExpoFileStore(fogDir);
   const store = createFogStore(fs, { sha256Hex, now: Date.now });
-  const guard = createRestoreGuard(fs);
+  const guard = createReloadGuard(fs);
   const releaseSource = makeReleaseSource({
     cache: Paths.cache.uri,
     inbox: `${Paths.document.uri}Inbox/`,
@@ -104,7 +108,7 @@ function buildController(
 export function WebShell(): React.JSX.Element {
   const [webKey, setWebKey] = useState(0);
   const [busy, setBusy] = useState(false);
-  const webViewRef = useRef<WebView | null>(null);
+  const webViewRef = useRef<ShellWebView | null>(null);
   const initialLoadDone = useRef(false);
 
   // Lazy-initialise the controller once; never rebuild it across re-renders.

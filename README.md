@@ -41,8 +41,10 @@ for that feature (not your fog data): **drawing a route by hand** (and editing a
 a suggested route, switching its mode or reversing it) sends its waypoints to the public [BRouter](https://brouter.de) server
 to snap them to roads; **route suggestions** are routed entirely on your device and send
 nothing but the bounding box of the **street map around your pins**, and the
-**Streets in fog** look fetches the street map of the **area on screen**, both from the public
-[Overpass API](https://overpass-api.de) (OpenStreetMap), which only sees
+**Streets in fog** look fetches the street map of the **area on screen**, both from a public
+Overpass API server (OpenStreetMap): [private.coffee](https://overpass.private.coffee/) first
+(its terms and privacy policy are on that page), then the main instance
+[overpass-api.de](https://overpass-api.de) if it fails; the order is a setting. They only see
 bounding boxes, the same class of information the basemap tile servers already get, and
 the streets are compared against your fog entirely on your device; and **"Maps ↗"** opens
 your waypoints in Google Maps. As with any web map, basemap tiles are fetched from their providers

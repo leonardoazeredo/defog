@@ -1,9 +1,13 @@
 diff --git a/android/src/main/java/expo/modules/shareintent/ExpoShareIntentModule.kt b/android/src/main/java/expo/modules/shareintent/ExpoShareIntentModule.kt
-index ff5b1001e7bb3443482727cec48c22579465c73b..524bfab0109cd74586004ed05e3fccfdeb2077c5 100644
+index ff5b1001e7bb3443482727cec48c22579465c73b..927b3419ba18c65aab0ca62f27beb4bbee6e2fd8 100644
 --- a/android/src/main/java/expo/modules/shareintent/ExpoShareIntentModule.kt
 +++ b/android/src/main/java/expo/modules/shareintent/ExpoShareIntentModule.kt
-@@ -66,13 +66,23 @@ class ExpoShareIntentModule : Module() {
-                     "filePath" to instance?.getAbsolutePath(uri),
+@@ -63,16 +63,26 @@ class ExpoShareIntentModule : Module() {
+                 notifyError("Cannot get resolver (getFileInfo)")
+                 return mapOf(
+                     "contentUri" to uri.toString(),
+-                    "filePath" to instance?.getAbsolutePath(uri),
++                    "filePath" to null,
                  )
              }
 -            val queryResult: Cursor = resolver.query(uri, null, null, null, null)!!
@@ -32,3 +36,34 @@ index ff5b1001e7bb3443482727cec48c22579465c73b..524bfab0109cd74586004ed05e3fccfd
  
              var mediaWidth: String? = null;
              var mediaHeight: String? = null;
+@@ -99,9 +109,12 @@ class ExpoShareIntentModule : Module() {
+                 mediaDuration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toInt().toString() ?: null
+             }
+ 
++            // The app reads the content URI. Resolving a path copies most content URIs whole into
++            // the cache, and nothing in this module deletes the copy. Only the video metadata read
++            // above still resolves one, so a video share keeps its copy (the app rejects videos).
+             return mapOf(
+                     "contentUri" to uri.toString(),
+-                    "filePath" to instance?.getAbsolutePath(uri),
++                    "filePath" to null,
+                     "fileName" to fileName,
+                     "fileSize" to fileSize,
+                     "mimeType" to mimeType,
+diff --git a/build/utils.js b/build/utils.js
+index 3d343c633b4bb267a1ee994352516997f8e058b3..763db9d468d98340fac99b07f4894f05c3b172fe 100644
+--- a/build/utils.js
++++ b/build/utils.js
+@@ -97,9 +97,11 @@ export const parseShareIntent = (value, options) => {
+                     return [
+                         ...acc,
+                         {
++                            // The content URI carries the sender's read grant; the file path
++                            // needs storage access this app lacks, so copying from it fails.
+                             path: file.path ||
+-                                (file.filePath ? `file://${file.filePath}` : null) ||
+                                 file.contentUri ||
++                                (file.filePath ? `file://${file.filePath}` : null) ||
+                                 null,
+                             mimeType: file.mimeType || null,
+                             fileName: file.fileName || null,
