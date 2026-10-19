@@ -79,6 +79,11 @@
   // Street data is shared by the route suggestions and the Streets in fog look, so
   // whichever fetched an area first serves the other.
   const streets = new StreetIndex({ newFrac: corridorNewFrac });
+  // Startup stays synchronous: the index fetches straight from Overpass until the store opens, then
+  // reads through the street cache (StreetIndex looks its source up at call time).
+  TileStore.open("crossfog-streets", "tiles", { maxEntries: 256 }).then((store) => {
+    streets.fetchStreets = StreetCache.create({ store, network: StreetIndex.overpassFetch, now: Date.now }).fetchStreets;
+  });
   streetsLayer = new StreetsInFogLayer(map, { streets, isNew: cellIsNew, onStats: () => updateStreetsStat() });
   streetsLayer.setLook(BASEMAPS[$("basemap").value].dark ? "dark" : "light");
 
