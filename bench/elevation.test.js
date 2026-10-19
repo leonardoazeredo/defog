@@ -23,11 +23,13 @@ function encode(h) {
   const b = Math.round((v - r * 256 - g) * 256);
   return [r, g, b];
 }
-const planeHeight = (px) => 100 + px * 0.5;
+// the plane tilts both ways, so a swapped x/y weight or row cannot pass
+const pixelHeight = (col, row) => 100 + col * 0.5 + row * 0.25;
+const atPoint = (px, py) => pixelHeight(px - 0.5, py - 0.5); // exact for a linear plane away from the edges
 function planeTile() {
   const data = new Uint8ClampedArray(256 * 256 * 4);
   for (let py = 0; py < 256; py++) for (let px = 0; px < 256; px++) {
-    const [r, g, b] = encode(planeHeight(px));
+    const [r, g, b] = encode(pixelHeight(px, py));
     data.set([r, g, b, 255], (py * 256 + px) * 4);
   }
   return { width: 256, height: 256, data };
@@ -73,16 +75,22 @@ function fakes({ failing = new Set(), delay = false } = {}) {
     const f = fakes();
     const el = Elevation.create({ store: TileStore.memory(), ...f });
     const [between, onCentre] = await el.elevationAt([lonLatAt(2203, 1371, 10, 100), lonLatAt(2203, 1371, 20.5, 100.5)]);
-    assert.ok(Math.abs(between - (planeHeight(9) + planeHeight(10)) / 2) < 1e-6, String(between));
-    assert.ok(Math.abs(onCentre - planeHeight(20)) < 1e-6, String(onCentre));
+    assert.ok(Math.abs(between - (pixelHeight(9, 99) + pixelHeight(10, 99) + pixelHeight(9, 100) + pixelHeight(10, 100)) / 4) < 1e-6, String(between));
+    assert.ok(Math.abs(between - atPoint(10, 100)) < 1e-6);
+    assert.ok(Math.abs(onCentre - pixelHeight(20, 100)) < 1e-6, String(onCentre));
   }
 
   { // the tile edge clamps instead of reading a neighbour
     const f = fakes();
     const el = Elevation.create({ store: TileStore.memory(), ...f });
-    const [left, right] = await el.elevationAt([lonLatAt(2203, 1371, 0.1, 50), lonLatAt(2203, 1371, 255.9, 50)]);
-    assert.ok(Math.abs(left - planeHeight(0)) < 1e-6);
-    assert.ok(Math.abs(right - planeHeight(255)) < 1e-6);
+    const [left, right, top, bottom] = await el.elevationAt([
+      lonLatAt(2203, 1371, 0.1, 50.5), lonLatAt(2203, 1371, 255.9, 50.5),
+      lonLatAt(2203, 1371, 30.5, 0.1), lonLatAt(2203, 1371, 30.5, 255.9)
+    ]);
+    assert.ok(Math.abs(left - pixelHeight(0, 50)) < 1e-6);
+    assert.ok(Math.abs(right - pixelHeight(255, 50)) < 1e-6);
+    assert.ok(Math.abs(top - pixelHeight(30, 0)) < 1e-6);
+    assert.ok(Math.abs(bottom - pixelHeight(30, 255)) < 1e-6);
     assert.deepEqual(f.calls, ["12/2203/1371"]);
   }
 
@@ -144,7 +152,53 @@ function fakes({ failing = new Set(), delay = false } = {}) {
     assert.ok(out.every((v) => typeof v === "number"));
   }
 
-  { // the default fetch asks for the terrarium tile of the bucket's own host and nothing else
+  { // cached bytes that fail to decode are dropped and the tile is fetched again; a failed decode of fresh bytes caches nothing
+    const f = fakes();
+    const store = TileStore.memory();
+    await store.put("12/2203/1371", new Uint8Array([9, 9]));
+    const decodeTile = async (bytes) => { if (bytes[0] === 9) throw new Error("garbage"); return planeTile(); };
+    const el = Elevation.create({ store, fetchTile: f.fetchTile, decodeTile });
+    const out = await el.elevationAt([lonLatAt(2203, 1371, 30, 30)]);
+    assert.equal(typeof out[0], "number");
+    assert.equal(f.calls.length, 1);
+    assert.deepEqual([...(await store.get("12/2203/1371"))], [2203 & 255, 1371 & 255]);
+
+    const empty = TileStore.memory();
+    const bad = Elevation.create({ store: empty, fetchTile: f.fetchTile, decodeTile: async () => { throw new Error("bad png"); } });
+    assert.deepEqual(await bad.elevationAt([lonLatAt(2204, 1371, 30, 30)]), [null]);
+    assert.deepEqual(await empty.keys(), []);
+  }
+
+  { // two calls at once for one tile share a single fetch, and a tile evicted from the decoded set comes back from the store
+    const f = fakes({ delay: true });
+    const el = Elevation.create({ store: TileStore.memory(), ...f });
+    const pt = [lonLatAt(2203, 1371, 30, 30)];
+    await Promise.all([el.elevationAt(pt), el.elevationAt(pt)]);
+    assert.equal(f.calls.length, 1);
+    const many = [];
+    for (let i = 0; i < 9; i++) many.push(lonLatAt(2100 + i, 1371, 30, 30));
+    await el.elevationAt(many);
+    const before = f.calls.length;
+    await el.elevationAt(pt);
+    assert.equal(f.calls.length, before, "the evicted tile is read from the store, not refetched");
+  }
+
+  { // a failure says why once per reason, without a position
+    const warnings = [];
+    const realWarn = console.warn;
+    console.warn = (...a) => warnings.push(a.join(" "));
+    try {
+      const f = fakes({ failing: new Set(["12/2203/1371", "12/2204/1371"]) });
+      const el = Elevation.create({ store: TileStore.memory(), ...f });
+      await el.elevationAt([lonLatAt(2203, 1371, 30, 30), lonLatAt(2204, 1371, 30, 30)]);
+      await el.elevationAt([lonLatAt(2203, 1371, 30, 30)]);
+    } finally { console.warn = realWarn; }
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /offline/);
+    assert.doesNotMatch(warnings[0], /2203|1371|13\.|51\./);
+  }
+
+  { // the default fetch asks for the terrarium tile of the bucket's own host, with no body, headers or credentials
     const seen = [];
     const realFetch = global.fetch;
     global.fetch = async (url, init) => { seen.push([String(url), init]); return { ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }; };
@@ -154,7 +208,7 @@ function fakes({ failing = new Set(), delay = false } = {}) {
     } finally { global.fetch = realFetch; }
     assert.equal(seen.length, 1);
     assert.equal(seen[0][0], "https://elevation-tiles-prod.s3.amazonaws.com/terrarium/12/2203/1371.png");
-    assert.ok(!seen[0][1] || (!seen[0][1].headers && !seen[0][1].body), "no body or custom headers leave the page");
+    assert.deepEqual(Object.keys(seen[0][1] || {}), ["signal"], "only an abort signal rides along: no body, headers or credentials");
   }
 
   { // a failed response (404, 5xx) counts as a fetch failure

@@ -4,6 +4,7 @@
   const ZOOM = 12; // ~38 m a pixel at the equator; the finest sources are SRTM and 3DEP, coarser GMTED2010 fills other areas
   const TILE = 256;
   const MAX_IN_FLIGHT = 4;
+  const FETCH_TIMEOUT_MS = 30000;
   const MAX_DECODED = 8; // caps decoded pixels at about 2 MB (256 KB each); an evicted tile is read from the store again, or refetched when the store lost it
   const BASE = "https://elevation-tiles-prod.s3.amazonaws.com/terrarium";
 
@@ -19,9 +20,14 @@
   }
 
   async function defaultFetchTile(z, x, y) {
-    const res = await global.fetch(`${BASE}/${z}/${x}/${y}.png`);
-    if (!res.ok) throw new Error("elevation tile " + res.status);
-    return new Uint8Array(await res.arrayBuffer());
+    // a stalled connection would otherwise hold elevationAt, and every later call for the tile, forever
+    const ctl = new global.AbortController();
+    const timer = setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const res = await global.fetch(`${BASE}/${z}/${x}/${y}.png`, { signal: ctl.signal });
+      if (!res.ok) throw new Error("elevation tile " + res.status);
+      return new Uint8Array(await res.arrayBuffer());
+    } finally { clearTimeout(timer); }
   }
 
   // no colour conversion or premultiplying, so the bytes read back are the bytes encoded
@@ -44,6 +50,17 @@
     const fetchTile = o.fetchTile || defaultFetchTile;
     const decodeTile = o.decodeTile || defaultDecodeTile;
     const decoded = new Map(); // key -> Promise<image|null>, oldest first
+    const warned = new Set();
+
+    // null alone cannot tell offline from a blocked host or a broken decoder; one line per distinct
+    // reason says which. It logs the error's own message, never the tile or point; browsers' fetch
+    // errors do not carry the URL, so if that ever changes, filter it here
+    function warnOnce(e) {
+      const reason = (e && e.name) + ": " + (e && e.message);
+      if (warned.has(reason)) return;
+      warned.add(reason);
+      console.warn("elevation tile not loaded, " + reason);
+    }
 
     // resolves to the decoded tile, or null when it can be neither read nor fetched
     async function loadTile(z, x, y) {
@@ -62,6 +79,7 @@
         try { await store.put(key, bytes); } catch (e) { /* a full or broken store only costs a refetch */ }
         return image;
       } catch (e) {
+        warnOnce(e);
         return null;
       }
     }
@@ -72,7 +90,7 @@
       if (p) { decoded.delete(key); decoded.set(key, p); return p; }
       p = loadTile(z, x, y);
       // a miss is not kept: the next call tries the network again
-      p.then((img) => { if (!img) decoded.delete(key); });
+      p.then((img) => { if (!img && decoded.get(key) === p) decoded.delete(key); });
       decoded.set(key, p);
       while (decoded.size > MAX_DECODED) decoded.delete(decoded.keys().next().value);
       return p;
@@ -91,7 +109,8 @@
       };
       const top = h(x0, y0) * (1 - tx) + h(x0 + 1, y0) * tx;
       const bottom = h(x0, y0 + 1) * (1 - tx) + h(x0 + 1, y0 + 1) * tx;
-      return top * (1 - ty) + bottom * ty;
+      const height = top * (1 - ty) + bottom * ty;
+      return Number.isFinite(height) ? height : null;
     }
 
     async function elevationAt(points) {
