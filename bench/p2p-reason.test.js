@@ -13,7 +13,7 @@ function streetsWith(ways) {
   const s = new StreetIndex({ newFrac: () => 1 });
   s._anchor(51);
   for (const [id, nodes, p, q] of ways) s._addWay({ id, nodes, geometry: [ll(...p), ll(...q)] });
-  s.rects.push({ s: 50.9, n: 51.1, w: 13.6, e: 13.8, kind: "run" });
+  s._cover(StreetIndex.tilesCovering({ s: 50.9, n: 51.1, w: 13.6, e: 13.8 }), "run");
   return s;
 }
 async function run(streets, a, b, profile = "hiking-mountain") {
@@ -29,7 +29,7 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]]]
 (async () => {
   { // Overpass failing is not reported as a connectivity problem
     const s = streetsWith(street);
-    s.rects.length = 0;
+    s.tiles.clear();
     s.ensureRects = async () => { throw new Error("overpass HTTP 502"); };
     const r = await run(s, [0, 0], [1000, 0]);
     assert.equal(r.error, true);

@@ -28,7 +28,9 @@
     road: "residential|unclassified|tertiary|secondary|primary|living_street|cycleway|" + CONNECT_HW,
     car: "residential|unclassified|tertiary|secondary|primary|living_street|motorway|motorway_link|" + CONNECT_HW
   };
-  const CLASS_ORDER = ["bike", "road", "car"]; // the order the ID lists come back in
+  const CLASS_ORDER = ["bike", "road", "car"]; // the travel classes, first in GROUP_ORDER
+  // every ID list a fetch asks for, in the order the answer carries them after the geometry
+  const GROUP_ORDER = CLASS_ORDER.concat(["oneWay", "reverseWay", "bikeBoth", "motorway"]);
   // routing profile -> travel class (also read by streetsLayer for its dimming).
   // Unlisted profiles (hiking-mountain, rail, shortest) use every way.
   const MODE_CLASS = { trekking: "bike", fastbike: "road", "car-fast": "car" };
@@ -36,11 +38,14 @@
   const GRID_M = 250;            // spatial bin size for radius queries
   const MAX_SEGS = 400000;       // memory guard (~40 MB worst case)
   const CORRIDOR_M = 30;         // full width Fog of World clears as you travel
+  const TILE_DEG = 0.05;         // fetch grid, ~5.5 x 3.5 km at 51°N: streets are fetched and remembered per tile
+  const TILE_EPS = 1e-9;         // in tiles: keeps a bound that sits on a tile edge from reaching into the neighbouring tile
 
   function StreetIndex(opts) {
     this.newFrac = opts.newFrac; // (lon,lat) -> 0..1 share of the corridor stamp still fogged
+    this.fetchStreets = opts.fetchStreets || StreetIndex.overpassFetch; // the street source: (tiles, kind) -> Map "x:y" -> answer
     this.segs = new Map();       // "gx,gy" -> [{x,y,lon,lat,lenM,frac}]
-    this.rects = [];             // fetched coverage, [{s,w,n,e}]
+    this.tiles = new Set();      // fetched coverage, StreetIndex.tileKey(kind, x, y)
     this.wayIds = new Set();     // dedupe across overlapping fetches
     this.classIds = { bike: new Set(), road: new Set(), car: new Set() };
     this.classified = new Set(); // ways we know the travel classes of (blank = assume usable)
@@ -60,7 +65,8 @@
   };
 
   StreetIndex.prototype.covered = function (lat, lng) {
-    return this.rects.some((r) => lat >= r.s && lat <= r.n && lng >= r.w && lng <= r.e);
+    const t = StreetIndex.tileOf(lng, lat);
+    return ["run", "bike", "car"].some((k) => this.tiles.has(StreetIndex.tileKey(k, t.x, t.y)));
   };
 
   StreetIndex.prototype._addWay = function (w) {
@@ -85,14 +91,23 @@
     }
   };
 
-  // A rect counts as covered when an earlier fetch contains it AND fetched at
+  // A tile counts as covered when it was fetched for the same kind AND fetched at
   // least the streets asked for now: the walking set is a superset of the bike
   // set, so a "run" fetch satisfies a later "bike" request but not vice versa. A car
   // fetch holds motorways, which nothing else does, so only a car fetch covers cars.
   StreetIndex.prototype._uncovered = function (rects, kind) {
-    return rects.filter((r) =>
-      !this.rects.some((o) => r.s >= o.s && r.n <= o.n && r.w >= o.w && r.e <= o.e &&
-        (o.kind === kind || (o.kind === "run" && kind !== "car"))));
+    const seen = new Set();
+    return rects.flatMap((r) => StreetIndex.tilesCovering(r)).filter((t) => {
+      const k = t.x + ":" + t.y;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return !(this.tiles.has(StreetIndex.tileKey(kind, t.x, t.y)) ||
+        (kind !== "car" && this.tiles.has(StreetIndex.tileKey("run", t.x, t.y))));
+    });
+  };
+
+  StreetIndex.prototype._cover = function (tiles, kind) {
+    for (const t of tiles) this.tiles.add(StreetIndex.tileKey(kind, t.x, t.y));
   };
 
   // Would ensureRects actually hit the network for these, or is it
@@ -130,48 +145,25 @@
     return L.latLng(Math.round(latlng.lat / g) * g, Math.round(latlng.lng / g) * g);
   };
 
-  // Fetch streets for the given rects (skipping ones already covered), one
-  // Overpass query. kind: "run" | "bike" | "car". Throws on failure; suggestions end in
-  // their error state, since routing needs the streets.
+  // Fetch streets for the tiles under the given rects (skipping ones already covered),
+  // in one call to the street source. kind: "run" | "bike" | "car". Throws on failure;
+  // suggestions end in their error state, since routing needs the streets.
   StreetIndex.prototype.ensureRects = async function (rects, kind) {
     const todo = this._uncovered(rects, kind);
     if (!todo.length) return;
-    this._anchor(todo[0].s);
-    const bb = (r) => [r.s, r.w, r.n, r.e].map((x) => x.toFixed(4)).join(",");
-    // access filter: planned and routed trips must not cross ways the person can't
-    // use (motorroads are for motor vehicles; foot=no only matters on foot)
-    const acc = `[access!~"^(private|no|military)$"]` + (kind === "car" ? "" : `[motorroad!=yes]`) + (kind === "run" ? `[foot!=no]` : "");
-    const clauses = (hw) => todo.map((r) =>
-      `way[highway~"^(${hw})$"]${acc}(${bb(r)});way[highway=service]${acc}[service!~"^(driveway|parking_aisle)$"](${bb(r)});`).join("");
-    const hw = kind === "bike" ? BIKE_HW : kind === "car" ? CAR_HW : RUN_HW;
-    // the box is scanned once into .all; each list below filters that set (scanning the
-    // box again per list ran Overpass out of time on a town-sized box)
-    let q = `[out:json][timeout:60];(${clauses(hw)})->.all;.all out skel geom;`;
-    const tagged = (list, filter) => `way.all[highway~"^(${list})$"]${filter};`;
-    const withService = (list, filter) => tagged(list, filter) + `way.all[highway=service]${filter};`;
-    // Then ID lists, each introduced by its own count so the groups stay apart in one
-    // response: the travel classes (bikes keep off bicycle=no), the one-ways (a way
-    // travelled one way, plus roundabouts, and one travelled against its node order),
-    // the one-ways bikes may ride both ways, and the motorways.
-    const groups = CLASS_ORDER.map((k) => [k, withService(CLASS_HW[k], k === "car" ? "" : "[bicycle!=no]")]).concat([
-      ["oneWay", withService(hw, `[oneway~"^(yes|true|1)$"]`) + tagged(hw, `[junction=roundabout][oneway!=no]`)],
-      ["reverseWay", withService(hw, `[oneway~"^(-1|reverse)$"]`)],
-      ["bikeBoth", tagged(hw, `[~"^oneway:bicycle$"~"^no$"]`) + tagged(hw, `[cycleway~"^opposite"]`) + tagged(hw, `[~"^cycleway:(left|right|both)$"~"^opposite"]`)],
-      ["motorway", tagged("motorway|motorway_link", "")]
-    ]);
-    for (const [k, body] of groups) q += `(${body})->.${k};.${k} out count;.${k} out ids;`;
-    const gj = await global.Overpass.post("data=" + encodeURIComponent(q));
-    // a timeout or out-of-memory still answers 200, with whatever it had by then
-    if (gj.remark) throw new Error("overpass: " + gj.remark);
-    let group = -1; // -1 = the geometry, then one list (see `groups`) per count marker
-    for (const el of gj.elements || []) {
-      if (el.type === "count") { group++; continue; }
-      if (el.type !== "way") continue;
-      if (group < 0) { this._addWay(el); this.classified.add(el.id); }
-      else (this.classIds[groups[group][0]] || this[groups[group][0]]).add(el.id);
+    this._anchor(rects[0].s);
+    const answers = await this.fetchStreets(todo, kind);
+    for (const t of todo) {
+      const answer = answers.get(t.x + ":" + t.y);
+      if (!answer) throw new Error("street source: no answer for a requested tile");
+      for (const w of answer.ways) { this._addWay(w); this.classified.add(w.id); }
+      for (const name of GROUP_ORDER) {
+        const into = this.classIds[name] || this[name];
+        for (const id of answer.groups[name] || []) into.add(id);
+      }
     }
     this.version++;
-    for (const r of todo) this.rects.push({ s: r.s, w: r.w, n: r.n, e: r.e, kind });
+    this._cover(todo, kind);
   };
 
   // Defoggable area (m²) reachable by travelling the ways within rM of the
@@ -199,6 +191,84 @@
       }
     }
     return m2;
+  };
+
+  StreetIndex.TILE_DEG = TILE_DEG;
+  StreetIndex.tileOf = (lng, lat) => ({ x: Math.floor(lng / TILE_DEG), y: Math.floor(lat / TILE_DEG) });
+  // A bound on a tile edge takes the tile on its inside (a west or south edge the tile it opens, an
+  // east or north edge the tile it closes), so a tile's own bounds map back to it; a rect with
+  // no width still takes one tile.
+  StreetIndex.tilesCovering = ({ s, w, n, e }) => {
+    const x0 = Math.floor(w / TILE_DEG + TILE_EPS), y0 = Math.floor(s / TILE_DEG + TILE_EPS);
+    const x1 = Math.max(x0, Math.ceil(e / TILE_DEG - TILE_EPS) - 1), y1 = Math.max(y0, Math.ceil(n / TILE_DEG - TILE_EPS) - 1);
+    const tiles = [];
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) tiles.push({ x, y });
+    return tiles;
+  };
+  StreetIndex.tileBounds = ({ x, y }) => ({ s: y * TILE_DEG, w: x * TILE_DEG, n: (y + 1) * TILE_DEG, e: (x + 1) * TILE_DEG });
+  StreetIndex.tileKey = (kind, x, y) => kind + ":" + x + ":" + y;
+
+  // The Overpass query for the given boxes ([{s,w,n,e}]). The bench cache is keyed on this
+  // text, so changing it makes every saved answer miss.
+  StreetIndex.rectQuery = function (boxes, kind) {
+    const bb = (r) => [r.s, r.w, r.n, r.e].map((x) => x.toFixed(4)).join(",");
+    // access filter: planned and routed trips must not cross ways the person can't
+    // use (motorroads are for motor vehicles; foot=no only matters on foot)
+    const acc = `[access!~"^(private|no|military)$"]` + (kind === "car" ? "" : `[motorroad!=yes]`) + (kind === "run" ? `[foot!=no]` : "");
+    const clauses = (hw) => boxes.map((r) =>
+      `way[highway~"^(${hw})$"]${acc}(${bb(r)});way[highway=service]${acc}[service!~"^(driveway|parking_aisle)$"](${bb(r)});`).join("");
+    const hw = kind === "bike" ? BIKE_HW : kind === "car" ? CAR_HW : RUN_HW;
+    // the box is scanned once into .all; each list below filters that set (scanning the
+    // box again per list ran Overpass out of time on a town-sized box)
+    let q = `[out:json][timeout:60];(${clauses(hw)})->.all;.all out skel geom;`;
+    const tagged = (list, filter) => `way.all[highway~"^(${list})$"]${filter};`;
+    const withService = (list, filter) => tagged(list, filter) + `way.all[highway=service]${filter};`;
+    // Then ID lists, each introduced by its own count so the groups stay apart in one
+    // response: the travel classes (bikes keep off bicycle=no), the one-ways (a way
+    // travelled one way, plus roundabouts, and one travelled against its node order),
+    // the one-ways bikes may ride both ways, and the motorways.
+    const groups = CLASS_ORDER.map((k) => [k, withService(CLASS_HW[k], k === "car" ? "" : "[bicycle!=no]")]).concat([
+      ["oneWay", withService(hw, `[oneway~"^(yes|true|1)$"]`) + tagged(hw, `[junction=roundabout][oneway!=no]`)],
+      ["reverseWay", withService(hw, `[oneway~"^(-1|reverse)$"]`)],
+      ["bikeBoth", tagged(hw, `[~"^oneway:bicycle$"~"^no$"]`) + tagged(hw, `[cycleway~"^opposite"]`) + tagged(hw, `[~"^cycleway:(left|right|both)$"~"^opposite"]`)],
+      ["motorway", tagged("motorway|motorway_link", "")]
+    ]);
+    for (const [k, body] of groups) q += `(${body})->.${k};.${k} out count;.${k} out ids;`;
+    return q;
+  };
+
+  // The default street source: one Overpass request for all the tiles, the answer split per
+  // tile. `boxes` replaces the tiles' own bounds in the query text (the bench sends the
+  // query text its saved answers were fetched with, see bench/lib/tileFetch.js).
+  StreetIndex.overpassFetch = async function (tiles, kind, boxes) {
+    const gj = await global.Overpass.post("data=" + encodeURIComponent(StreetIndex.rectQuery(boxes || tiles.map(StreetIndex.tileBounds), kind)));
+    // a timeout or out-of-memory still answers 200, with whatever it had by then
+    if (gj.remark) throw new Error("overpass: " + gj.remark);
+    const ways = [], groups = {};
+    for (const name of GROUP_ORDER) groups[name] = [];
+    let group = -1; // -1 = the geometry, then one list (see GROUP_ORDER) per count marker
+    for (const el of gj.elements || []) {
+      if (el.type === "count") { group++; continue; }
+      if (el.type !== "way") continue;
+      if (group < 0) ways.push({ id: el.id, nodes: el.nodes, geometry: el.geometry });
+      else if (groups[GROUP_ORDER[group]]) groups[GROUP_ORDER[group]].push(el.id);
+    }
+    // a way goes to every requested tile holding one of its points, to the first when none does
+    const answers = new Map(tiles.map((t) => [t.x + ":" + t.y, { ways: [], groups: Object.fromEntries(GROUP_ORDER.map((n) => [n, []])) }]));
+    const home = new Map(); // way id -> the answers it went to
+    for (const w of ways) {
+      const hit = new Set();
+      for (const p of w.geometry || []) {
+        const t = StreetIndex.tileOf(p.lon, p.lat);
+        const a = answers.get(t.x + ":" + t.y);
+        if (a) hit.add(a);
+      }
+      const into = hit.size ? [...hit] : [answers.get(tiles[0].x + ":" + tiles[0].y)];
+      for (const a of into) a.ways.push(w);
+      home.set(w.id, into);
+    }
+    for (const name of GROUP_ORDER) for (const id of groups[name]) for (const a of home.get(id) || []) a.groups[name].push(id);
+    return answers;
   };
 
   StreetIndex.MODE_CLASS = MODE_CLASS;

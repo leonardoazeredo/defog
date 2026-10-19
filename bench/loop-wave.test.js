@@ -34,7 +34,7 @@ async function run(routable, opts = {}) {
   const s = new StreetIndex({ newFrac: () => 1 });
   s._anchor(51);
   s._addWay({ id: 1, nodes: [1, 2], geometry: [ll(-3000, 0), ll(3000, 0)] });
-  s.rects.push({ s: 50.9, n: 51.1, w: 13.6, e: 13.8, kind: "run" });
+  s._cover(StreetIndex.tilesCovering({ s: 50.9, n: 51.1, w: 13.6, e: 13.8 }), "run");
   const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => ({ area: 1e5, newPct: 100 }), isNew: () => true, streets: s });
   tool.mode = "loop"; tool.a = { getLatLng: () => S0 };
   tool._loopBearings = () => opts.bearings || [0, 60, 120, 180, 240, 300, 30, 90]; // synthetic list (the real one has at most 6); no planner plans here, so the first batch takes 6; the rest is the wave, which also retries the first batch as narrow and fat shapes

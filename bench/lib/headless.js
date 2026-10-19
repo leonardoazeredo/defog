@@ -4,12 +4,15 @@
 const { SuggestTool, StreetIndex, L } = require("./load.js");
 const { overlapFrac } = SuggestTool._internals;
 const cache = require("./fetch-cache.js");
+const { installTileFetch } = require("./tileFetch.js");
 
 function pin(lat, lng) { const ll = L.latLng(lat, lng); return { getLatLng: () => ll }; }
 
 // scenario: { mode, a:[lat,lng], b?, distM?, targetM? (p2p wanted distance), profile, buffer, noStreets? }
 function runSuggest(fogMap, gain, scenario) {
   cache.install();
+  const streets = scenario.noStreets ? null : new StreetIndex({ newFrac: gain.corridorNewFrac });
+  if (streets) installTileFetch(streets);
   return new Promise((resolve, reject) => {
     const t0 = Date.now();
     cache.resetCounters();
@@ -17,7 +20,7 @@ function runSuggest(fogMap, gain, scenario) {
       fogMap,
       computeGain: gain.computeGain,
       isNew: gain.cellIsNew,
-      streets: scenario.noStreets ? null : new StreetIndex({ newFrac: gain.corridorNewFrac }),
+      streets,
       onResults: (s) => {
         if (!s || s.loading) return;
         const c = cache.counters();

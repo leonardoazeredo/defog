@@ -15,7 +15,6 @@
 // can't take are drawn faintly rather than dropped, so a walk-only alley still
 // shows while you're planning a bike ride.
 (function (global) {
-  const TILE_DEG = 0.05;     // download tiles, ~5.5 x 3.5 km at 51°N
   const MAX_TILES = 12;      // bigger views would download too much: ask to zoom in
   const PIECE_M = 20;        // ways are judged in pieces this long
   const DONE_WITHIN_M = 20;  // a piece is done if a defogged cell lies this close (forgives GPS wobble)
@@ -165,15 +164,11 @@
     el.style.display = text ? "" : "none";
   };
 
-  // Fixed-grid tiles touching the current view.
+  // Tiles of the shared street grid touching the current view, as rects.
   StreetsInFogLayer.prototype._visibleTiles = function () {
     const b = this.map.getBounds();
-    const tx0 = Math.floor(b.getWest() / TILE_DEG), tx1 = Math.floor(b.getEast() / TILE_DEG);
-    const ty0 = Math.floor(b.getSouth() / TILE_DEG), ty1 = Math.floor(b.getNorth() / TILE_DEG);
-    const tiles = [];
-    for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++)
-      tiles.push({ s: ty * TILE_DEG, n: (ty + 1) * TILE_DEG, w: tx * TILE_DEG, e: (tx + 1) * TILE_DEG });
-    return tiles;
+    return global.StreetIndex.tilesCovering({ s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast() })
+      .map(global.StreetIndex.tileBounds);
   };
 
   StreetsInFogLayer.prototype._update = async function () {
