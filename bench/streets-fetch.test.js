@@ -110,6 +110,19 @@ const rect = [{ s: 51, w: 13.7, n: 51.01, e: 13.71 }];
     await s.ensureRects(rect, "car");
     assert.deepEqual(kinds, ["run", "car"], "the car fetch is remembered next to the run fetch");
   }
+  { // a rect over one fetched and one new tile asks only for the new one; overlapping rects ask for each tile once
+    const asked = [];
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async (tiles) => { asked.push(tiles.map((t) => t.x + ":" + t.y)); return new Map(tiles.map((t) => [t.x + ":" + t.y, { ways: [], groups: {} }])); } });
+    await s.ensureRects([{ s: 51.01, w: 13.71, n: 51.02, e: 13.72 }], "run");
+    await s.ensureRects([{ s: 51.01, w: 13.71, n: 51.02, e: 13.78 }, { s: 51.01, w: 13.76, n: 51.02, e: 13.89 }], "run");
+    assert.deepEqual(asked, [["274:1020"], ["275:1020", "276:1020", "277:1020"]]);
+  }
+  { // a source that answers some tiles and leaves one out changes nothing: no ways, no version bump, no coverage
+    const full = { ways: [{ id: 1, nodes: [1, 2], geometry: [{ lat: 51.01, lon: 13.71 }, { lat: 51.011, lon: 13.71 }] }], groups: {} };
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async () => new Map([["274:1020", full]]) });
+    await assert.rejects(() => s.ensureRects([{ s: 51.01, w: 13.74, n: 51.02, e: 13.76 }], "run"), /no answer for tile 275:1020 \(run\)/);
+    assert.deepEqual([s.ways.length, s.wayIds.size, s.classified.size, s.tiles.size, s.version], [0, 0, 0, 0, 0]);
+  }
   { // a source that leaves a requested tile out is an error, and nothing is recorded as fetched
     const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async () => new Map() });
     await assert.rejects(() => s.ensureRects(rect, "run"), /no answer/);

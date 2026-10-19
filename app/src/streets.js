@@ -153,9 +153,12 @@
     if (!todo.length) return;
     this._anchor(rects[0].s);
     const answers = await this.fetchStreets(todo, kind);
-    for (const t of todo) {
+    const got = todo.map((t) => {
       const answer = answers.get(t.x + ":" + t.y);
-      if (!answer) throw new Error("street source: no answer for a requested tile");
+      if (!answer) throw new Error(`street source: no answer for tile ${t.x}:${t.y} (${kind})`);
+      return answer;
+    });
+    for (const answer of got) {
       for (const w of answer.ways) { this._addWay(w); this.classified.add(w.id); }
       for (const name of GROUP_ORDER) {
         const into = this.classIds[name] || this[name];
