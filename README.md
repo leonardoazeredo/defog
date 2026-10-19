@@ -47,9 +47,10 @@ Overpass API server (OpenStreetMap): [private.coffee](https://overpass.private.c
 [overpass-api.de](https://overpass-api.de) if it fails; the order is a setting. They only see
 bounding boxes, the same class of information the basemap tile servers already get, and
 the streets are compared against your fog entirely on your device; and **"Maps ↗"** opens
-your waypoints in Google Maps. The street map it fetches is kept in your browser's storage
-(IndexedDB, as plain data, never uploaded and left out of backups) and fetched again after 90 days, so
-planning in an area you have planned in before needs no connection. As with any web map, basemap tiles are fetched from their providers
+your waypoints in Google Maps. The street map it fetches is kept as a street cache in your
+browser's storage (IndexedDB, as plain data, never uploaded and left out of backups) and fetched again
+after 90 days (an older copy is used only while there is no connection), so planning in an area you
+have planned in before needs no connection. As with any web map, basemap tiles are fetched from their providers
 (OpenStreetMap / CyclOSM), which reveals the map area you're viewing to them.
 The site also counts visits with [GoatCounter](https://www.goatcounter.com/), a
 privacy-friendly, cookie-less counter (page views only; no personal data, no tracking
