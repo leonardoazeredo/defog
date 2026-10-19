@@ -24,6 +24,15 @@ export default function AboutScreen() {
         </Text>
       </Section>
 
+      <Section title="Terrain tiles">
+        <Text style={styles.body}>
+          Elevation from the <Text style={styles.bold}>AWS Open Data terrain tiles</Text>
+          (registry.opendata.aws/terrain-tiles), which combine public elevation data. SRTM, 3DEP and
+          GMTED2010 data courtesy of the U.S. Geological Survey. Further national sources are listed
+          in the tiles' attribution notice (github.com/tilezen/joerd, docs/attribution.md).
+        </Text>
+      </Section>
+
       <Section title="Leaflet">
         <Text style={styles.body}>
           Interactive maps powered by <Text style={styles.bold}>Leaflet</Text>.

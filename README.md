@@ -50,7 +50,13 @@ the streets are compared against your fog entirely on your device; and **"Maps â
 your waypoints in Google Maps. The street map it fetches is kept as a street cache in your
 browser's storage (IndexedDB, as plain data, never uploaded and left out of backups) and fetched again
 after 90 days (an older copy is used only while there is no connection), so planning in an area you
-have planned in before needs no connection. As with any web map, basemap tiles are fetched from their providers
+have planned in before needs no connection. **Route elevation** (ascent, descent, the profile) comes
+from the [AWS Open Data terrain tiles](https://registry.opendata.aws/terrain-tiles/), public elevation
+data such as SRTM, fetched from the bucket's own host (`elevation-tiles-prod.s3.amazonaws.com`) one
+zoom-12 map tile at a time (about 50 KB each); the server sees only the tile numbers and your
+connection's address, the same class of information the basemap tile servers get, and the heights are
+read on your device. Those tiles are kept in your browser's storage too (IndexedDB, plain data, never
+uploaded, left out of backups). As with any web map, basemap tiles are fetched from their providers
 (OpenStreetMap / CyclOSM), which reveals the map area you're viewing to them.
 The site also counts visits with [GoatCounter](https://www.goatcounter.com/), a
 privacy-friendly, cookie-less counter (page views only; no personal data, no tracking

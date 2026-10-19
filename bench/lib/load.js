@@ -13,6 +13,7 @@ require(path.join(__dirname, "..", "..", "app", "src", "overpass.js"));
 // bench/cache/ is keyed by request URL and query and holds overpass-api.de answers; asking that
 // instance first keeps the benchmark on the same data as the saved baseline.
 global.Overpass.setOrder(["main", "coffee"]);
+require(path.join(__dirname, "..", "..", "app", "src", "elevation.js"));
 // the street cache sits between the street index and the network; the bench installs its own tile fetch and bypasses it
 require(path.join(__dirname, "..", "..", "app", "src", "tileStore.js"));
 require(path.join(__dirname, "..", "..", "app", "src", "streetCache.js"));
