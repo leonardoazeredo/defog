@@ -95,6 +95,7 @@
     }
 
     async function elevationAt(points) {
+      if (!Array.isArray(points)) return [];
       const out = new Array(points.length).fill(null);
       const byTile = new Map(); // key -> {x, y, items: [{i, px, py}]}
       const n = 2 ** ZOOM;

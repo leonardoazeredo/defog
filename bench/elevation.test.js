@@ -126,6 +126,7 @@ function fakes({ failing = new Set(), delay = false } = {}) {
     const viaNetwork = await Elevation.create({ store: brokenStore, ...f }).elevationAt([lonLatAt(2203, 1371, 30, 30)]);
     assert.equal(typeof viaNetwork[0], "number");
 
+    assert.deepEqual(await Elevation.create({ store: TileStore.memory(), ...f }).elevationAt(undefined), []);
     const before = f.calls.length;
     const odd = await Elevation.create({ store: TileStore.memory(), ...f }).elevationAt([[NaN, 10], [10, 89], [200, 10], [10, -89.9]]);
     assert.deepEqual(odd, [null, null, null, null]);
