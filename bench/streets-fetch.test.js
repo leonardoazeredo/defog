@@ -91,6 +91,8 @@ const rect = [{ s: 51, w: 13.7, n: 51.01, e: 13.71 }];
     assert.deepEqual(StreetIndex.tileOf(13.72, 51.03), { x: 274, y: 1020 });
     assert.deepEqual(StreetIndex.tilesCovering({ s: 51.0, w: 13.7, n: 51.05, e: 13.75 }), [{ x: 274, y: 1020 }]);
     assert.deepEqual(StreetIndex.tilesCovering({ s: 51.03, w: 13.75, n: 51.03, e: 13.75 }), [{ x: 275, y: 1020 }]);
+    assert.deepEqual(StreetIndex.tilesCovering({ s: 51.05, w: 13.72, n: 51.05, e: 13.73 }), [{ x: 274, y: 1021 }], "no height on a south edge");
+    assert.deepEqual(StreetIndex.tilesCovering({ s: -0.03, w: -0.05, n: -0.02, e: -0.05 }), [{ x: -1, y: -1 }], "negative coordinates, no width on a west edge");
     assert.deepEqual(StreetIndex.tilesCovering({ s: 51.03, w: 13.7, n: 51.04, e: 13.8 }), [{ x: 274, y: 1020 }, { x: 275, y: 1020 }]);
     for (const x of [1, 7, 274, 275, -3]) for (const y of [3, 6, 1020, -7]) {
       assert.deepEqual(StreetIndex.tilesCovering(StreetIndex.tileBounds({ x, y })), [{ x, y }], `tile ${x},${y} maps back to itself`);
