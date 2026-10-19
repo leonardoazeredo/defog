@@ -9,7 +9,10 @@ function installTileFetch(streets) {
   const ensureRects = streets.ensureRects.bind(streets);
   let rects = null;
   streets.ensureRects = (r, kind) => { rects = r; return ensureRects(r, kind); };
-  streets.fetchStreets = (tiles, kind) => global.StreetIndex.overpassFetch(tiles, kind, rects);
+  streets.fetchStreets = async (tiles, kind) => {
+    const q = global.StreetIndex.rectQuery(rects, kind);
+    return global.StreetIndex.splitAnswer(await global.Overpass.post("data=" + encodeURIComponent(q)), tiles);
+  };
 }
 
 module.exports = { installTileFetch };

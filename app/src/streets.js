@@ -240,11 +240,14 @@
     return q;
   };
 
-  // The default street source: one Overpass request for all the tiles, the answer split per
-  // tile. `boxes` replaces the tiles' own bounds in the query text (the bench sends the
-  // query text its saved answers were fetched with, see bench/lib/tileFetch.js).
-  StreetIndex.overpassFetch = async function (tiles, kind, boxes) {
-    const gj = await global.Overpass.post("data=" + encodeURIComponent(StreetIndex.rectQuery(boxes || tiles.map(StreetIndex.tileBounds), kind)));
+  // The default street source: one Overpass request for all the tiles, the answer split per tile.
+  StreetIndex.overpassFetch = async function (tiles, kind) {
+    const q = StreetIndex.rectQuery(tiles.map(StreetIndex.tileBounds), kind);
+    return StreetIndex.splitAnswer(await global.Overpass.post("data=" + encodeURIComponent(q)), tiles);
+  };
+
+  // Reads an Overpass answer to a rectQuery and hands each requested tile its share.
+  StreetIndex.splitAnswer = function (gj, tiles) {
     // a timeout or out-of-memory still answers 200, with whatever it had by then
     if (gj.remark) throw new Error("overpass: " + gj.remark);
     const ways = [], groups = {};

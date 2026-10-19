@@ -78,7 +78,7 @@ const rect = [{ s: 51, w: 13.7, n: 51.01, e: 13.71 }];
     assert.equal(s.covered(51.09, 13.79), true);
     assert.equal(s.covered(51.11, 13.79), false, "the tile north of the fetch is not covered");
   }
-  { // a rect over two tiles asks for both in one call, one bbox clause per tile
+  { // a rect over two tiles asks for both in one call, a highway and a service clause with the tile's bbox for each
     replyWith({ elements: [] });
     const s = new StreetIndex({ newFrac: () => 1 });
     await s.ensureRects([{ s: 51.01, w: 13.74, n: 51.02, e: 13.76 }], "run");
@@ -161,8 +161,8 @@ const rect = [{ s: 51, w: 13.7, n: 51.01, e: 13.71 }];
     assert.equal(sha("bike"), "e224471687db756785bbbbdf48a0dc380640bf92");
     assert.equal(sha("car"), "767226bcf1f28f1e3dad58826efd2d04be67bedd");
     replyWith({ elements: [] });
-    await StreetIndex.overpassFetch([{ x: 274, y: 1020 }], "run", boxes);
-    assert.equal(sent, "data=" + StreetIndex.rectQuery(boxes, "run"), "explicit boxes replace the tiles' bounds in the query");
+    await StreetIndex.overpassFetch([{ x: 274, y: 1020 }], "run");
+    assert.equal(sent, "data=" + StreetIndex.rectQuery([StreetIndex.tileBounds({ x: 274, y: 1020 })], "run"), "the default source asks for the tiles' bounds");
   }
   console.log("streets-fetch.test.js ok");
 })();
