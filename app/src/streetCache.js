@@ -24,8 +24,12 @@
         let entry;
         try { entry = await store.get(keyOf(k, tile)); }
         catch (e) { state.storeDown = true; return stale; }
-        if (!entry || !entry.answer || typeof entry.fetchedAt !== "number") continue;
-        if (now() - entry.fetchedAt < maxAgeMs) return { answer: entry.answer, stale: false };
+        // only the top-level shape StreetIndex reads (ways, groups); a stored answer without them would otherwise fail every run in the area
+        const a = entry && entry.answer;
+        if (!a || !Array.isArray(a.ways) || !a.groups || typeof entry.fetchedAt !== "number") continue;
+        // a stamp ahead of now (clock moved back) cannot be trusted as fresh: refetch and overwrite it
+        const age = now() - entry.fetchedAt;
+        if (age >= 0 && age < maxAgeMs) return { answer: a, stale: false };
         stale = stale || { answer: entry.answer, stale: true };
       }
       return stale;

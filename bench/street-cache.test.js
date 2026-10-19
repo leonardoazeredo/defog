@@ -118,5 +118,44 @@ const T = (x, y) => ({ x, y });
     assert.equal(calls.length, 1);
     assert.equal(b.ways.length, a.ways.length);
   }
+  { // one dead store costs one failed read for the whole call, not one per tile
+    const { network } = fakeNetwork();
+    const store = TileStore.memory({ maxEntries: 10 });
+    let gets = 0;
+    store.get = async () => { gets++; throw new Error("idb dead"); };
+    await StreetCache.create({ store, network, now: () => 0 }).fetchStreets([T(1, 1), T(2, 1), T(3, 1)], "run");
+    assert.equal(gets, 1);
+  }
+  { // a network answer missing a tile comes back as it is, and only the tiles it holds are stored
+    const base = fakeNetwork();
+    const network = async (tiles, kind) => { const m = await base.network(tiles, kind); m.delete("2:1"); return m; };
+    const store = TileStore.memory({ maxEntries: 10 });
+    const got = await StreetCache.create({ store, network, now: () => 0 }).fetchStreets([T(1, 1), T(2, 1)], "run");
+    assert.deepEqual([...got.keys()], ["1:1"]);
+    assert.deepEqual(await store.keys(), ["run:1:1"]);
+  }
+  { // the cache is installed on an index that already exists, as main.js does once the store opens
+    const { StreetIndex } = global;
+    const { network, calls } = fakeNetwork();
+    const store = TileStore.memory({ maxEntries: 10 });
+    const warm = StreetCache.create({ store, network, now: () => 0 });
+    await warm.fetchStreets(StreetIndex.tilesCovering({ s: 51, w: 13.7, n: 51.01, e: 13.71 }), "run");
+    const idx = new StreetIndex({ newFrac: () => 1, fetchStreets: network });
+    idx.fetchStreets = warm.fetchStreets;
+    await idx.ensureRects([{ s: 51, w: 13.7, n: 51.01, e: 13.71 }], "run");
+    assert.equal(calls.length, 1, "the swapped-in cache answered");
+  }
+  { // entries of the wrong shape, or stamped in the future, are refetched and overwritten
+    const { network, calls } = fakeNetwork();
+    const store = TileStore.memory({ maxEntries: 10 });
+    await store.put("run:1:1", { answer: { ways: "x", groups: {} }, fetchedAt: 0 });
+    await store.put("run:2:1", { answer: { ways: [], groups: {} }, fetchedAt: 5000 });
+    const c = StreetCache.create({ store, network, now: () => 0 });
+    await c.fetchStreets([T(1, 1), T(2, 1)], "run");
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].tiles.length, 2);
+    assert.deepEqual((await store.get("run:1:1")).answer, answerFor(T(1, 1), "run"));
+    assert.deepEqual((await store.get("run:2:1")).answer, answerFor(T(2, 1), "run"));
+  }
   console.log("street-cache.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });
