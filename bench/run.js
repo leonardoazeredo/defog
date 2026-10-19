@@ -20,6 +20,7 @@ const filter = process.argv[3] || "";
   const gain = makeGain(fogMap, FogParser);
   console.log(`fog tiles: ${fogMap.tileCount}`);
   const all = [];
+  let live = 0; // requests the disk cache did not have
 
   for (const sc of scenarios) {
     if (filter && !sc.name.includes(filter)) continue;
@@ -32,6 +33,7 @@ const filter = process.argv[3] || "";
       all.push({ scenario: sc.name, error: e.message });
       continue;
     }
+    live += out.requests - out.cacheHits;
     const s = out.state;
     if (s.empty || s.error) {
       console.log(`  no results (${s.error ? "error" : s.reason || "empty"})  requests=${out.requests} (${out.cacheHits} cached) ${out.ms}ms`);
@@ -63,4 +65,6 @@ const filter = process.argv[3] || "";
   const file = path.join(outDir, outName + ".json");
   fs.writeFileSync(file, JSON.stringify({ date: new Date().toISOString(), scenarios: all }, null, 1));
   console.log(`\nwrote ${file}`);
+  console.log(`live Overpass requests: ${live}`);
+  if (live) process.exitCode = 1; // a miss is a new or cleared cache, or a changed query text: check StreetIndex.rectQuery before refetching
 })();
