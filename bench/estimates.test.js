@@ -45,7 +45,7 @@ for (const f of files) {
 }
 assert.equal(checked, files.length);
 
-// the 10 m default misses at most one fixture (hyde-park-fastbike: 42 against 46); 5 m fits more local
+// the 10 m default misses at most one fixture (hyde-park-fastbike); 5 m fits more local
 // cache answers within 2 m but has twice the mean error there (estimates-cache.test.js prints both)
 assert.ok(ascentMatches[10] >= files.length - 1, `10 m filter matches ${ascentMatches[10]} of ${files.length}`);
 

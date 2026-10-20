@@ -1,7 +1,7 @@
 // Distance, filtered ascent and travel time for a routed line, ported from BRouter (MIT, see
 // mobile/licenses/brouter-LICENSE.txt): CheapRuler, RoutingEngine.recalcTrack, StdPath.computeKinematic.
-// Arithmetic follows BRouter's int and float steps. Against recorded BRouter answers distance matches to
-// 0.000 % and time is within a few percent; ascent differs by the filter choice noted at DEFAULT_ASCENT_FILTER_M.
+// Arithmetic follows BRouter's int and float steps; bench/estimates.test.js holds the figures against its
+// recorded answers. Ascent differs by the filter choice noted at DEFAULT_ASCENT_FILTER_M.
 (function (global) {
   const SCALE_BUCKET = 100000; // ilat span of one cached cosine series
   const SCALE_BUCKETS = 1800;

@@ -3,7 +3,7 @@
 "use strict";
 
 // BRouter profile -> time tolerance: foot time is held to 2 %, bikes get a wider band for the way
-// speed limits BRouter applies, which are not on the phone (widths set from the local cache run); cars are reported only
+// speed limits BRouter applies, which are not on the phone; cars are reported only
 const TIME_TOLERANCE = { "hiking-mountain": 0.02, shortest: 0.02, trekking: 0.1, fastbike: 0.1, "car-fast": null };
 const DIST_TOLERANCE = 0.003;
 const ASCENT_TOLERANCE_M = 2;

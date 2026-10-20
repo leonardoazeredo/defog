@@ -11,11 +11,12 @@ const { compare, profileOf, hasElevation, TIME_TOLERANCE, DIST_TOLERANCE, ASCENT
 
 const DIR = process.env.CROSSFOG_BROUTER_CACHE || path.join(__dirname, "cache", "brouter");
 if (!fs.existsSync(DIR) || !fs.statSync(DIR).isDirectory()) {
-  console.log("estimates-cache.test.js skipped (no cache)");
+  console.log("estimates-cache.test.js ok (skipped: no cache)");
   process.exit(0);
 }
 
 // each file is {ok, status, body: <GeoJSON>}; the profile is only in the track name
+const MAX_MEAN_ASCENT_ERR_M = 8;
 const worst = {};
 let used = 0;
 let unusable = 0;
@@ -53,12 +54,14 @@ for (const f of fs.readdirSync(DIR).filter((n) => n.endsWith(".json")).sort()) {
 }
 
 if (used === 0) {
-  console.log(`estimates-cache.test.js skipped (no usable answers; ${unusable} without elevation or profile)`);
+  console.log(`estimates-cache.test.js ok (skipped: no usable answers, ${unusable} without elevation or profile)`);
   process.exit(0);
 }
 for (const [profile, w] of Object.entries(worst).sort()) {
   const note = TIME_TOLERANCE[profile] === null ? " (time reported, not asserted)" : "";
   console.log(`${profile.padEnd(16)} n=${String(w.n).padStart(3)}  distance ${w.distPct.toFixed(3)} %  ascent ${w.ascentM} m  time ${w.timePct.toFixed(2)} %${note}`);
 }
+// the between-bounds check above passes a large miss; this catches the model drifting from the 10 m filter BRouter mostly applies
+assert.ok(ascentErrSum / used <= MAX_MEAN_ASCENT_ERR_M, `mean ascent error ${(ascentErrSum / used).toFixed(1)} m`);
 console.log(`${used} answers used, ${unusable} without elevation or a known profile; default 10 m filter within ${ASCENT_TOLERANCE_M} m of BRouter on ${wellMatched}, mean error ${(ascentErrSum / used).toFixed(1)} m; 5 m filter within ${ASCENT_TOLERANCE_M} m on ${loMatched}, mean error ${(loErrSum / used).toFixed(1)} m`);
 console.log("estimates-cache.test.js ok");
