@@ -1,5 +1,5 @@
 // Estimates against every usable BRouter answer in the local bench/cache/brouter/ (gitignored, built
-// from the owner's own areas); skips when it is absent. Prints figures only, never places.
+// from the owner's own areas); skips when it is absent (a missing directory named by CROSSFOG_BROUTER_CACHE fails). Prints figures only, never places.
 //   node bench/estimates-cache.test.js              # or CROSSFOG_BROUTER_CACHE=<dir> to read another directory
 "use strict";
 const assert = require("node:assert/strict");
@@ -11,6 +11,8 @@ const { compare, profileOf, hasElevation, TIME_TOLERANCE, DIST_TOLERANCE, ASCENT
 
 const DIR = process.env.CROSSFOG_BROUTER_CACHE || path.join(__dirname, "cache", "brouter");
 if (!fs.existsSync(DIR) || !fs.statSync(DIR).isDirectory()) {
+  // an explicit path that is wrong is a mistake, not an absent optional cache
+  assert.ok(!process.env.CROSSFOG_BROUTER_CACHE, "CROSSFOG_BROUTER_CACHE is not a directory");
   console.log("estimates-cache.test.js ok (skipped: no cache)");
   process.exit(0);
 }

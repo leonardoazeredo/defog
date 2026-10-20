@@ -125,7 +125,10 @@
   // A travel mode without a model (rail) gets distance and heights but `seconds: null`.
   function estimate(coords, travelMode, elevation, opts) {
     const pts = Array.isArray(coords) ? coords : [];
+    // one NaN would turn every total into NaN, which serialises as null and reads as "no model"
+    if (!pts.every((p) => p && Number.isFinite(p[0]) && Number.isFinite(p[1]))) throw new TypeError("estimate: every point needs a finite lon and lat");
     const heights = fillHeights(pts.length, elevation);
+    const known = pts.reduce((n, _, i) => n + (Number.isFinite(elevation && elevation[i]) ? 1 : 0), 0);
     const filterM = (opts && opts.ascentFilterM) ?? DEFAULT_ASCENT_FILTER_M;
     const links = [];
     let distance = 0;
@@ -134,13 +137,15 @@
       links.push(d);
       distance += d;
     }
-    const mode = MODES[travelMode];
+    const mode = Object.hasOwn(MODES, travelMode) ? MODES[travelMode] : null;
     return {
       coords: pts.map((p, i) => [p[0], p[1], heights[i]]),
       distanceM: distance,
       seconds: mode ? Math.round(travelSeconds(links, heights, mode)) : null,
       ascentM: filteredClimb(heights, filterM),
       descentM: filteredClimb(heights.map((h) => -h), filterM),
+      // callers cannot otherwise tell flat ground from heights that never arrived
+      elevationKnown: known,
     };
   }
 

@@ -7,7 +7,7 @@ const fs = require("fs");
 const path = require("path");
 require("./lib/load.js");
 const { Estimates } = global;
-const { compare, profileOf, hasElevation, TIME_TOLERANCE, DIST_TOLERANCE, ASCENT_TOLERANCE_M } = require("./lib/brouterCheck.js");
+const { compare, profileOf, hasElevation, FIXTURE_TIME_TOLERANCE, FIXTURE_DIST_TOLERANCE, ASCENT_TOLERANCE_M } = require("./lib/brouterCheck.js");
 
 const DIR = path.join(__dirname, "fixtures", "brouter");
 const files = fs.readdirSync(DIR).filter((f) => f.endsWith(".json")).sort();
@@ -24,8 +24,8 @@ for (const f of files) {
   assert.ok(hasElevation(feature), `${f}: elevations in the fixture`);
 
   const r = compare(Estimates, feature, profile);
-  assert.ok(r.distPct <= DIST_TOLERANCE * 100, `${f}: distance ${r.est.distanceM} vs ${r.want.distanceM}`);
-  const tol = TIME_TOLERANCE[profile];
+  assert.ok(r.distPct <= FIXTURE_DIST_TOLERANCE * 100, `${f}: distance ${r.est.distanceM} vs ${r.want.distanceM}`);
+  const tol = FIXTURE_TIME_TOLERANCE[profile];
   assert.ok(r.timePct <= tol * 100, `${f}: time ${r.est.seconds} vs ${r.want.seconds}`);
 
   // BRouter filters with 5 m where its own elevation data is 1 arc second and with 10 m elsewhere,
@@ -63,9 +63,11 @@ assert.ok(ascentMatches[10] >= files.length - 1, `10 m filter matches ${ascentMa
   assert.ok(Number.isFinite(r.seconds) && r.seconds > 0);
   assert.deepEqual(r.coords.map((c) => c[2]), [40, 40, 40, 42], "leading null takes the first known value, later nulls carry forward");
   assert.equal(r.ascentM, 2);
+  assert.equal(r.elevationKnown, 2, "the result says how many heights were real");
   const none = Estimates.estimate(coords, "trekking", [null, null, null, null]);
   assert.deepEqual(none.coords.map((c) => c[2]), [0, 0, 0, 0], "all null is flat at 0");
   assert.equal(none.ascentM, 0);
+  assert.equal(none.elevationKnown, 0);
   assert.equal(none.descentM, 0);
 }
 
@@ -113,6 +115,9 @@ assert.ok(ascentMatches[10] >= files.length - 1, `10 m filter matches ${ascentMa
 
 // degenerate input
 {
+  assert.throws(() => Estimates.estimate([[13.4, 52.5], [NaN, 52.5]], "trekking", [1, 2]), TypeError);
+  assert.throws(() => Estimates.estimate([[13.4, 52.5], null], "trekking", [1, 2]), TypeError);
+  assert.equal(Estimates.estimate([[13.4, 52.5], [13.41, 52.5]], "toString", [1, 2]).seconds, null, "inherited names are not modes");
   const one = Estimates.estimate([[13.4, 52.5]], "trekking", [10]);
   assert.deepEqual([one.distanceM, one.seconds, one.ascentM, one.descentM], [0, 0, 0, 0]);
   assert.deepEqual(Estimates.estimate([], "trekking", []).coords, []);

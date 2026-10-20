@@ -6,6 +6,9 @@
 // speed limits BRouter applies, which are not on the phone; cars are reported only
 const TIME_TOLERANCE = { "hiking-mountain": 0.02, shortest: 0.02, trekking: 0.1, fastbike: 0.1, "car-fast": null };
 const DIST_TOLERANCE = 0.003;
+// the committed fixtures fix the model's constants, so they are held far tighter than the cache
+const FIXTURE_TIME_TOLERANCE = { "hiking-mountain": 0.002, shortest: 0.002, trekking: 0.01, fastbike: 0.01 };
+const FIXTURE_DIST_TOLERANCE = 0.0001;
 const ASCENT_TOLERANCE_M = 2;
 
 // `brouter_<profile>_<alternative>`
@@ -36,4 +39,4 @@ function compare(Estimates, feature, profile, opts) {
   };
 }
 
-module.exports = { compare, profileOf, hasElevation, TIME_TOLERANCE, DIST_TOLERANCE, ASCENT_TOLERANCE_M };
+module.exports = { compare, profileOf, hasElevation, TIME_TOLERANCE, DIST_TOLERANCE, FIXTURE_TIME_TOLERANCE, FIXTURE_DIST_TOLERANCE, ASCENT_TOLERANCE_M };
