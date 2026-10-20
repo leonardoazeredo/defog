@@ -47,6 +47,14 @@ export default function AboutScreen() {
         <LicenseBlock text={licenses.pako} />
       </Section>
 
+      <Section title="BRouter">
+        <Text style={styles.body}>
+          Distance, ascent and time estimates follow the model of{" "}
+          <Text style={styles.bold}>BRouter</Text>.
+        </Text>
+        <LicenseBlock text={licenses.brouter} />
+      </Section>
+
       <Section title="Open-source dependencies">
         <Text style={styles.body}>
           This app is built on {licenses.dependencies.length} open-source packages. A full list with
