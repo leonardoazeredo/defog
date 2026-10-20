@@ -17,7 +17,7 @@ Android only. iOS is paused until the Android phone app and the Wear OS app are 
   - JVM tests (`KeyWrapTest`, no device): `./gradlew :watch-link:testDebugUnitTest`.
   - Instrumented tests (`KeysTest`, real AndroidKeyStore; the AVD `chase-cashew-test` must be running): `./gradlew :watch-link:connectedDebugAndroidTest`. They run in the module's own test APK (its own UID, Keystore and `noBackupFilesDir`), so they never touch the installed app's keys.
   - Neither runs in `pnpm verify`.
-- Kotlin keys: `Keys.databaseKey()` reads `noBackupFilesDir/keys/db.key.v1`; a file without the Keystore alias (or the alias without the file) is `KeyLostException`, which JS sees as `KeyLostError` from `src/platform/watchLinkModule.ts`, the only file meant to import the native module (nothing enforces it).
+- Kotlin keys: `Keys.databaseKey()` reads `noBackupFilesDir/keys/db.key.v1`; a file without the Keystore alias (or the alias without the file) is `KeyLostException`, which JS sees as `KeyLostError` from `src/platform/watchLinkModule.ts`, the only file meant to import the native module (nothing enforces it). `keyState()` "existing" means the file and the alias are both present, not that they unwrap: branch on the `getDatabaseKeyHex` rejection, and treat "fresh" as safe only when no database file exists.
 
 ## Tracked bundle
 

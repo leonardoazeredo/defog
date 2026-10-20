@@ -1,6 +1,6 @@
 package codes.madera.crossfog.watchlink
 
-import java.security.GeneralSecurityException
+import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
@@ -21,7 +21,7 @@ class KeyWrap(private val kek: SecretKey, alias: String) {
   }
 
   fun unwrap(blob: ByteArray): ByteArray {
-    if (blob.size < IV_BYTES + TAG_BYTES) throw GeneralSecurityException("wrapped key is too short")
+    if (blob.size < IV_BYTES + TAG_BYTES) throw AEADBadTagException("wrapped key is too short")
     val cipher = Cipher.getInstance(TRANSFORMATION)
     cipher.init(Cipher.DECRYPT_MODE, kek, GCMParameterSpec(TAG_BYTES * 8, blob, 0, IV_BYTES))
     cipher.updateAAD(aad)

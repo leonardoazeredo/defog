@@ -34,7 +34,10 @@ describe("getDatabaseKeyHex", () => {
     native.getDatabaseKeyHex.mockRejectedValue(
       Object.assign(new Error("x"), { code: "ERR_KEY_LOST" }),
     );
-    await expect(getDatabaseKeyHex()).rejects.toBeInstanceOf(KeyLostError);
+    const err = await getDatabaseKeyHex().catch((e) => e);
+    expect(err).toBeInstanceOf(KeyLostError);
+    expect(err.name).toBe("KeyLostError");
+    expect(err.cause.code).toBe("ERR_KEY_LOST");
   });
 
   it("passes any other native failure through unchanged", async () => {
@@ -48,6 +51,12 @@ describe("keyState", () => {
   it.each(["fresh", "existing", "lost"])("returns %s", async (state) => {
     native.keyState.mockResolvedValue(state);
     await expect(keyState()).resolves.toBe(state);
+  });
+
+  it("passes a native failure through unchanged", async () => {
+    const failure = new Error("keystore busy");
+    native.keyState.mockRejectedValue(failure);
+    await expect(keyState()).rejects.toBe(failure);
   });
 
   it("rejects a state it does not know", async () => {

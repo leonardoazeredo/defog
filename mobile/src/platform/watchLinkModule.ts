@@ -14,7 +14,7 @@ export async function getDatabaseKeyHex(): Promise<string> {
   try {
     hex = await WatchLink.getDatabaseKeyHex();
   } catch (e) {
-    if ((e as { code?: unknown }).code === "ERR_KEY_LOST") {
+    if (e instanceof Error && (e as { code?: unknown }).code === "ERR_KEY_LOST") {
       throw new KeyLostError("database key is lost", { cause: e });
     }
     throw e;

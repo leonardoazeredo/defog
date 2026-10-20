@@ -85,6 +85,26 @@ class KeysTest {
   }
 
   @Test
+  fun anEmptyOrTruncatedFileIsALostKey() {
+    val keys = Keys(context)
+    keys.databaseKey()
+    for (size in listOf(0, 10)) {
+      keys.databaseKeyFile.writeBytes(ByteArray(size))
+      assertThrows("size $size", KeyLostException::class.java) { Keys(context).databaseKey() }
+    }
+  }
+
+  @Test
+  fun twoInstancesRacingOnAFreshInstallAgreeOnTheKey() {
+    val results = java.util.concurrent.ConcurrentLinkedQueue<ByteArray>()
+    val threads = List(4) { Thread { results.add(Keys(context).databaseKey()) } }
+    threads.forEach { it.start() }
+    threads.forEach { it.join() }
+    assertEquals(4, results.size)
+    results.forEach { assertArrayEquals(results.first(), it) }
+  }
+
+  @Test
   fun theStagingKeyIsTheSameAcrossInstances() {
     val first = Keys(context).stagingKey()
     val second = Keys(context).stagingKey()

@@ -14,7 +14,7 @@ class WatchLinkModule : Module() {
 
     AsyncFunction("getDatabaseKeyHex") {
       try {
-        keys.databaseKey().joinToString("") { "%02x".format(it) }
+        keys.databaseKey().toHex()
       } catch (e: KeyLostException) {
         throw CodedException(KEY_LOST, e.message, e)
       }
@@ -27,3 +27,5 @@ class WatchLinkModule : Module() {
     const val KEY_LOST = "ERR_KEY_LOST"
   }
 }
+
+internal fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }

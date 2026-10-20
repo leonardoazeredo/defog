@@ -1,6 +1,8 @@
 package codes.madera.crossfog.watchlink
 
 import java.security.GeneralSecurityException
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -48,5 +50,26 @@ class KeyWrapTest {
   @Test
   fun theBlobIsATwelveByteIvThenCiphertextAndTag() {
     assertEquals(12 + dek.size + 16, KeyWrap(kek, "alias").wrap(dek).size)
+  }
+
+  @Test
+  fun aBlobOneByteUnderIvAndTagFailsOnSizeAndExactlyThatSizeFailsOnTheTag() {
+    val wrap = KeyWrap(kek, "alias")
+    assertThrows(GeneralSecurityException::class.java) { wrap.unwrap(ByteArray(27)) }
+    assertThrows(GeneralSecurityException::class.java) { wrap.unwrap(ByteArray(28)) }
+  }
+
+  @Test
+  fun theBlobLayoutIsIvThenCiphertextUnderTheAlias() {
+    val blob = KeyWrap(kek, "alias").wrap(dek)
+    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+    cipher.init(Cipher.DECRYPT_MODE, kek, GCMParameterSpec(128, blob, 0, 12))
+    cipher.updateAAD("alias".toByteArray(Charsets.UTF_8))
+    assertArrayEquals(dek, cipher.doFinal(blob, 12, blob.size - 12))
+  }
+
+  @Test
+  fun hexKeepsLeadingZerosAndDoesNotSignExtend() {
+    assertEquals("000f7f80ff", byteArrayOf(0x00, 0x0f, 0x7f, 0x80.toByte(), 0xff.toByte()).toHex())
   }
 }
