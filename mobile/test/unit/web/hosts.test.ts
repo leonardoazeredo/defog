@@ -18,6 +18,7 @@ it.skipIf(!!process.env.STRYKER_MUTATOR_WORKER)("finds exactly the reviewed host
     "*.tile-cyclosm.openstreetmap.fr",
     "brouter.de",
     "drive.google.com",
+    "elevation-tiles-prod.s3.amazonaws.com",
     "onedrive.live.com",
     "opendatacommons.org",
     "overpass-api.de",

@@ -9,5 +9,5 @@ it("hashes like the browser", () =>
 
 it("builds the exact policy", () =>
   expect(buildCsp(["'sha256-a'", "'sha256-b'"])).toBe(
-    "default-src 'none'; script-src 'sha256-a' 'sha256-b'; style-src 'unsafe-inline'; img-src data: https://tile.openstreetmap.org https://*.tile-cyclosm.openstreetmap.fr; connect-src https://brouter.de https://overpass.private.coffee https://overpass-api.de; base-uri 'none'; form-action 'none'",
+    "default-src 'none'; script-src 'sha256-a' 'sha256-b'; style-src 'unsafe-inline'; img-src data: https://tile.openstreetmap.org https://*.tile-cyclosm.openstreetmap.fr; connect-src https://brouter.de https://overpass.private.coffee https://overpass-api.de https://elevation-tiles-prod.s3.amazonaws.com; base-uri 'none'; form-action 'none'",
   ));

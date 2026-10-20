@@ -16,6 +16,7 @@ global.Overpass.setOrder(["main", "coffee"]);
 // the street cache sits between the street index and the network; the bench installs its own tile fetch and bypasses it
 require(path.join(__dirname, "..", "..", "app", "src", "tileStore.js"));
 require(path.join(__dirname, "..", "..", "app", "src", "streetCache.js"));
+require(path.join(__dirname, "..", "..", "app", "src", "elevation.js"));
 require(path.join(__dirname, "..", "..", "app", "src", "streets.js"));
 require(path.join(__dirname, "..", "..", "app", "src", "planner.js"));
 require(path.join(__dirname, "..", "..", "app", "src", "router.js"));
