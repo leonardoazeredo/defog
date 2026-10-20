@@ -20,27 +20,28 @@ uploaded anywhere.
   can't take are faded rather than hidden. Pick the highlight colour and strength; works
   zoomed in to about a town at a time, and unlocks a dark basemap where the streets glow.
 - **Live "% defogged"** of the current view in the header.
-- **Route planning** snapped to real roads via [BRouter](https://brouter.de) (bike / road /
-  walk / car / rail): draggable & line-insertable waypoints, a **Reverse** button that
-  re-routes the trip the other way round, distance + elevation profile,
+- **Route planning** snapped to real streets by a router that runs in your browser (bike / road /
+  walk / car): draggable & line-insertable waypoints, a **Reverse** button that
+  re-routes the trip the other way round, distance, time + elevation profile,
   and an estimate of the **new area a route would defog**. Export the route as GPX / KML,
   or open it in Google Maps. km/mi units.
 - **Suggested routes ("surprise me"):** Pick **A → B** and get up
   to three options, routed on the street map in your browser, that maximise defogging within a length budget (fastest
   route + 5/15/30%, your pick), or pick a **start + distance** and get loops that head
   into your foggiest directions. Every option is scored against your actual fog: the cards
-  show distance, defogged area and % new ground (no climb: suggestions have no elevation).
-  Tap **Use** to load one into the editor for tweaking and export; editing a pin then
-  re-routes through BRouter. 
+  show distance, defogged area and % new ground (no climb on the cards). Tap **Use** to load
+  one into the editor for tweaking and export, where its climb and elevation profile appear
+  once the heights arrive; editing a pin then re-routes on the street map.
 
 ## Privacy
 
 Your Fog of World data is parsed and drawn in your browser and is never sent
-to any server. Two features do make outbound requests, and only with the coordinates needed
-for that feature (not your fog data): **drawing a route by hand** (and editing a pin of
-a suggested route, switching its mode or reversing it) sends its waypoints to the public [BRouter](https://brouter.de) server
-to snap them to roads; **route suggestions** are routed entirely on your device and send
-nothing but the bounding box of the **street map around your pins**, and the
+to any server. Some features do make outbound requests, and only with the coordinates needed
+for that feature (not your fog data). No routing service is involved: **drawing a route by hand**
+(and editing a pin of a suggested route, switching its mode or reversing it) and **route
+suggestions** are routed entirely on your device and send nothing but the bounding box of the
+**street map around your pins** (a kilometre beyond them; a hand-drawn route also asks for its
+heights, see **Route elevation** below), and the
 **Streets in fog** look fetches the street map of the **area on screen**, both from a public
 Overpass API server (OpenStreetMap): [private.coffee](https://overpass.private.coffee/) first
 (its terms and privacy policy are on that page), then the main instance
@@ -74,7 +75,8 @@ app/
   index.html        UI (map + sidebar: fog look / plan tabs)
   src/parser.js     Fog of World format → visited cells (+ tile↔lat/lng math)
   src/fogLayer.js   Leaflet GridLayer that paints the fog, with the look/blend/widen options
-  src/route.js      draw-your-own route tool (BRouter snapping, GPX/KML export)
+  src/route.js      draw-your-own route tool (GPX/KML export)
+  src/routeLocal.js routes the tool's pins on the street map, with heights and estimates
   src/suggest.js    suggested routes: candidate generation, defog scoring, loop shaping
   src/unzip.js      minimal ZIP reader so a Fog of World backup .zip loads directly
   src/main.js       wiring: data loading, style controls, route/suggest UI, persistence

@@ -1,11 +1,9 @@
-// Route planning on the map, snapped to real roads/paths via BRouter (free, no key).
+// Route planning on the map, snapped to real streets by the injected routeWaypoints (the on-device router).
 // - click to add a waypoint (endpoint)
 // - drag a waypoint to move it; click a waypoint to remove it
 // - drag the route LINE to insert a new waypoint mid-route and pull it through a point
 // - exports the finished route as a GPX track (with elevation)
 (function (global) {
-  const BROUTER = "https://brouter.de/brouter";
-
   // Bigger, finger-friendly pins on touch screens (easier to grab, drag, and tap-to-remove).
   const COARSE = !!(global.matchMedia && global.matchMedia("(pointer: coarse)").matches);
   const WP_SZ = COARSE ? 26 : 18;
@@ -13,11 +11,15 @@
     return L.divIcon({ className: "", html: '<div class="wp">' + n + "</div>", iconSize: [WP_SZ, WP_SZ], iconAnchor: [WP_SZ / 2, WP_SZ / 2] });
   }
 
+  // a bug in the routing code, not a street problem: the hint says so
+  const INTERNAL = { error: true, why: { reason: "internal" } };
+
   function RouteTool(map, opts) {
     opts = opts || {};
     this.map = map;
     this.profile = opts.profile || "trekking";
     this.onChange = opts.onChange || null;       // stats
+    this.routeWaypoints = opts.routeWaypoints || null; // (pins [{lat,lng}], travelMode) -> Promise<{coords, stats} | {error, why}>
     this.onWaypoints = opts.onWaypoints || null; // waypoint list changed
     this.isNew = opts.isNew || null;         // (lon,lat) -> true if the point is new ground
     this.fogReady = opts.fogReady || null;   // () -> is fog data loaded?
@@ -117,19 +119,27 @@
 
   // Like setWaypoints, but the route is the given geometry as it is (a suggested
   // route handed over from the preview): no routing request until the user edits a pin.
-  RouteTool.prototype.setFixedRoute = function (latlngs, coords) {
+  // stats: {km, seconds, ascent, descent}, as routeWaypoints returns them. Returns a token for
+  // refineFixedRoute.
+  RouteTool.prototype.setFixedRoute = function (latlngs, coords, stats) {
     this.wps.forEach((w) => this.map.removeLayer(w.marker));
     this.wps = latlngs.map((ll, i) => this._makeWp(L.latLng(ll), i));
     this._emitWps();
     ++this._reqId; // a request still in flight must not replace this route
-    let m = 0;
-    for (let i = 1; i < coords.length; i++)
-      m += L.latLng(coords[i - 1][1], coords[i - 1][0]).distanceTo(L.latLng(coords[i][1], coords[i][0]));
-    this._applyRoute(coords, { km: m / 1000, seconds: 0, ascent: null, descent: null });
+    this._applyRoute(coords, stats);
+    return this._reqId;
+  };
+
+  // Swap in better geometry and stats for the route setFixedRoute returned the token for (heights
+  // that arrived late); ignored once the route was edited, replaced or cleared since.
+  RouteTool.prototype.refineFixedRoute = function (token, coords, stats) {
+    if (token !== this._reqId) return false;
+    this._applyRoute(coords, stats);
+    return true;
   };
 
   // Flip the direction of travel. The waypoints are reversed and the route is asked for
-  // again rather than the old geometry being played backwards, so BRouter picks the legs
+  // again rather than the old geometry being played backwards, so the router picks the legs
   // that are right for the new direction (one-ways, and the correct side of a road that
   // carries a separate path each way).
   RouteTool.prototype.reverse = function () {
@@ -142,6 +152,7 @@
   };
 
   RouteTool.prototype.clear = function () {
+    ++this._reqId; // a reply still in flight must not bring the route back
     this.wps.forEach((w) => this.map.removeLayer(w.marker));
     this.wps = [];
     this.routeCoords = [];
@@ -261,6 +272,7 @@
 
   // ----- routing ---------------------------------------------------------------
   RouteTool.prototype._recalc = async function () {
+    const reqId = ++this._reqId; // also for fewer than two pins: a reply in flight must not redraw the old route
     if (this.wps.length < 2) {
       this.routeCoords = [];
       this._clearSegs();
@@ -269,25 +281,27 @@
       this._emit(this.wps.length ? { points: this.wps.length } : null);
       return;
     }
-    const reqId = ++this._reqId;
     this._emit({ points: this.wps.length, loading: true });
-    const lonlats = this.wps.map((w) => w.latlng.lng.toFixed(6) + "," + w.latlng.lat.toFixed(6)).join("|");
-    const url = `${BROUTER}?lonlats=${lonlats}&profile=${encodeURIComponent(this.profile)}&alternativeidx=0&format=geojson`;
-    try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      const gj = await res.json();
-      if (reqId !== this._reqId) return; // superseded
-      const feat = gj.features[0];
-      this._applyRoute(feat.geometry.coordinates, this._stats(feat, feat.geometry.coordinates));
-    } catch (e) {
-      if (reqId !== this._reqId) return;
+    const pins = this.wps.map((w) => ({ lat: w.latlng.lat, lng: w.latlng.lng }));
+    const t0 = performance.now();
+    let res;
+    try { res = this.routeWaypoints ? await this.routeWaypoints(pins, this.profile) : INTERNAL; }
+    catch (e) {
+      // the class only: an error message can carry tile numbers, which locate the route
+      console.error("[route] routeWaypoints threw", e && e.name);
+      res = INTERNAL;
+    }
+    if (reqId !== this._reqId) return; // superseded
+    console.debug("[route]", Math.round(performance.now() - t0) + " ms"); // timing only: positions never reach a log
+    if (!res || res.error) {
       this.routeCoords = this.wps.map((w) => [w.latlng.lng, w.latlng.lat]);
       this._clearSegs();
       this.line.setLatLngs(this.wps.map((w) => w.latlng));
       this.hit.setLatLngs(this.wps.map((w) => w.latlng));
-      this._emit({ points: this.wps.length, error: true });
+      this._emit(Object.assign({ points: this.wps.length, error: true }, res && res.why ? { why: res.why } : null));
+      return;
     }
+    this._applyRoute(res.coords, res.stats);
   };
 
   RouteTool.prototype._applyRoute = function (coords, stats) {
@@ -314,21 +328,6 @@
       w._ri = best;
       from = best; // the next waypoint can only sit further along the path
     }
-  };
-
-  RouteTool.prototype._stats = function (feat, coords) {
-    const p = feat.properties || {};
-    let asc = 0, desc = 0;
-    for (let i = 1; i < coords.length; i++) {
-      const d = (coords[i][2] || 0) - (coords[i - 1][2] || 0);
-      if (d > 0) asc += d; else desc -= d;
-    }
-    return {
-      km: (parseInt(p["track-length"], 10) || 0) / 1000,
-      seconds: parseInt(p["total-time"], 10) || 0,
-      ascent: Math.round(asc),
-      descent: Math.round(desc)
-    };
   };
 
   // ----- export ----------------------------------------------------------------
@@ -393,7 +392,7 @@ ${pts}
   // travelmode: driving | bicycling | walking | transit
   RouteTool.prototype.googleMapsUrl = function () {
     if (this.wps.length < 2) return null;
-    const MODE = { "car-fast": "driving", rail: "transit", "hiking-mountain": "walking" };
+    const MODE = { "car-fast": "driving", "hiking-mountain": "walking" };
     const mode = MODE[this.profile] || (this.profile === "shortest" ? "driving" : "bicycling");
     const pts = this.wps.map((w) => w.latlng.lat.toFixed(6) + "," + w.latlng.lng.toFixed(6));
     const origin = pts.shift(), destination = pts.pop();

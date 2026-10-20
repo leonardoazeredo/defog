@@ -102,15 +102,15 @@ assert.ok(ascentMatches[10] >= files.length - 1, `10 m filter matches ${ascentMa
   assert.ok(upBike > flatBike * 1.5, `uphill ${upBike} vs flat ${flatBike}`);
 }
 
-// car: a constant speed; a mode with no model (rail) still gets distance and heights, no time
+// car: a constant speed; a mode with no model still gets distance and heights, no time
 {
   const coords = [[13.4, 52.5], [13.41, 52.5]];
   const car = Estimates.estimate(coords, "car-fast", [10, 10]);
   assert.ok(Math.abs(car.seconds - car.distanceM / (45 / 3.6)) <= 1);
-  const rail = Estimates.estimate(coords, "rail", [10, 12]);
-  assert.equal(rail.seconds, null);
-  assert.ok(rail.distanceM > 600);
-  assert.equal(rail.ascentM, 2);
+  const unmodelled = Estimates.estimate(coords, "hovercraft", [10, 12]);
+  assert.equal(unmodelled.seconds, null);
+  assert.ok(unmodelled.distanceM > 600);
+  assert.equal(unmodelled.ascentM, 2);
 }
 
 // degenerate input

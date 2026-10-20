@@ -13,15 +13,12 @@ tool._recalc = () => { recalcs++; };
 const pins = [L.latLng(51, 13.7), L.latLng(51, 13.71)];
 const C = [[13.7, 51], [13.705, 51.001], [13.71, 51]];
 
-tool.setFixedRoute(pins, C);
+const stats = { km: 0.7, seconds: 520, ascent: null, descent: null };
+tool.setFixedRoute(pins, C, stats);
 assert.equal(recalcs, 0, "no routing request for the hand-off");
 assert.deepEqual(tool.routeCoords, C);
 assert.equal(tool.wps.length, 2);
-const s = emitted[emitted.length - 1];
-assert.equal(s.points, 2);
-assert.ok(s.km > 0.65 && s.km < 0.8, `km ${s.km}`); // two 330 m legs, from the coordinates
-assert.equal(s.ascent, null);
-assert.equal(s.seconds, 0);
+assert.deepEqual(emitted[emitted.length - 1], { points: 2, ...stats }, "the caller's stats, unchanged");
 assert.equal(tool._reqId, 1, "an in-flight reply must not replace the hand-off");
 
 tool._reqId = 0;

@@ -17,14 +17,14 @@ appId: codes.madera.crossfog
     timeout: 10000
 - tapOn: "Start drawing"
 # Start drawing collapses the panel to free map space; re-expand so the GPX button
-# is in the accessibility tree and tappable once BRouter finishes.
+# is in the accessibility tree and tappable once the route is drawn.
 - tapOn: "Expand or collapse panel"
-# Tap two map points to define the route BRouter will compute.
+# Tap two map points to define the route the page will compute.
 - tapOn:
     point: "25%, 15%"
 - tapOn:
     point: "55%, 25%"
-# BRouter route computation fires an accessibility event when GPX becomes enabled.
+# The street fetch, routing and heights run on the device and fire an accessibility event when GPX becomes enabled.
 - waitForAnimationToEnd:
     timeout: 30000
 - tapOn: "GPX"

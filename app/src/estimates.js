@@ -122,7 +122,7 @@
 
   // coords: [[lon, lat]]; elevation: metres per point, null where unknown.
   // opts.ascentFilterM overrides the default buffer.
-  // A travel mode without a model (rail) gets distance and heights but `seconds: null`.
+  // A travel mode without a model gets distance and heights but `seconds: null`.
   function estimate(coords, travelMode, elevation, opts) {
     const pts = Array.isArray(coords) ? coords : [];
     // one NaN would turn every total into NaN, which serialises as null and reads as "no model"

@@ -15,7 +15,7 @@ function Bounds(a, b) { this.pts = [a, b]; }
 Bounds.prototype.extend = function (p) { this.pts.push(p); return this; };
 
 const noopLayer = () => {
-  const l = { addTo: () => l, setStyle: () => l, setLatLngs: () => l, on: () => l, getElement: () => null };
+  const l = { addTo: () => l, setStyle: () => l, setLatLngs: () => l, setIcon: () => l, on: () => l, getElement: () => null };
   return l;
 };
 

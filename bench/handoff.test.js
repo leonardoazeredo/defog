@@ -11,10 +11,18 @@ const { statsFromCoords, joinPins } = SuggestTool._internals;
   assert.equal(s.descent, undefined);
   assert.ok(s.lenM > 600);
 }
-{ // coordinates with elevation still report it
+{ // coordinates with elevation report the filtered climb: a 20 m drop after a 30 m rise counts 10 m,
+  // because the first 10 m of a drop sit inside the 10 m buffer; the length stays the plain sum
+  const flat = statsFromCoords([[13.7, 51], [13.71, 51], [13.72, 51]]);
   const s = statsFromCoords([[13.7, 51, 100], [13.71, 51, 130], [13.72, 51, 110]]);
   assert.equal(s.ascent, 30);
-  assert.equal(s.descent, 20);
+  assert.equal(s.descent, 10);
+  assert.equal(s.lenM, flat.lenM);
+}
+{ // the first rise counts at once; the dip is held back and the second rise pays it off, so the wobble adds one rise, not two
+  const s = statsFromCoords([[13.7, 51, 100], [13.71, 51, 104], [13.72, 51, 100], [13.73, 51, 104]]);
+  assert.equal(s.ascent, 4);
+  assert.equal(s.descent, 0);
 }
 { // Use hands the editor the pins and the exact geometry, and clears the previews
   const removed = [];

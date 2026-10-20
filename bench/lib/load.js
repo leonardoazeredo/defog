@@ -21,6 +21,7 @@ require(path.join(__dirname, "..", "..", "app", "src", "estimates.js"));
 require(path.join(__dirname, "..", "..", "app", "src", "streets.js"));
 require(path.join(__dirname, "..", "..", "app", "src", "planner.js"));
 require(path.join(__dirname, "..", "..", "app", "src", "router.js"));
+require(path.join(__dirname, "..", "..", "app", "src", "routeLocal.js"));
 require(path.join(__dirname, "..", "..", "app", "src", "suggest.js"));
 
 function loadSync(dir) {

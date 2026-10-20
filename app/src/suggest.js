@@ -146,13 +146,13 @@
   // null when there is no street data, a point is off the network, or no path exists.
   // opts.avoid: Set of graph edge ids to discourage (a leg's `edges`).
   SuggestTool.prototype._route = async function (latlngs, profile, opts) {
-    const planner = this._getPlanner(profile);
+    const planner = this.plannerFor(profile);
     return planner ? new global.LocalRouter(planner).route(latlngs, opts) : null;
   };
 
   // Explained so the error can name the pin or pieces that failed, not just fail.
   SuggestTool.prototype._noRoute = function (latlngs, profile) {
-    const planner = this._getPlanner(profile);
+    const planner = this.plannerFor(profile);
     if (!planner) return { error: true, reason: "no-street-data" };
     const why = new global.LocalRouter(planner).explain(latlngs);
     return { error: true, reason: why.reason || "no-path", why };
@@ -254,6 +254,7 @@
   // Which street classes matter: on foot everything walkable, on wheels not
   // footways/paths (also keeps the bigger bike-range downloads sane), by car also motorways.
   function streetKind(profile) { return profile === "hiking-mountain" ? "run" : profile === "car-fast" ? "car" : "bike"; }
+  SuggestTool.streetKind = streetKind; // route editing fetches the same street class for a mode
 
   // Make sure the streets for the rects are loaded. Resolves false once the run is over:
   // stale, or the error state was emitted because the download failed.
@@ -266,10 +267,10 @@
     return !stale();
   };
 
-  // The street graph for a profile: it plans high-defog loops and walks and is
-  // what routing runs on. One per profile, because each may use different ways;
+  // The street graph for a profile: what planning and routing (suggestions and the route editor)
+  // run on. One per travel class, because each may use different ways;
   // built lazily, rebuilt only when new streets arrive.
-  SuggestTool.prototype._getPlanner = function (profile) {
+  SuggestTool.prototype.plannerFor = function (profile) {
     if (!this.streets || !global.GraphPlanner || !this.streets.ways.length) return null;
     // usableFor and onewayFor depend only on the travel class, so profiles sharing one share the graph
     const key = global.StreetIndex.MODE_CLASS[profile] || "foot";
@@ -436,11 +437,6 @@
   SuggestTool.prototype.suggest = function (profile, o) {
     o = o || {};
     const buffer = o.buffer || DEFAULT_BUFFER;
-    if (profile === "rail") { // the street map holds no rail lines to route on
-      this.clearResults();
-      if (this.onResults) this.onResults({ empty: true, reason: "mode" });
-      return Promise.resolve();
-    }
     if (this.mode === "loop") return this._suggestLoop(profile, o.distM, buffer);
     return this._suggestP2P(profile, buffer, o.targetM);
   };
@@ -579,7 +575,7 @@
     // the ceiling.
     let planned = [];
     if (budget <= 12000) {
-      const planner = this._getPlanner(profile);
+      const planner = this.plannerFor(profile);
       if (planner) {
         const mid = L.latLng((A.lat + B.lat) / 2, (A.lng + B.lng) / 2);
         try {
@@ -823,18 +819,16 @@
   }
 
   // Recompute length (and ascent/descent, where the coordinates carry elevation)
-  // after geometry surgery.
+  // after geometry surgery. The length stays this plain sum because ranking is tuned on it;
+  // the climb is the filtered one the route editor shows (the filter ignores the travel mode; "shortest" only fills the argument).
   function statsFromCoords(coords) {
     const { kx, ky } = metresPerDeg(coords[0][1]);
     const hasZ = coords[0].length > 2;
-    let len = 0, asc = 0, desc = 0;
-    for (let i = 1; i < coords.length; i++) {
+    let len = 0;
+    for (let i = 1; i < coords.length; i++)
       len += Math.hypot((coords[i][0] - coords[i - 1][0]) * kx, (coords[i][1] - coords[i - 1][1]) * ky);
-      if (!hasZ) continue;
-      const d = (coords[i][2] || 0) - (coords[i - 1][2] || 0);
-      if (d > 0) asc += d; else desc -= d;
-    }
-    return { coords, lenM: Math.round(len), ascent: hasZ ? Math.round(asc) : undefined, descent: hasZ ? Math.round(desc) : undefined };
+    const climb = hasZ ? global.Estimates.estimate(coords, "shortest", coords.map((c) => c[2])) : null;
+    return { coords, lenM: Math.round(len), ascent: climb ? climb.ascentM : undefined, descent: climb ? climb.descentM : undefined };
   }
 
   // Editor pins for a routed candidate: its ends plus the street vertices its legs join at.
@@ -926,7 +920,7 @@
     const half = Math.min(distM * 0.45 + 800, 9000);
     const rects = [{ s: c.lat - half / ky, n: c.lat + half / ky, w: c.lng - half / kx, e: c.lng + half / kx }];
     if (!(await this._loadStreets(rects, profile, emit, stale))) return;
-    const planner = this._getPlanner(profile);
+    const planner = this.plannerFor(profile);
     if (!planner) { emit({ error: true, reason: "no-street-data" }); return; }
 
     // Search the street network itself for high-defog loops (thin shapes, odd
