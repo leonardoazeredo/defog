@@ -65,6 +65,18 @@ class KeysTest {
   }
 
   @Test
+  fun aFileWithoutTheKeystoreKeyIsALostKey() {
+    val keys = Keys(context)
+    keys.databaseKey()
+    KeyStore.getInstance("AndroidKeyStore").apply {
+      load(null)
+      deleteEntry(Keys.KEK_ALIAS)
+    }
+    assertEquals(KeyState.LOST, keys.keyState())
+    assertThrows(KeyLostException::class.java) { keys.databaseKey() }
+  }
+
+  @Test
   fun aDamagedFileIsALostKey() {
     val keys = Keys(context)
     keys.databaseKey()
@@ -85,7 +97,7 @@ class KeysTest {
     Keys(context).databaseKeyFile.delete()
     KeyStore.getInstance("AndroidKeyStore").apply {
       load(null)
-      listOf("crossfog.kek.v1", "crossfog.staging.v1").forEach { if (containsAlias(it)) deleteEntry(it) }
+      listOf(Keys.KEK_ALIAS, Keys.STAGING_ALIAS).forEach { if (containsAlias(it)) deleteEntry(it) }
     }
   }
 }

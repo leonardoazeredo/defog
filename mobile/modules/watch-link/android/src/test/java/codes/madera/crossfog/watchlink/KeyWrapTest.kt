@@ -3,6 +3,7 @@ package codes.madera.crossfog.watchlink
 import java.security.GeneralSecurityException
 import javax.crypto.spec.SecretKeySpec
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -46,9 +47,6 @@ class KeyWrapTest {
 
   @Test
   fun theBlobIsATwelveByteIvThenCiphertextAndTag() {
-    assertArrayEquals(
-      intArrayOf(12 + dek.size + 16),
-      intArrayOf(KeyWrap(kek, "alias").wrap(dek).size),
-    )
+    assertEquals(12 + dek.size + 16, KeyWrap(kek, "alias").wrap(dek).size)
   }
 }

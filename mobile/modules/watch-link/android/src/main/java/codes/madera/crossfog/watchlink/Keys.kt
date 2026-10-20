@@ -93,10 +93,10 @@ class Keys(context: Context) {
       .generateKey()
   }
 
-  private companion object {
-    const val PROVIDER = "AndroidKeyStore"
+  internal companion object {
+    private const val PROVIDER = "AndroidKeyStore"
     const val KEK_ALIAS = "crossfog.kek.v1"
     const val STAGING_ALIAS = "crossfog.staging.v1"
-    const val DATABASE_KEY_BYTES = 32
+    private const val DATABASE_KEY_BYTES = 32
   }
 }
