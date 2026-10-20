@@ -4,7 +4,15 @@
 (function (global) {
   const PAD_M = 1000;        // streets are fetched this far around each leg, so a detour past a pin has data
   const KY = 110540;         // metres per degree of latitude, as the planner uses
+  const MAX_LEG_M = 30000;   // as Suggest's A-to-B cap: farther apart needs a street download past what we allow
   const NO_STREETS = { error: true, why: { reason: "no-street-data" } };
+  const TOO_FAR = { error: true, why: { reason: "too-far" } };
+  let warnedHeights = false;
+
+  function legM(a, b) {
+    const kx = 111320 * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180);
+    return Math.hypot((a.lng - b.lng) * kx, (a.lat - b.lat) * KY);
+  }
 
   // The padded rect of one leg: both pins plus PAD_M on every side.
   function legRect(a, b) {
@@ -23,8 +31,15 @@
     // -> {coords, stats: {km, seconds, ascent, descent}} or {error: true, why}
     return async function routeWaypoints(points, travelMode) {
       const rects = [];
-      for (let i = 1; i < points.length; i++) rects.push(legRect(points[i - 1], points[i]));
-      try { await streets.ensureRects(rects, streetKind(travelMode)); } catch (e) { return NO_STREETS; }
+      for (let i = 1; i < points.length; i++) {
+        if (legM(points[i - 1], points[i]) > MAX_LEG_M) return TOO_FAR;
+        rects.push(legRect(points[i - 1], points[i]));
+      }
+      // log the class only: the message of a street source error names the tiles it lacked
+      try { await streets.ensureRects(rects, streetKind(travelMode)); } catch (e) {
+        console.warn("[route] streets unavailable", e && e.name);
+        return NO_STREETS;
+      }
       const planner = plannerFor(travelMode);
       if (!planner) return NO_STREETS;
       const router = new global.LocalRouter(planner);
@@ -33,7 +48,11 @@
 
       // a failed height lookup leaves the line without heights rather than failing the route
       let heights;
-      try { heights = await elevation.elevationAt(route.coords); } catch (e) { heights = []; }
+      try { heights = await elevation.elevationAt(route.coords); } catch (e) {
+        // tile failures are warned inside the elevation source; this is anything else, once
+        if (!warnedHeights) { warnedHeights = true; console.warn("[route] heights unavailable", e && e.name); }
+        heights = [];
+      }
       const est = estimates.estimate(route.coords, travelMode, heights);
       // no height arrived at all: a 2D line and unknown climb, not a profile that claims flat ground
       const known = est.elevationKnown > 0;

@@ -36,11 +36,12 @@ uploaded anywhere.
 ## Privacy
 
 Your Fog of World data is parsed and drawn in your browser and is never sent
-to any server. Two features do make outbound requests, and only with the coordinates needed
+to any server. Some features do make outbound requests, and only with the coordinates needed
 for that feature (not your fog data). No routing service is involved: **drawing a route by hand**
 (and editing a pin of a suggested route, switching its mode or reversing it) and **route
 suggestions** are routed entirely on your device and send nothing but the bounding box of the
-**street map around your pins** (a kilometre beyond them), and the
+**street map around your pins** (a kilometre beyond them; a hand-drawn route also asks for its
+heights, see **Route elevation** below), and the
 **Streets in fog** look fetches the street map of the **area on screen**, both from a public
 Overpass API server (OpenStreetMap): [private.coffee](https://overpass.private.coffee/) first
 (its terms and privacy policy are on that page), then the main instance

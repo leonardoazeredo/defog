@@ -11,6 +11,9 @@
     return L.divIcon({ className: "", html: '<div class="wp">' + n + "</div>", iconSize: [WP_SZ, WP_SZ], iconAnchor: [WP_SZ / 2, WP_SZ / 2] });
   }
 
+  // a bug in the routing code, not a street problem: the hint says so
+  const INTERNAL = { error: true, why: { reason: "internal" } };
+
   function RouteTool(map, opts) {
     opts = opts || {};
     this.map = map;
@@ -282,8 +285,12 @@
     const pins = this.wps.map((w) => ({ lat: w.latlng.lat, lng: w.latlng.lng }));
     const t0 = performance.now();
     let res;
-    try { res = this.routeWaypoints ? await this.routeWaypoints(pins, this.profile) : { error: true }; }
-    catch (e) { res = { error: true }; }
+    try { res = this.routeWaypoints ? await this.routeWaypoints(pins, this.profile) : INTERNAL; }
+    catch (e) {
+      // the class only: an error message can carry tile numbers, which locate the route
+      console.error("[route] routeWaypoints threw", e && e.name);
+      res = INTERNAL;
+    }
     if (reqId !== this._reqId) return; // superseded
     console.debug("[route]", Math.round(performance.now() - t0) + " ms"); // timing only: positions never reach a log
     if (!res || res.error) {
