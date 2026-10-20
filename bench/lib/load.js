@@ -17,6 +17,7 @@ global.Overpass.setOrder(["main", "coffee"]);
 require(path.join(__dirname, "..", "..", "app", "src", "tileStore.js"));
 require(path.join(__dirname, "..", "..", "app", "src", "streetCache.js"));
 require(path.join(__dirname, "..", "..", "app", "src", "elevation.js"));
+require(path.join(__dirname, "..", "..", "app", "src", "estimates.js"));
 require(path.join(__dirname, "..", "..", "app", "src", "streets.js"));
 require(path.join(__dirname, "..", "..", "app", "src", "planner.js"));
 require(path.join(__dirname, "..", "..", "app", "src", "router.js"));

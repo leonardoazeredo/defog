@@ -59,13 +59,23 @@ if (fileURLToPath(import.meta.url) === process.argv[1]) {
     "utf-8",
   ).trim();
   const pakoLicense = readFileSync(resolve(mobileDir, "licenses/pako-LICENSE.txt"), "utf-8").trim();
+  const brouterLicense = readFileSync(
+    resolve(mobileDir, "licenses/brouter-LICENSE.txt"),
+    "utf-8",
+  ).trim();
 
   const pnpmJson = execSync("pnpm licenses list --prod --json", { cwd: mobileDir }).toString();
   const dependencies = parsePnpmLicenses(pnpmJson, (dir) =>
     JSON.parse(readFileSync(resolve(dir, "package.json"), "utf-8")),
   );
 
-  const out = { defog: defogLicense, leaflet: leafletLicense, pako: pakoLicense, dependencies };
+  const out = {
+    defog: defogLicense,
+    leaflet: leafletLicense,
+    pako: pakoLicense,
+    brouter: brouterLicense,
+    dependencies,
+  };
   const dest = resolve(ROOT, "generated/licenses.json");
   writeFileSync(dest, JSON.stringify(out, null, 2));
   console.log(`wrote ${dest} (${dependencies.length} deps)`);
