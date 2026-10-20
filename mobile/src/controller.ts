@@ -1,5 +1,6 @@
 import type { NativeToWeb, WebToNative } from "./bridge/protocol.js";
 import { COPY } from "./copy.js";
+import type { Flows } from "./flows/types.js";
 import type { FileStore } from "./fog/fileStore.js";
 import type { ReloadGuard } from "./fog/reloadGuard.js";
 import type { FogStore, SourceFile } from "./fog/store.js";
@@ -25,6 +26,7 @@ export interface ControllerDeps {
   setBusy(on: boolean): void;
   now(): number;
   chunkBytes: number;
+  flows: Flows;
 }
 
 export interface Controller {
@@ -283,6 +285,26 @@ export function createController(deps: ControllerDeps): Controller {
           break;
         case "openAbout":
           deps.openAbout();
+          break;
+        case "sendRoute":
+          await deps.flows.sendRoute(msg.route);
+          break;
+        case "needTrack":
+          await deps.flows.needTrack(msg.activityId);
+          break;
+        case "deleteActivity":
+          await deps.flows.deleteActivity(msg.activityId);
+          break;
+        case "exportBinary": {
+          const { v: _v, type: _type, ...exportChunk } = msg;
+          await deps.flows.exportBinary(exportChunk);
+          break;
+        }
+        case "backup":
+          await deps.flows.backup();
+          break;
+        case "restore":
+          await deps.flows.restore();
           break;
         case "back:result":
           if (!msg.handled) {

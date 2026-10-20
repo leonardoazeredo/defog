@@ -22,6 +22,7 @@ const config = {
   vitest: { related: false },
   mutate: [
     "src/bridge/{protocol,base64,hex,navigationPolicy,exportFile}.ts",
+    "src/flows/*.ts",
     "src/fog/*.ts",
     "src/import/{incoming,incomingQueue}.ts",
     "src/controller.ts",

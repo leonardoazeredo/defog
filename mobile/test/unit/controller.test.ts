@@ -4,6 +4,8 @@ import type { NativeToWeb, WebToNative } from "../../src/bridge/protocol.js";
 import type { Controller } from "../../src/controller.js";
 import { createController } from "../../src/controller.js";
 import { COPY } from "../../src/copy.js";
+import type { Flows } from "../../src/flows/types.js";
+import { createNoopFlows } from "../../src/flows/types.js";
 import { createReloadGuard } from "../../src/fog/reloadGuard.js";
 import type { SourceFile } from "../../src/fog/store.js";
 import { createFogStore } from "../../src/fog/store.js";
@@ -54,6 +56,7 @@ interface Harness {
   openExternal: ReturnType<typeof vi.fn>;
   openAbout: ReturnType<typeof vi.fn>;
   busy: boolean[];
+  flows: { [K in keyof Flows]: ReturnType<typeof vi.fn> };
 }
 
 function createHarness(): Harness {
@@ -77,6 +80,15 @@ function createHarness(): Harness {
   const openExternal = vi.fn(() => Promise.resolve());
   const openAbout = vi.fn();
   const busy: boolean[] = [];
+  const noop = createNoopFlows();
+  const flows = {
+    sendRoute: vi.fn(noop.sendRoute),
+    needTrack: vi.fn(noop.needTrack),
+    deleteActivity: vi.fn(noop.deleteActivity),
+    exportBinary: vi.fn(noop.exportBinary),
+    backup: vi.fn(noop.backup),
+    restore: vi.fn(noop.restore),
+  };
 
   const c = createController({
     store,
@@ -103,6 +115,7 @@ function createHarness(): Harness {
     now: () => clock.value,
     setBusy: (on) => busy.push(on),
     chunkBytes: 1_048_576,
+    flows,
   });
 
   return {
@@ -123,6 +136,7 @@ function createHarness(): Harness {
     openExternal,
     openAbout,
     busy,
+    flows,
   };
 }
 
@@ -612,4 +626,58 @@ it("stays busy across the hand-over to a share that waited for the import", asyn
   await h.c.onWebMessage(ready);
   await h.c.onWebMessage({ v: 1, type: "loaded", fingerprint: sha(B), ok: true, tiles: 2 });
   expect(h.busy).toEqual([true, false, true]);
+});
+
+const routeId = "6f1c1a52-3f1e-4c55-9d52-0a1d6c2b7e10";
+const activityId = "0b9d8c1e-7a44-4f0b-8f3e-2d5c9a6b1f77";
+const route: Extract<WebToNative, { type: "sendRoute" }>["route"] = {
+  id: routeId,
+  createdAt: "2026-10-01T09:00:00.000Z",
+  mode: "p2p",
+  travelMode: "walk",
+  waypoints: [
+    { lat: 10, lng: 20 },
+    { lat: 10.01, lng: 20.01 },
+  ],
+  coords: [
+    [20, 10],
+    [20.01, 10.01],
+  ],
+  stats: { distanceM: 1000, seconds: 700, ascentM: 3, descentM: 1 },
+  gpx: "<gpx/>",
+};
+const chunk = { exportId: "e1", name: "a.tile", index: 0, total: 2, data: "AAEC" };
+
+it.each<[string, WebToNative, keyof Flows, unknown[]]>([
+  ["sendRoute", { v: 1, type: "sendRoute", route }, "sendRoute", [route]],
+  ["needTrack", { v: 1, type: "needTrack", activityId }, "needTrack", [activityId]],
+  ["deleteActivity", { v: 1, type: "deleteActivity", activityId }, "deleteActivity", [activityId]],
+  ["exportBinary", { v: 1, type: "exportBinary", ...chunk }, "exportBinary", [chunk]],
+  ["backup", { v: 1, type: "backup" }, "backup", []],
+  ["restore", { v: 1, type: "restore" }, "restore", []],
+])("routes %s to its flow once and to no other", async (_, msg, flow, args) => {
+  const h = createHarness();
+  await h.c.start();
+  await h.c.onWebMessage(msg);
+  expect(h.flows[flow]).toHaveBeenCalledExactlyOnceWith(...args);
+  for (const [name, fn] of Object.entries(h.flows)) {
+    if (name !== flow) expect(fn).not.toHaveBeenCalled();
+  }
+  expect(h.sent).toEqual([]);
+});
+
+it("waits for the flow before the next page message is handled", async () => {
+  const h = createHarness();
+  const gate = deferred<void>();
+  h.flows.backup.mockReturnValueOnce(gate.promise);
+  await h.c.start();
+  let done = false;
+  const handled = h.c.onWebMessage({ v: 1, type: "backup" }).then(() => {
+    done = true;
+  });
+  await Promise.resolve();
+  expect(done).toBe(false);
+  gate.resolve();
+  await handled;
+  expect(done).toBe(true);
 });
