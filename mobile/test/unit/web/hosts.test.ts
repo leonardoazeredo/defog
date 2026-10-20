@@ -16,7 +16,6 @@ it.skipIf(!!process.env.STRYKER_MUTATOR_WORKER)("finds exactly the reviewed host
   const found = scanHosts(readAppSources());
   expect(found).toEqual([
     "*.tile-cyclosm.openstreetmap.fr",
-    "brouter.de",
     "drive.google.com",
     "elevation-tiles-prod.s3.amazonaws.com",
     "onedrive.live.com",

@@ -285,8 +285,7 @@
   const drawBtn = $("drawToggle"), statsWrap = $("statsWrap"), routeHint = $("routeHint");
   const reverseBtn = $("reverse");
   const elevEl = $("elev"), elevHead = $("elevHead"), wpListEl = $("wpList"), wpHead = $("wpHead");
-  const ELEV_MODES = new Set(["trekking", "fastbike", "hiking-mountain"]);
-  const MODE_LABEL = { trekking: "bike route", fastbike: "road bike route", "hiking-mountain": "walk", "car-fast": "car route", rail: "rail route", shortest: "direct line" };
+  const MODE_LABEL = { trekking: "bike route", fastbike: "road bike route", "hiking-mountain": "walk", "car-fast": "car route", shortest: "direct line" };
   const IDLE = "Hit Start drawing, then tap the map to drop waypoints. Drag the line to bend it, drag a pin to move it, tap a pin to remove it.";
   let profile = "trekking";
   let units = localStorage.getItem("f2m_units") || "metric";
@@ -392,7 +391,7 @@
 
   function renderElev() {
     const c = route.routeCoords;
-    if (!ELEV_MODES.has(profile) || c.length < 2 || c[0].length < 3) { elevEl.innerHTML = ""; elevHead.style.display = "none"; return; }
+    if (c.length < 2 || c[0].length < 3) { elevEl.innerHTML = ""; elevHead.style.display = "none"; return; }
     const W = 292, H = 78, padT = 8, padB = 15, padX = 4;
     const dists = [0]; let total = 0;
     for (let i = 1; i < c.length; i++) { total += L.latLng(c[i - 1][1], c[i - 1][0]).distanceTo(L.latLng(c[i][1], c[i][0])); dists.push(total); }
@@ -423,15 +422,30 @@
       `</svg>`;
   }
 
+  // Heights come from terrain tiles; the store opens asynchronously, so the source waits for it.
+  const elevationReady = Elevation.open();
+  const elevation = { elevationAt: (points) => elevationReady.then((e) => e.elevationAt(points)) };
+
+  // What a failed local route says; the reasons are LocalRouter.explain's.
+  function routeErrorHint(why) {
+    const reason = why && why.reason, tail = " This is a straight line for now.";
+    return reason === "no-street-data" ? "Couldn't get the street map around here." + tail
+      : reason === "off-network" ? `Pin ${why.point + 1} is more than ${fmtDist(0.6)} from any street this mode can use. Move it closer to a street.` + tail
+      : reason === "one-way" ? "One-way streets block every way between two of the pins for this mode." + tail
+      : reason === "no-path" ? "Two of the pins sit on separate pieces of the street map for this mode. Try another mode or move a pin." + tail
+      : "Couldn't find a route." + tail;
+  }
+
   const route = new RouteTool(map, {
     profile,
+    routeWaypoints: RouteLocal.create({ streets, plannerFor: (p) => suggest.plannerFor(p), elevation, estimates: Estimates, streetKind: SuggestTool.streetKind }),
     isNew: cellIsNew,                       // colour the path: new ground vs already defogged
     fogReady: () => fogMap.tileCount > 0,
     onWaypoints: renderWps,
     onChange: (s) => {
       if (!s) { clearRouteInfo(IDLE); setExports(false); return; }
       if (s.loading) { routeHint.textContent = `Routing ${s.points} waypoints…`; routeHint.style.display = ""; return; }
-      if (s.error) { clearRouteInfo("Couldn't reach the routing server, so this is a straight line for now."); setExports(route.routeCoords.length >= 2); return; }
+      if (s.error) { clearRouteInfo(routeErrorHint(s.why)); setExports(route.routeCoords.length >= 2); return; }
       if (s.km == null) { clearRouteInfo(`${s.points} waypoint${s.points > 1 ? "s" : ""}. Add one more to get a route.`); setExports(false); return; }
       lastStats = s; lastGain = computeGain(route.routeCoords);
       renderStats();
@@ -518,8 +532,6 @@
       sugResults.innerHTML = `<div class="muted" style="margin-top:10px">${
         s.reason === "defogged"
           ? "You've already covered the ground around here. Every route tried runs over defogged territory. Try a different area" + (s.targetKm != null ? " or a longer distance." : " or a bigger buffer.")
-          : s.reason === "mode"
-          ? "Suggestions aren't available for rail: there are no rail lines in the street map. Pick another mode."
           : s.reason === "too-far"
           ? `A and B are more than ${fmtDist(s.maxKm)} apart: the street map between them is too big to download. Try two closer points.`
           : s.reason === "too-long"
@@ -561,9 +573,21 @@
       e.stopPropagation();
       const adopted = suggest.adopt(parseInt(el.dataset.use, 10));
       if (!adopted) return;
-      route.setFixedRoute(adopted.wps, adopted.coords);
+      adoptRoute(adopted);
       setSeg("draw"); // hand over to the editor: tweak pins, see the two-colour path, export
     }));
+  }
+
+  // The editor shows the previewed line at once, with a distance and time but no climb; heights
+  // arrive later and refine it unless the route was edited meanwhile.
+  async function adoptRoute({ wps, coords }) {
+    const flat = Estimates.estimate(coords, profile, []);
+    const token = route.setFixedRoute(wps, coords, { km: flat.distanceM / 1000, seconds: flat.seconds, ascent: null, descent: null });
+    let heights;
+    try { heights = await elevation.elevationAt(coords); } catch (e) { return; }
+    const est = Estimates.estimate(coords, profile, heights);
+    if (!est.elevationKnown) return;
+    route.refineFixedRoute(token, est.coords, { km: est.distanceM / 1000, seconds: est.seconds, ascent: est.ascentM, descent: est.descentM });
   }
 
   function setSeg(which) {
@@ -652,7 +676,7 @@
   $("undo").addEventListener("click", () => route.undo());
   $("clear").addEventListener("click", () => route.clear());
   // Reverse re-routes from the flipped waypoints rather than replaying the line backwards,
-  // so BRouter picks the legs that suit the new direction.
+  // so the router picks the legs that suit the new direction.
   reverseBtn.addEventListener("click", () => route.reverse());
   exportGpxBtn.addEventListener("click", () => route.downloadGPX());
   exportKmlBtn.addEventListener("click", () => route.downloadKML());

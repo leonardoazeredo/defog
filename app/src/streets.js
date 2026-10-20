@@ -32,7 +32,7 @@
   // every ID list a fetch asks for, in the order the answer carries them after the geometry
   const GROUP_ORDER = CLASS_ORDER.concat(["oneWay", "reverseWay", "bikeBoth", "motorway"]);
   // routing profile -> travel class (also read by streetsLayer for its dimming).
-  // Unlisted profiles (hiking-mountain, rail, shortest) use every way.
+  // Unlisted profiles (hiking-mountain, shortest) use every way but motorways.
   const MODE_CLASS = { trekking: "bike", fastbike: "road", "car-fast": "car" };
   const SEG_M = 50;              // ways are chopped into ~50 m scoring segments
   const GRID_M = 250;            // spatial bin size for radius queries
@@ -116,7 +116,7 @@
   StreetIndex.prototype.needsFetch = function (rects, kind) { return this._uncovered(rects, kind).length > 0; };
 
   // Which way a routing profile may travel each way: 1 along its node order only, -1
-  // against it, 0 both. One-ways bind the profiles on wheels, not walking, rail or the
+  // against it, 0 both. One-ways bind the profiles on wheels, not walking or the
   // straight line; bikes are exempt where a contraflow lane is tagged.
   StreetIndex.prototype.onewayFor = function (profile) {
     const cls = MODE_CLASS[profile];

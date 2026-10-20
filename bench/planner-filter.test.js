@@ -49,7 +49,7 @@ streets.classIds.bike = new Set([10]);
   assert.equal(streets.usableFor("car-fast")(12), true, "car");
   assert.equal(streets.usableFor("hiking-mountain")(12), false, "walk");
   assert.equal(streets.usableFor("trekking")(12), false, "bike");
-  assert.equal(streets.usableFor("rail")(12), false, "rail");
+  assert.equal(streets.usableFor("shortest")(12), false, "direct");
 }
 { // distances run in the direction of travel: out along a one-way is finite, back is not
   const ow = { ways: [{ id: 10, nodes: [1, 2], geometry: [{ lat: 51, lon: 13.7 }, { lat: 51, lon: 13.71 }] }] };
