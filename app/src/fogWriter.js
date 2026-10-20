@@ -53,14 +53,18 @@
   function writeSync(fogMap, opts) {
     let deflate = opts && opts.deflate;
     if (!deflate) {
-      if (!global.pakoDeflate) throw new Error("writeSync needs a deflate function or the pako deflate build");
+      if (!global.pakoDeflate || typeof global.pakoDeflate.deflate !== "function") {
+        throw new Error("writeSync needs a deflate function or the pako deflate build (vendor/pako_deflate.min.js, then src/pakoDeflate.js, before pako_inflate.min.js)");
+      }
       deflate = (buf) => global.pakoDeflate.deflate(buf, { level: DEFLATE_LEVEL });
     }
     const files = [];
     let tid = -1, blocks = [];
     const flush = () => {
       if (blocks.length === 0) return;
-      files.push({ name: tileName(tid), bytes: deflate(writeTile(blocks)) });
+      const bytes = deflate(writeTile(blocks));
+      if (!(bytes instanceof Uint8Array) || bytes.length === 0) throw new Error(`deflate returned no bytes for tile ${tid}`);
+      files.push({ name: tileName(tid), bytes });
     };
     // blocks() yields each tile contiguously, so a change of tile id ends a file
     for (const b of fogMap.blocks()) {

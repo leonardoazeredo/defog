@@ -39,7 +39,8 @@ const sameBytes = (a, b) => assert.deepEqual(Array.from(a), Array.from(b));
   assert.equal(map.addCells(pairs([cells[1]])), 0, "a cell the overlay already holds");
   assert.equal(map.totalVisited(), 3);
   assert.ok(map.version > v1, "version moves on every call");
-  assert.equal(map.addCells(pairs([cells[1], cellOf(10, 20, 3, 4, 7, 6)])), 1, "duplicates in one call count once");
+  const d = cellOf(10, 20, 3, 4, 7, 6);
+  assert.equal(map.addCells(pairs([d, d, cells[1]])), 1, "a repeat inside one call counts once");
   assert.equal(map.totalVisited(), 4);
 }
 { // a cell the import already covers is ignored, so the counts add up
@@ -49,6 +50,13 @@ const sameBytes = (a, b) => assert.deepEqual(Array.from(a), Array.from(b));
   assert.equal(map.totalVisited(), 1);
   assert.equal(map.addCells(pairs([inside, other])), 1);
   assert.equal(map.totalVisited(), 2);
+}
+{ // wrong shapes are refused: a NaN coordinate would otherwise land on cell (0, 0) through the bit operations
+  const map = new FogMap();
+  assert.throws(() => map.addCells([5, 6]), TypeError);
+  assert.throws(() => map.addCells(new Float64Array([NaN, NaN])), TypeError);
+  assert.throws(() => map.addCells(Int32Array.from([1, 2, 3])), RangeError);
+  assert.equal(map.totalVisited(), 0);
 }
 { // out-of-world cells are ignored, not counted
   const map = new FogMap();
@@ -145,5 +153,27 @@ const sameBytes = (a, b) => assert.deepEqual(Array.from(a), Array.from(b));
   const v = map.version;
   map.addTile(nameOf(idOf(1, 1)), tileBytes([{ bx: 0, by: 0, cells: [[0, 0]] }]));
   assert.ok(map.version > v);
+}
+{ // an import that lands after overlay cells covers some of them: counted once everywhere, merged into one block
+  const map = new FogMap();
+  const a = cellOf(5, 6, 1, 2, 3, 4), b = cellOf(5, 6, 1, 2, 4, 4), c = cellOf(5, 6, 1, 2, 63, 63);
+  map.addCells(pairs([a, b, c]));
+  assert.equal(map.totalVisited(), 3);
+  const v = map.version;
+  map.addTile(nameOf(idOf(5, 6)), tileBytes([{ bx: 1, by: 2, cells: [[3, 4], [10, 10]], extra: [0x23, 0xc0, 0x05] }]));
+  assert.ok(map.version > v);
+  assert.equal(map.totalVisited(), 4, "the cached total refreshes; a is counted once");
+  const rect = (x0, y0, x1, y1) => map.countVisitedInCellRect(x0, y0, x1, y1);
+  const [bx0, by0] = cellOf(5, 6, 1, 2, 0, 0);
+  assert.equal(rect(0, 0, 4194304, 4194304), 4);
+  assert.equal(rect(bx0, by0, bx0 + 64, by0 + 64), 4, "whole-block rect");
+  assert.equal(rect(a[0], a[1], a[0] + 1, a[1] + 1), 1, "partial rect on the doubly covered cell");
+  assert.equal(rect(a[0], a[1], b[0] + 1, b[1] + 1), 2, "partial rect over a and b");
+  assert.equal(rect(bx0 + 5, by0, bx0 + 64, by0 + 64), 2, "rect starting mid-block drops a and b, keeps c and the imported cell");
+  for (const [cx, cy] of [a, b, c]) assert.equal(map.isVisitedCell(cx, cy), true);
+  const got = Array.from(map.blocks());
+  assert.equal(got.length, 1);
+  sameBytes(got[0].extra, [0x23, 0xc0, 0x05]);
+  assert.equal(got[0].bitmap.reduce((n, v) => n + v.toString(2).replace(/0/g, "").length, 0), 4);
 }
 console.log("fog-map.test.js ok");

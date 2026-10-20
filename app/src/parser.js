@@ -174,6 +174,8 @@
     // cells: Int32Array of [cx, cy] pairs in global cell coords. Returns how many were new: a cell the import or
     // the overlay already covers, or one outside the world, is skipped.
     addCells(cells) {
+      if (Object.prototype.toString.call(cells) !== "[object Int32Array]") throw new TypeError("addCells takes an Int32Array of [cx, cy] pairs");
+      if (cells.length % 2 !== 0) throw new RangeError("addCells takes [cx, cy] pairs, got an odd length");
       let added = 0;
       for (let i = 0; i + 1 < cells.length; i += 2) {
         const cx = cells[i], cy = cells[i + 1];

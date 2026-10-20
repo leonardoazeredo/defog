@@ -55,7 +55,7 @@ for (const [name, id] of FIXTURES) { // a tile Fog of World wrote comes back byt
   sameBytes(out[0].bytes, file, `${name} through writeSync`);
   assert.equal(parseTileId(name), id);
 }
-{ // Node's zlib at level 5 is only reported against the file, not asserted: its bytes differ from Fog of World's
+{ // Node's bundled zlib is a Chromium fork that may not match Fog of World's bytes, so this only reports; the byte-exact check is the pako one above
   for (const [name] of FIXTURES) {
     const file = fs.readFileSync(path.join(FIX, name));
     const bytes = new Uint8Array(zlib.inflateSync(file));
@@ -149,6 +149,9 @@ function cellsOf(files) {
   const [f] = FogWriter.writeSync(map);
   sameBytes(f.bytes, deflate5(FogWriter.writeTile(Array.from(map.blocks()))), "default is pako level 5");
   assert.equal(f.bytes[0], 0x78);
+  assert.throws(() => FogWriter.writeSync(map, { deflate: () => undefined }), /no bytes/);
+  global.pakoDeflate = { inflate: pako.inflate }; // the inflate build parked by mistake
+  assert.throws(() => FogWriter.writeSync(map), /index|order|pako/i);
   delete global.pakoDeflate;
   try { assert.throws(() => FogWriter.writeSync(map), /pako/i); } finally { global.pakoDeflate = pako; }
 }
