@@ -7,6 +7,7 @@ import { openFogCache } from "./fogCache.js";
 import { installImportButtons } from "./importButtons.js";
 import { installLinks } from "./links.js";
 import { assignFilesWithDataTransfer, installOutcomeHooks, loadCopy } from "./loader.js";
+import { installPageApi } from "./pageApi.js";
 import { createSession, createStatusActions } from "./session.js";
 import { createStatus } from "./status.js";
 
@@ -41,6 +42,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (brandName != null) brandName.textContent = "CROSS THE FOG";
 
   installImportButtons(document, send);
+  const pageApi = installPageApi(window, send);
 
   const hooks = installOutcomeHooks(window);
   const cache = await openFogCache(indexedDB, CACHE_ENABLED);
@@ -64,6 +66,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       sidebar.classList.remove("open");
       return true;
     },
+    pageApi,
   });
 
   if (__CROSSFOG_DEV_TOOLS__) {

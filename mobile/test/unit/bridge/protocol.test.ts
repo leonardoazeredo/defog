@@ -5,9 +5,61 @@ import {
   ORIGIN,
   parseNativeToWeb,
   parseWebToNative,
+  type RouteRecord,
 } from "../../../src/bridge/protocol.js";
 
 const fp = "a".repeat(64);
+const routeId = "6f1c1a52-3f1e-4c55-9d52-0a1d6c2b7e10";
+const activityId = "0b9d8c1e-7a44-4f0b-8f3e-2d5c9a6b1f77";
+
+const route: RouteRecord = {
+  id: routeId,
+  createdAt: "2026-10-01T09:00:00.000Z",
+  mode: "loop",
+  travelMode: "walk",
+  targetDistanceM: 5000,
+  waypoints: [
+    { lat: 10, lng: 20 },
+    { lat: 10.01, lng: 20.01 },
+  ],
+  coords: [
+    [20, 10, 5],
+    [20.01, 10.01],
+  ],
+  stats: { distanceM: 5000, seconds: 3600, ascentM: 12, descentM: 10 },
+  gpx: "<gpx/>",
+};
+
+const bareRoute: RouteRecord = {
+  id: routeId,
+  createdAt: "2026-10-01T09:00:00Z",
+  mode: "p2p",
+  travelMode: "bike",
+  waypoints: route.waypoints,
+  coords: [
+    [20, 10],
+    [20.01, 10.01],
+  ],
+  stats: { distanceM: 5000, seconds: null, ascentM: null, descentM: null },
+  gpx: "",
+};
+
+const activity = {
+  id: activityId,
+  travelMode: "walk",
+  startedAt: "2026-10-01T09:00:00.000Z",
+  endedAt: "2026-10-01T10:00:00.000Z",
+  routeId,
+  stats: {
+    durationS: 3600,
+    distanceM: 5000,
+    paceSPerKm: 720,
+    steps: 6500,
+    calories: 300,
+    heartRateAvg: 110,
+    heartRateMax: 140,
+  },
+};
 
 const webSamples = [
   { v: 1 as const, type: "ready" as const },
@@ -62,6 +114,30 @@ const webSamples = [
   { v: 1 as const, type: "openExternal" as const, url: "https://example.com/" },
   { v: 1 as const, type: "openAbout" as const },
   { v: 1 as const, type: "back:result" as const, handled: true },
+  { v: 1 as const, type: "sendRoute" as const, route },
+  { v: 1 as const, type: "sendRoute" as const, route: bareRoute },
+  { v: 1 as const, type: "needTrack" as const, activityId },
+  { v: 1 as const, type: "deleteActivity" as const, activityId },
+  {
+    v: 1 as const,
+    type: "exportBinary" as const,
+    exportId: "fow-1",
+    name: "ab12cd34",
+    index: 0,
+    total: 1,
+    data: "AAEC",
+  },
+  {
+    v: 1 as const,
+    type: "exportBinary" as const,
+    exportId: "fow-1",
+    name: "ab12cd35",
+    index: 2,
+    total: 3,
+    data: "",
+  },
+  { v: 1 as const, type: "backup" as const },
+  { v: 1 as const, type: "restore" as const },
 ];
 
 const nativeSamples = [
@@ -107,6 +183,53 @@ const nativeSamples = [
   },
   { v: 1 as const, type: "notice" as const, text: "hello" },
   { v: 1 as const, type: "back" as const },
+  { v: 1 as const, type: "routeStatus" as const, routeId, state: "waiting" as const },
+  { v: 1 as const, type: "routeStatus" as const, routeId, state: "onWatch" as const },
+  {
+    v: 1 as const,
+    type: "routeStatus" as const,
+    routeId,
+    state: "failed" as const,
+    why: "watch unreachable",
+  },
+  { v: 1 as const, type: "linkStatus" as const, paired: true, reachable: false },
+  { v: 1 as const, type: "activities" as const, items: [] },
+  { v: 1 as const, type: "activities" as const, items: [activity] },
+  {
+    v: 1 as const,
+    type: "activities" as const,
+    items: [
+      {
+        id: activityId,
+        travelMode: "walk",
+        startedAt: activity.startedAt,
+        endedAt: activity.endedAt,
+        stats: { durationS: 60, distanceM: 80 },
+      },
+    ],
+  },
+  {
+    v: 1 as const,
+    type: "track" as const,
+    activityId,
+    index: 0,
+    total: 2,
+    points: [
+      { t: 1_700_000_000_000, lat: 10, lon: 20 },
+      {
+        t: 1_700_000_003_000,
+        lat: 10.0001,
+        lon: 20.0001,
+        accuracy: 5,
+        elevation: -3,
+        speed: 1.4,
+        heartRate: 110,
+        steps: 4,
+        cadence: 100,
+      },
+    ],
+  },
+  { v: 1 as const, type: "track" as const, activityId, index: 1, total: 2, points: [] },
 ];
 
 describe("protocol", () => {
@@ -142,6 +265,123 @@ describe("protocol", () => {
       JSON.stringify({ v: 1, type: "openExternal", url: "intent://scan#Intent;end" }),
     ],
     ["a file: link", JSON.stringify({ v: 1, type: "openExternal", url: "file:///etc/hosts" })],
+    [
+      "a route whose id is not a UUID",
+      JSON.stringify({ v: 1, type: "sendRoute", route: { ...route, id: "route-1" } }),
+    ],
+    [
+      "a route with one waypoint",
+      JSON.stringify({
+        v: 1,
+        type: "sendRoute",
+        route: { ...route, waypoints: [route.waypoints[0]] },
+      }),
+    ],
+    [
+      "a route with one coordinate",
+      JSON.stringify({ v: 1, type: "sendRoute", route: { ...route, coords: [route.coords[0]] } }),
+    ],
+    [
+      "a route with an unknown mode",
+      JSON.stringify({ v: 1, type: "sendRoute", route: { ...route, mode: "circuit" } }),
+    ],
+    [
+      "a route with a latitude off the globe",
+      JSON.stringify({
+        v: 1,
+        type: "sendRoute",
+        route: { ...route, waypoints: [{ lat: 91, lng: 0 }, route.waypoints[1]] },
+      }),
+    ],
+    [
+      "a route with a negative distance",
+      JSON.stringify({
+        v: 1,
+        type: "sendRoute",
+        route: { ...route, stats: { ...route.stats, distanceM: -1 } },
+      }),
+    ],
+    [
+      "a route with an empty travel mode",
+      JSON.stringify({ v: 1, type: "sendRoute", route: { ...route, travelMode: "" } }),
+    ],
+    [
+      "a route without a GPX",
+      JSON.stringify({ v: 1, type: "sendRoute", route: { ...route, gpx: undefined } }),
+    ],
+    ["needTrack without an id", JSON.stringify({ v: 1, type: "needTrack" })],
+    [
+      "needTrack with an id that is not a UUID",
+      JSON.stringify({ v: 1, type: "needTrack", activityId: "7" }),
+    ],
+    [
+      "deleteActivity with an id that is not a UUID",
+      JSON.stringify({ v: 1, type: "deleteActivity", activityId: "7" }),
+    ],
+    [
+      "exportBinary data that is not base64",
+      JSON.stringify({
+        v: 1,
+        type: "exportBinary",
+        exportId: "e",
+        name: "a.tile",
+        index: 0,
+        total: 1,
+        data: "@@",
+      }),
+    ],
+    [
+      "exportBinary with index equal to total",
+      JSON.stringify({
+        v: 1,
+        type: "exportBinary",
+        exportId: "e",
+        name: "a.tile",
+        index: 1,
+        total: 1,
+        data: "",
+      }),
+    ],
+    [
+      "exportBinary with zero total",
+      JSON.stringify({
+        v: 1,
+        type: "exportBinary",
+        exportId: "e",
+        name: "a.tile",
+        index: 0,
+        total: 0,
+        data: "",
+      }),
+    ],
+    [
+      "exportBinary with an empty name",
+      JSON.stringify({
+        v: 1,
+        type: "exportBinary",
+        exportId: "e",
+        name: "",
+        index: 0,
+        total: 1,
+        data: "",
+      }),
+    ],
+    [
+      "exportBinary without an export id",
+      JSON.stringify({ v: 1, type: "exportBinary", name: "a.tile", index: 0, total: 1, data: "" }),
+    ],
+    [
+      "exportBinary over 1 MiB raw",
+      JSON.stringify({
+        v: 1,
+        type: "exportBinary",
+        exportId: "e",
+        name: "a.tile",
+        index: 0,
+        total: 1,
+        data: "A".repeat(1_398_108),
+      }),
+    ],
   ])("drops %s from the page", (_, raw) => expect(parseWebToNative(raw)).toBeNull());
 
   it.each([
@@ -166,6 +406,52 @@ describe("protocol", () => {
     ["a vague date", { v: 1, type: "reloadSuspended", savedAt: "yesterday" }],
     ["an empty notice", { v: 1, type: "notice", text: "" }],
     ["a long notice", { v: 1, type: "notice", text: "x".repeat(501) }],
+    ["a routeStatus with an unknown state", { v: 1, type: "routeStatus", routeId, state: "lost" }],
+    [
+      "a routeStatus whose id is not a UUID",
+      { v: 1, type: "routeStatus", routeId: "r1", state: "waiting" },
+    ],
+    ["a linkStatus without reachable", { v: 1, type: "linkStatus", paired: true }],
+    [
+      "a linkStatus with a string flag",
+      { v: 1, type: "linkStatus", paired: "yes", reachable: true },
+    ],
+    ["activities without items", { v: 1, type: "activities" }],
+    [
+      "an activity whose id is not a UUID",
+      { v: 1, type: "activities", items: [{ ...activity, id: "a1" }] },
+    ],
+    [
+      "an activity without stats",
+      { v: 1, type: "activities", items: [{ ...activity, stats: undefined }] },
+    ],
+    [
+      "a track with index equal to total",
+      { v: 1, type: "track", activityId, index: 2, total: 2, points: [] },
+    ],
+    [
+      "a track with zero total",
+      { v: 1, type: "track", activityId, index: 0, total: 0, points: [] },
+    ],
+    [
+      "a track with more than 2000 points",
+      {
+        v: 1,
+        type: "track",
+        activityId,
+        index: 0,
+        total: 1,
+        points: Array.from({ length: 2001 }, (_, i) => ({ t: i, lat: 0, lon: 0 })),
+      },
+    ],
+    [
+      "a track point without a position",
+      { v: 1, type: "track", activityId, index: 0, total: 1, points: [{ t: 1, lat: 0 }] },
+    ],
+    [
+      "a track point with a longitude off the globe",
+      { v: 1, type: "track", activityId, index: 0, total: 1, points: [{ t: 1, lat: 0, lon: 181 }] },
+    ],
   ])("drops %s from native", (_, msg) => expect(parseNativeToWeb(JSON.stringify(msg))).toBeNull());
 
   it("rejects fingerprints outside exact 64-char hex", () => {
@@ -184,6 +470,28 @@ describe("protocol", () => {
     });
     expect(parseNativeToWeb(noZ)).toBeNull();
     expect(parseNativeToWeb(extra)).toBeNull();
+  });
+
+  it("accepts a track of exactly 2000 points and an export chunk of exactly 1 MiB", () => {
+    const track = {
+      v: 1 as const,
+      type: "track" as const,
+      activityId,
+      index: 0,
+      total: 1,
+      points: Array.from({ length: 2000 }, (_, i) => ({ t: i, lat: 0, lon: 0 })),
+    };
+    const chunk = {
+      v: 1 as const,
+      type: "exportBinary" as const,
+      exportId: "e",
+      name: "a.tile",
+      index: 0,
+      total: 1,
+      data: `${"A".repeat(1_398_102)}==`,
+    };
+    expect(parseNativeToWeb(encode(track))).toEqual(track);
+    expect(parseWebToNative(encode(chunk))).toEqual(chunk);
   });
 
   it("rejects non-http(s) external links", () => {

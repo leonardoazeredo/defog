@@ -12,6 +12,7 @@ import { encode, isTrustedSource, ORIGIN, parseWebToNative } from "./bridge/prot
 import { type Controller, createController } from "./controller.js";
 import { COPY } from "./copy.js";
 import { pickE2eFixture } from "./e2e/fixturePicker.js";
+import { createNoopFlows } from "./flows/types.js";
 import { createReloadGuard } from "./fog/reloadGuard.js";
 import { createFogStore } from "./fog/store.js";
 import { CHUNK_BYTES } from "./fog/transfer.js";
@@ -102,6 +103,7 @@ function buildController(
     setBusy,
     now: Date.now,
     chunkBytes: CHUNK_BYTES,
+    flows: createNoopFlows(),
   });
 }
 

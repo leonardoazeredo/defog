@@ -2,6 +2,7 @@ import type { NativeToWeb, WebToNative } from "../src/bridge/protocol.js";
 import type { Send } from "./bridge.js";
 import type { FogCache } from "./fogCache.js";
 import type { LoadOutcome } from "./loader.js";
+import type { PageApi } from "./pageApi.js";
 import { createReceiver } from "./receive.js";
 import type { Status, StatusActions } from "./status.js";
 
@@ -14,6 +15,7 @@ export interface SessionDeps {
   load(bytes: Uint8Array, name: string): Promise<LoadOutcome>;
   sha256Hex(bytes: Uint8Array): Promise<string>;
   handleBack(): boolean;
+  pageApi: PageApi;
 }
 
 export function createStatusActions(send: Send): StatusActions {
@@ -26,7 +28,7 @@ export function createStatusActions(send: Send): StatusActions {
 }
 
 export function createSession(deps: SessionDeps): { onMessage(msg: NativeToWeb): Promise<void> } {
-  const { send, cache, status, load, sha256Hex, handleBack } = deps;
+  const { send, cache, status, load, sha256Hex, handleBack, pageApi } = deps;
 
   type ActiveCopy = {
     fingerprint: string;
@@ -140,6 +142,13 @@ export function createSession(deps: SessionDeps): { onMessage(msg: NativeToWeb):
 
         case "back":
           send({ v: 1, type: "back:result", handled: handleBack() });
+          break;
+
+        case "routeStatus":
+        case "linkStatus":
+        case "activities":
+        case "track":
+          pageApi.dispatch(msg);
           break;
       }
     },

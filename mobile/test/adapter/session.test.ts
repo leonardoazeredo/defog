@@ -4,6 +4,7 @@ import { encodeBase64 } from "../../src/bridge/base64.js";
 import type { NativeToWeb, WebToNative } from "../../src/bridge/protocol.js";
 import type { FogCache } from "../../web-adapter/fogCache.js";
 import type { LoadOutcome } from "../../web-adapter/loader.js";
+import type { PageApi } from "../../web-adapter/pageApi.js";
 import { createSession, createStatusActions } from "../../web-adapter/session.js";
 import type { Status } from "../../web-adapter/status.js";
 
@@ -54,8 +55,11 @@ let sent: WebToNative[];
 let cache: FogCache;
 let status: Status & { calls: unknown[][] };
 let loadOutcomes: LoadOutcome[];
+let dispatched: NativeToWeb[];
+const pageApi: PageApi = { dispatch: (m) => dispatched.push(m) };
 
 beforeEach(() => {
+  dispatched = [];
   sent = [];
   cache = makeCache();
   status = makeStatus();
@@ -71,6 +75,7 @@ function makeSession(loadOutcomeQueue?: LoadOutcome[]) {
     load: async () => queue.shift() ?? { ok: true, tiles: 2 },
     sha256Hex,
     handleBack: () => true,
+    pageApi,
   });
 }
 
@@ -153,6 +158,7 @@ it("first run: none empties the cache and hides the line", async () => {
     load: async () => ({ ok: true, tiles: 2 }),
     sha256Hex,
     handleBack: () => false,
+    pageApi,
   });
   await sess.onMessage({ v: 1, type: "none" });
   expect(await c.get(fp)).toBeNull();
@@ -321,6 +327,7 @@ it("back reports whether the sheet closed", async () => {
     load: async () => ({ ok: true, tiles: 2 }),
     sha256Hex,
     handleBack: () => true,
+    pageApi,
   });
   await sess.onMessage({ v: 1, type: "back" });
   expect(sent).toContainEqual({ v: 1, type: "back:result", handled: true });
@@ -332,7 +339,39 @@ it("back reports whether the sheet closed", async () => {
     load: async () => ({ ok: true, tiles: 2 }),
     sha256Hex,
     handleBack: () => false,
+    pageApi,
   });
   await sess2.onMessage({ v: 1, type: "back" });
   expect(sent).toContainEqual({ v: 1, type: "back:result", handled: false });
+});
+
+const routeId = "6f1c1a52-3f1e-4c55-9d52-0a1d6c2b7e10";
+const activityId = "0b9d8c1e-7a44-4f0b-8f3e-2d5c9a6b1f77";
+
+it.each<NativeToWeb>([
+  { v: 1, type: "routeStatus", routeId, state: "onWatch" },
+  { v: 1, type: "linkStatus", paired: true, reachable: true },
+  { v: 1, type: "activities", items: [] },
+  { v: 1, type: "track", activityId, index: 0, total: 1, points: [] },
+])("dispatches a native $type message to the page API", async (msg) => {
+  const sess = makeSession();
+  await sess.onMessage(msg);
+  expect(dispatched).toEqual([msg]);
+  expect(sent).toEqual([]);
+  expect(status.calls).toEqual([]);
+});
+
+it("does not dispatch the fog messages to the page API", async () => {
+  const sess = makeSession();
+  await sess.onMessage({ v: 1, type: "notice", text: "Hello!" });
+  await sess.onMessage({ v: 1, type: "none" });
+  expect(dispatched).toEqual([]);
+});
+
+it("ignores a message type it does not know", async () => {
+  const sess = makeSession();
+  await sess.onMessage({ v: 1, type: "mystery" } as unknown as NativeToWeb);
+  expect(dispatched).toEqual([]);
+  expect(sent).toEqual([]);
+  expect(status.calls).toEqual([]);
 });
