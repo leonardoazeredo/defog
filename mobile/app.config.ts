@@ -62,6 +62,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     "expo-sharing",
     "expo-status-bar",
     "expo-router",
+    ["expo-sqlite", { useSQLCipher: true }],
     "./plugins/withExpoSceneDelegate",
     "./plugins/withNoBackup.cjs",
     ["expo-share-intent", { disableIOS: true, androidIntentFilters: shareMime }],

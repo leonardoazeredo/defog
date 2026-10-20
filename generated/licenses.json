@@ -925,6 +925,11 @@
       "license": "MIT"
     },
     {
+      "name": "await-lock",
+      "version": "2.2.2",
+      "license": "MIT"
+    },
+    {
       "name": "babel-plugin-polyfill-corejs2",
       "version": "0.4.17",
       "license": "MIT"
@@ -1362,6 +1367,11 @@
     {
       "name": "expo-sharing",
       "version": "58.0.18",
+      "license": "MIT"
+    },
+    {
+      "name": "expo-sqlite",
+      "version": "58.0.13",
       "license": "MIT"
     },
     {

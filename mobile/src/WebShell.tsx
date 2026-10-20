@@ -18,6 +18,7 @@ import { createFogStore } from "./fog/store.js";
 import { CHUNK_BYTES } from "./fog/transfer.js";
 import { subscribeIncoming } from "./import/incomingQueue.js";
 import { pickBackupFile } from "./import/pick.js";
+import { createDatabase } from "./platform/database.js";
 import { createExpoFileStore } from "./platform/expoFileStore.js";
 import { makeReleaseSource, shareExport } from "./platform/nativeHandlers.js";
 import { sha256Hex } from "./platform/sha256.js";
@@ -123,6 +124,16 @@ export function WebShell(): React.JSX.Element {
   useEffect(() => {
     void controller.start();
   }, [controller]);
+
+  // Opening here runs the migration at startup and surfaces a lost key before any code could create an empty history.
+  useEffect(() => {
+    createDatabase().then(
+      (h) => {
+        if (h.kind === "keyLost") Alert.alert(COPY.historyKeyLost);
+      },
+      () => console.warn("crossfog: history database did not open"),
+    );
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
