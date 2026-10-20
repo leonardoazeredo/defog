@@ -56,7 +56,7 @@ export function installPageApi(win: Window, send: Send, handlers: PageHandlers =
     sendRoute: (route) => send({ v: 1, type: "sendRoute", route }),
     needTrack: (activityId) => send({ v: 1, type: "needTrack", activityId }),
     deleteActivity: (activityId) => send({ v: 1, type: "deleteActivity", activityId }),
-    exportBinary: (chunk) => send({ v: 1, type: "exportBinary", ...chunk }),
+    exportBinary: (chunk) => send({ ...chunk, v: 1, type: "exportBinary" }),
     backup: () => send({ v: 1, type: "backup" }),
     restore: () => send({ v: 1, type: "restore" }),
     on,
@@ -68,10 +68,12 @@ export function installPageApi(win: Window, send: Send, handlers: PageHandlers =
     for (const { fn } of [...listeners[event]]) {
       try {
         (fn as (p: object) => void)(payload);
-      } catch {
+      } catch (err) {
         // A throwing listener must not stop the others or reach the caller of dispatch. Only the event
         // name is logged: the payload carries positions, which must not reach logs.
-        console.error(`crossfog: a ${event} listener threw`);
+        console.error(
+          `crossfog: a ${event} listener threw ${err instanceof Error ? err.name : typeof err}`,
+        );
       }
     }
   }

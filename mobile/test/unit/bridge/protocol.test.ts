@@ -472,6 +472,33 @@ describe("protocol", () => {
     expect(parseNativeToWeb(extra)).toBeNull();
   });
 
+  it.each([
+    ["longitude first, as sent", [120, 10], true],
+    ["latitude first", [10, 120], false],
+    ["a longitude past 180", [181, 0], false],
+    ["a latitude past 90", [0, 91], false],
+  ])("checks route coords as [lon, lat]: %s", (_, pair, ok) => {
+    const raw = JSON.stringify({
+      v: 1,
+      type: "sendRoute",
+      route: { ...route, coords: [pair, [0, 0]] },
+    });
+    expect(parseWebToNative(raw) !== null).toBe(ok);
+  });
+
+  it("rejects an export chunk one character over the cap", () => {
+    const raw = JSON.stringify({
+      v: 1,
+      type: "exportBinary",
+      exportId: "e",
+      name: "a.tile",
+      index: 0,
+      total: 1,
+      data: "A".repeat(1_398_105),
+    });
+    expect(parseWebToNative(raw)).toBeNull();
+  });
+
   it("accepts a track of exactly 2000 points and an export chunk of exactly 1 MiB", () => {
     const track = {
       v: 1 as const,

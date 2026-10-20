@@ -77,6 +77,12 @@ it("posts each call as exactly one message", () => {
   ]);
 });
 
+it("keeps the envelope when a page passes extra keys in an export chunk", () => {
+  const { crossfog } = install();
+  crossfog.exportBinary({ ...chunk, type: "restore", v: 2 } as unknown as ExportChunk);
+  expect(sent).toEqual([{ ...chunk, v: 1, type: "exportBinary" }]);
+});
+
 it("hands a track message to the track listener without the envelope", () => {
   const { api, crossfog } = install();
   const fn = vi.fn();
@@ -126,6 +132,16 @@ it("lets a listener remove itself while a message is dispatched", () => {
   crossfog.on("linkStatus", second);
   api.dispatch({ v: 1, type: "linkStatus", paired: true, reachable: true });
   expect(second).toHaveBeenCalledTimes(1);
+});
+
+it("does not give a message to a listener added while it is dispatched", () => {
+  const { api, crossfog } = install();
+  const late = vi.fn();
+  crossfog.on("linkStatus", () => {
+    crossfog.on("linkStatus", late);
+  });
+  api.dispatch({ v: 1, type: "linkStatus", paired: true, reachable: true });
+  expect(late).not.toHaveBeenCalled();
 });
 
 it("keeps dispatching when one listener throws", () => {
