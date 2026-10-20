@@ -131,7 +131,14 @@ export function WebShell(): React.JSX.Element {
       (h) => {
         if (h.kind === "keyLost") Alert.alert(COPY.historyKeyLost);
       },
-      () => console.warn("crossfog: history database did not open"),
+      (e) => {
+        // Log the error name only: SQLite messages can include file paths, and logs must not carry location data.
+        console.warn(
+          "crossfog: history database did not open",
+          e instanceof Error ? e.name : "unknown",
+        );
+        Alert.alert(COPY.historyOpenFailed);
+      },
     );
   }, []);
 

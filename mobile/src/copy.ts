@@ -11,5 +11,7 @@ export const COPY = {
   clearMessage: "You'll need to import a backup again to see your fog.",
   clear: "Clear",
   cancel: "Cancel",
+  historyOpenFailed:
+    "Your history could not be opened. Restart the app; if it persists, restore a backup.",
   historyKeyLost: "Your history key is gone; restore a backup to get it back",
 } as const;

@@ -76,4 +76,10 @@ describe.each(impls)("route store (%s)", (_name, make) => {
     expect(got?.sentAt).toBeUndefined();
     expect(got?.gpx).toBe("edited");
   });
+
+  it("drops a sentAt that comes in with the route", async () => {
+    const s = await make();
+    await s.save({ ...route(), sentAt: NOW } as ReturnType<typeof route>);
+    expect((await s.get(route().id))?.sentAt).toBeUndefined();
+  });
 });

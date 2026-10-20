@@ -102,4 +102,55 @@ describe("expo sqlite driver", () => {
       }),
     ).rejects.toThrow("boom");
   });
+
+  it("runs overlapping transactions one after the other", async () => {
+    const log: string[][] = [];
+    const db = await createExpoSqliteDriver({
+      name: "x.db",
+      keyHex: KEY,
+      open: async () => fakeDb(log),
+    });
+    const order: string[] = [];
+    const slow = db.transaction(async () => {
+      order.push("a start");
+      await new Promise((r) => setTimeout(r, 10));
+      order.push("a end");
+    });
+    const fast = db.transaction(async () => {
+      order.push("b start");
+    });
+    await Promise.all([slow, fast]);
+    expect(order).toEqual(["a start", "a end", "b start"]);
+  });
+
+  it("keeps running transactions after one fails", async () => {
+    const log: string[][] = [];
+    const db = await createExpoSqliteDriver({
+      name: "x.db",
+      keyHex: KEY,
+      open: async () => fakeDb(log),
+    });
+    await expect(
+      db.transaction(async () => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect(await db.transaction(async () => "next")).toBe("next");
+  });
+
+  it("closes the connection and passes the error on when the key is wrong", async () => {
+    const log: string[][] = [];
+    const wrongKey = async () => {
+      const db = fakeDb(log);
+      db.getAllAsync = async <T>(sql: string) => {
+        if (sql.startsWith("SELECT")) throw new Error("file is not a database");
+        return [{}] as T[];
+      };
+      return db;
+    };
+    await expect(
+      createExpoSqliteDriver({ name: "x.db", keyHex: KEY, open: wrongKey }),
+    ).rejects.toThrow("file is not a database");
+    expect(log[0]?.at(-1)).toBe("close");
+  });
 });

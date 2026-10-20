@@ -56,6 +56,7 @@ export async function createExpoSqliteDriver(opts: ExpoSqliteDriverOptions): Pro
     transaction<T>(fn: (tx: SqlTx) => Promise<T>): Promise<T> {
       const run = async (): Promise<T> => {
         let result: { value: T } | undefined;
+        // The transaction runs on its own connection, so a plain query on the main one can fail with "database is locked" meanwhile.
         await db.withExclusiveTransactionAsync(async (txn) => {
           // The exclusive transaction opens its own connection, which starts unkeyed, so key it before the callback runs.
           await txn.execAsync(keyPragma);

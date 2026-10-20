@@ -33,9 +33,10 @@ export function createActivityStore(db: SqlDriver): ActivityStore {
   return {
     async add(a) {
       const { changes } = await db.run(
-        `INSERT OR IGNORE INTO activities
+        `INSERT INTO activities
            (id, travel_mode, started_at, ended_at, route_id, gpx, track_json, stats_json, received_at, encoder_version)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO NOTHING`,
         [
           a.id,
           a.travelMode,

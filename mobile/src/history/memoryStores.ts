@@ -43,7 +43,9 @@ export function createMemoryRouteStore(deps: { now?: () => Date } = {}): RouteSt
   const byId = new Map<string, StoredRoute>();
   return {
     async save(r) {
-      byId.set(r.id, copy(r));
+      // Only markSent sets sentAt, as in the SQL store.
+      const { sentAt: _sent, ...unsent } = r as StoredRoute;
+      byId.set(r.id, copy(unsent));
     },
     async get(id) {
       const r = byId.get(id);
