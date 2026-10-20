@@ -1,12 +1,12 @@
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import type { SqlDriver, SqlValue } from "../../src/db/driver.js";
+import type { SqlDriver, SqlTx, SqlValue } from "../../src/db/driver.js";
 
 // No SQLCipher here: this driver exercises schema and store logic only; keying is checked on the emulator.
 export function createNodeSqliteDriver(path: string | ":memory:"): SqlDriver {
   const db = new DatabaseSync(path);
   let tail: Promise<unknown> = Promise.resolve();
 
-  const base: Omit<SqlDriver, "transaction" | "close"> = {
+  const base: SqlTx = {
     async exec(sql) {
       db.exec(sql);
     },
@@ -25,7 +25,7 @@ export function createNodeSqliteDriver(path: string | ":memory:"): SqlDriver {
       const run = async () => {
         db.exec("BEGIN IMMEDIATE");
         try {
-          const out = await fn(base as SqlDriver);
+          const out = await fn(base);
           db.exec("COMMIT");
           return out;
         } catch (e) {

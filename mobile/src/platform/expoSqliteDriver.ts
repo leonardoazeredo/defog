@@ -1,4 +1,4 @@
-import type { SqlDriver, SqlValue } from "../db/driver.js";
+import type { SqlDriver, SqlTx, SqlValue } from "../db/driver.js";
 
 /** The slice of expo-sqlite's `SQLiteDatabase` the driver uses; a transaction connection has the same one. */
 export interface ExpoDb {
@@ -20,7 +20,7 @@ async function defaultOpen(name: string): Promise<ExpoDb> {
   return (await openDatabaseAsync(name)) as unknown as ExpoDb;
 }
 
-function wrap(db: ExpoDb): Omit<SqlDriver, "transaction" | "close"> {
+function wrap(db: ExpoDb): SqlTx {
   return {
     exec: (sql) => db.execAsync(sql),
     async run(sql, params = []) {
@@ -53,13 +53,13 @@ export async function createExpoSqliteDriver(opts: ExpoSqliteDriverOptions): Pro
   let tail: Promise<unknown> = Promise.resolve();
   return {
     ...wrap(db),
-    transaction<T>(fn: (tx: SqlDriver) => Promise<T>): Promise<T> {
+    transaction<T>(fn: (tx: SqlTx) => Promise<T>): Promise<T> {
       const run = async (): Promise<T> => {
         let result: { value: T } | undefined;
         await db.withExclusiveTransactionAsync(async (txn) => {
           // The exclusive transaction opens its own connection, which starts unkeyed, so key it before the callback runs.
           await txn.execAsync(keyPragma);
-          result = { value: await fn(wrap(txn) as SqlDriver) };
+          result = { value: await fn(wrap(txn)) };
         });
         if (!result) throw new Error("transaction did not run");
         return result.value;
