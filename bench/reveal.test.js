@@ -210,6 +210,88 @@ for (const [lon, lat] of [[151.2, -33.9], [-74.0, 40.7], [-151.2, -33.9], [0.000
   }
 }
 
+// cells stay on their own edge of the grid at the poles' clamp, in both hemispheres
+{
+  for (const [lat, edge] of [[85.0511, 0], [89, 0], [-85.0511, WORLD_CELLS - 1], [-89, WORLD_CELLS - 1]]) {
+    const out = Reveal.reveal(track([[10, lat], [10 + lonShift(85, 20), lat]]));
+    for (let i = 1; i < out.length; i += 2) assert.ok(Math.abs(out[i] - edge) < 40, `lat ${lat}`);
+  }
+  assert.deepEqual(Reveal.reveal(track([[10, -89]])), Reveal.reveal(track([[10, -85.0511]])));
+}
+
+// the padded box is wide enough away from 48 N, east-west and north-south, against an oracle with a wider box
+{
+  for (const lat of [75, -70, 20]) {
+    const a = [30, lat], ew = [30 + lonShift(lat, 100), lat], ns = [30, lat + latShift(100)];
+    for (const b of [ew, ns]) {
+      const got = toSet(Reveal.reveal(track([a, b], 5000)));
+      assert.deepEqual([...got].sort(), [...oracle(a, b, (a[1] + b[1]) / 2, H, 40)].sort(), `lat ${lat}`);
+    }
+  }
+}
+
+// every rule is read from the rules passed in, not fixed at the defaults
+{
+  const lat = 48, lon0 = 11;
+  const a = [lon0, lat], b = [lon0 + lonShift(lat, 100), lat];
+  for (const h of [5, 20]) {
+    const got = toSet(Reveal.reveal(track([a, b]), { ...Reveal.RULES, halfWidthM: h }));
+    assert.deepEqual([...got].sort(), [...oracle(a, b, lat, h, 8)].sort(), "halfWidthM " + h);
+  }
+  const mid = key(cellOf(lon0 + lonShift(lat, 50), lat));
+  assert.ok(!toSet(Reveal.reveal(track([a, b], 5000), { ...Reveal.RULES, maxGapM: 50 })).has(mid));
+  assert.ok(toSet(Reveal.reveal(track([a, b], 5000), { ...Reveal.RULES, maxGapM: 500 })).has(mid));
+  assert.ok(!toSet(Reveal.reveal(track([a, b], 5000), { ...Reveal.RULES, maxGapS: 2 })).has(mid));
+  assert.ok(toSet(Reveal.reveal(track([a, b], 100000), { ...Reveal.RULES, maxGapS: 200 })).has(mid));
+  const t = track([a, [lon0 + lonShift(lat, 40), lat + latShift(60)], b]);
+  t[1].accuracy = 30;
+  const off = key(cellOf(lon0 + lonShift(lat, 40), lat + latShift(60)));
+  assert.ok(toSet(Reveal.reveal(t, { ...Reveal.RULES, maxAccuracyM: 40 })).has(off));
+  assert.ok(!toSet(Reveal.reveal(t, { ...Reveal.RULES, maxAccuracyM: 20 })).has(off));
+  for (const bad of [{ halfWidthM: Infinity }, { maxGapS: Infinity }, { maxAccuracyM: -1 }, { maxGapM: NaN }]) {
+    assert.throws(() => Reveal.reveal(track([a]), { ...Reveal.RULES, ...bad }));
+  }
+  assert.throws(() => Reveal.reveal(track([a]), { halfWidthM: 5 }));
+}
+
+// a non-finite point between two good ones is dropped and its neighbours still join
+{
+  const lat = 48, lon0 = 11;
+  const mid = key(cellOf(lon0 + lonShift(lat, 40), lat));
+  for (const bad of [{ lat: NaN }, { lon: Infinity }, { t: NaN }]) {
+    const t = track([[lon0, lat], [lon0 + lonShift(lat, 40), lat], [lon0 + lonShift(lat, 80), lat]]);
+    Object.assign(t[1], bad);
+    assert.ok(toSet(Reveal.reveal(t)).has(mid), JSON.stringify(bad));
+  }
+}
+
+// the join distance counts the north-south part, and equal timestamps are not a gap
+{
+  const lat = 48, lon0 = 11;
+  const a = [lon0, lat];
+  const nsMid = key(cellOf(lon0, lat + latShift(75)));
+  assert.ok(!toSet(Reveal.reveal(track([a, [lon0, lat + latShift(151)]]))).has(nsMid));
+  assert.ok(toSet(Reveal.reveal(track([a, [lon0, lat + latShift(149)]]))).has(key(cellOf(lon0, lat + latShift(74)))));
+  // 100 m east and 120 m north is about 156 m
+  const diag = [lon0 + lonShift(lat, 100), lat + latShift(120)];
+  assert.ok(!toSet(Reveal.reveal(track([a, diag]))).has(key(cellOf((a[0] + diag[0]) / 2, lat + latShift(60)))));
+  const same = track([a, [lon0 + lonShift(lat, 100), lat]], 0);
+  assert.ok(toSet(Reveal.reveal(same)).has(key(cellOf(lon0 + lonShift(lat, 50), lat))));
+}
+
+// the seam from the east side: a point just past it reveals cells on both sides
+{
+  const seam = toSet(Reveal.reveal(track([[-179.99995, 0]])));
+  const row = cellOf(-179.99995, 0)[1];
+  assert.ok(seam.has("0," + row));
+  assert.ok(seam.has(WORLD_CELLS - 1 + "," + row), "10.3 m west across the seam");
+  assert.ok(!seam.has(WORLD_CELLS - 2 + "," + row), "19.9 m away");
+  for (const k of seam) { const [x, y] = k.split(",").map(Number); assert.ok(x >= 0 && x < WORLD_CELLS && y >= 0 && y < WORLD_CELLS); }
+  // 90 degrees apart is under the 180 limit, so only the distance limit applies
+  const wide = toSet(Reveal.reveal(track([[0, 0], [90, 0]]), { ...Reveal.RULES, maxGapM: 1e9 }));
+  assert.ok(wide.has(key(cellOf(45, 0))));
+}
+
 // empty and degenerate input
 {
   assert.equal(Reveal.reveal([]).length, 0);
