@@ -4,13 +4,14 @@ export const ORIGIN = "https://crossfog.madera.codes/";
 
 const fingerprint = z.string().regex(/^[0-9a-f]{64}$/);
 const shortName = z.string().min(1).max(255);
-const savedAt = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/);
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/);
 const base64Data = z.string().regex(/^[A-Za-z0-9+/]*={0,2}$/);
 
 const EXPORT_CHUNK_BYTES = 1_048_576;
 const TRACK_CHUNK_POINTS = 2000;
 
 const uuid = z.uuid();
+const travelMode = z.string().min(1).max(32);
 const nonNegative = z.number().min(0);
 const lat = z.number().min(-90).max(90);
 const lon = z.number().min(-180).max(180);
@@ -20,9 +21,9 @@ const lon = z.number().min(-180).max(180);
 // such a route is sent rather than rejected.
 const routeRecord = z.object({
   id: uuid,
-  createdAt: savedAt,
+  createdAt: isoDate,
   mode: z.enum(["loop", "p2p"]),
-  travelMode: z.string().min(1).max(32),
+  travelMode,
   targetDistanceM: nonNegative.optional(),
   waypoints: z.array(z.object({ lat, lng: lon })).min(2),
   coords: z.array(z.tuple([lon, lat, z.number().optional()])).min(2),
@@ -37,9 +38,9 @@ const routeRecord = z.object({
 
 const activitySummary = z.object({
   id: uuid,
-  travelMode: z.string().min(1).max(32),
-  startedAt: savedAt,
-  endedAt: savedAt,
+  travelMode,
+  startedAt: isoDate,
+  endedAt: isoDate,
   routeId: uuid.optional(),
   stats: z.object({
     durationS: nonNegative,
@@ -122,7 +123,7 @@ const nativeToWebSchema = z.union([
     type: z.literal("reload"),
     fingerprint,
     name: shortName,
-    savedAt,
+    savedAt: isoDate,
     size: z.number().int().min(0),
     role: z.enum(["current", "pending"]),
   }),
@@ -137,7 +138,7 @@ const nativeToWebSchema = z.union([
     })
     .refine((c) => c.index < c.total, "index must be less than total"),
   z.object({ v: z.literal(1), type: z.literal("none") }),
-  z.object({ v: z.literal(1), type: z.literal("reloadSuspended"), savedAt }),
+  z.object({ v: z.literal(1), type: z.literal("reloadSuspended"), savedAt: isoDate }),
   z.object({
     v: z.literal(1),
     type: z.literal("notice"),
