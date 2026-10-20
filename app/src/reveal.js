@@ -70,13 +70,13 @@
     let keys = [];
     let flushAt = FLUSH_AT; // doubles past the unique cells so a big track is not re-sorted at every point
     const h = rules.halfWidthM;
+    let joinedBefore = false;
     for (let i = 0; i < pts.length; i++) {
       const a = pts[i], b = pts[i + 1];
-      let joined = false, joinedBefore = false;
-      if (b) joined = joins(a, b, rules);
-      if (i > 0) joinedBefore = joins(pts[i - 1], a, rules);
+      const joined = b !== undefined && joins(a, b, rules);
       if (joined) addSegment(keys, a, b, h);
       else if (!joinedBefore) addSegment(keys, a, a, h);
+      joinedBefore = joined;
       if (keys.length > flushAt) { keys = compact(keys); flushAt = Math.max(FLUSH_AT, keys.length * 2); }
     }
 
