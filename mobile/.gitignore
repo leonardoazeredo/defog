@@ -1,4 +1,6 @@
 /android
+/modules/*/android/build/
+/modules/*/android/.cxx/
 /ios
 generated/
 test/fixtures/out/

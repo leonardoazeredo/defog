@@ -1,0 +1,6 @@
+{
+  "platforms": ["android"],
+  "android": {
+    "modules": ["codes.madera.crossfog.watchlink.WatchLinkModule"]
+  }
+}

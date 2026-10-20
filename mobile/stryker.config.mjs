@@ -26,6 +26,7 @@ const config = {
     "src/fog/*.ts",
     "src/import/{incoming,incomingQueue}.ts",
     "src/controller.ts",
+    "src/platform/watchLinkModule.ts",
     "web-adapter/*.ts",
     "!web-adapter/index.ts",
     "!web-adapter/globals.d.ts",
