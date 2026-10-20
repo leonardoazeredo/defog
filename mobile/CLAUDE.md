@@ -13,6 +13,11 @@ Android only. iOS is paused until the Android phone app and the Wear OS app are 
 - Android builds need JDK 21 (`JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home`), `ANDROID_HOME=$HOME/Library/Android/sdk`, and `--device <AVD name>`, not the adb serial.
 - e2e builds need `CROSSFOG_E2E=1` for the web build, the app config and the prebuild, and a Release configuration. Run Maestro against them with `maestro --device <serial> test .maestro`.
 - Pull requests: `gh pr create --repo leonardoazeredo/defog --base main`.
+- `modules/watch-link` (Kotlin local module; `android/` is prebuild output, so Gradle runs there and finds the module as project `:watch-link`). With the Android env above, in `mobile/android`:
+  - JVM tests (`KeyWrapTest`, no device): `./gradlew :watch-link:testDebugUnitTest`.
+  - Instrumented tests (`KeysTest`, real AndroidKeyStore; the AVD `chase-cashew-test` must be running): `./gradlew :watch-link:connectedDebugAndroidTest`. They run in the module's own test APK (its own UID, Keystore and `noBackupFilesDir`), so they never touch the installed app's keys.
+  - Neither runs in `pnpm verify`.
+- Kotlin keys: `Keys.databaseKey()` reads `noBackupFilesDir/keys/db.key.v1`; a file without the Keystore alias (or the alias without the file) is `KeyLostException`, which JS sees as `KeyLostError` from `src/platform/watchLinkModule.ts`, the only file that imports the native module.
 
 ## Tracked bundle
 
