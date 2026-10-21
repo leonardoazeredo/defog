@@ -19,9 +19,17 @@ it("adds the drop-cache button and the add-activity button", () => {
   ]);
 });
 
+it("sends nothing when the drop-cache button is tapped", () => {
+  const { buttons, send, cache } = setup();
+  buttons.find((b) => b.textContent === "Dev: drop fog cache")?.click();
+  expect(cache.clearAll).toHaveBeenCalledOnce();
+  expect(send).not.toHaveBeenCalled();
+});
+
 it("asks native to add an activity when its button is tapped", () => {
   const { buttons, send, cache } = setup();
-  buttons[1]?.click();
+  const add = buttons.find((b) => b.textContent === "Dev: add activity from GPX");
+  add?.click();
   expect(send).toHaveBeenCalledExactlyOnceWith({ v: 1, type: "devAddActivity" });
   expect(cache.clearAll).not.toHaveBeenCalled();
 });

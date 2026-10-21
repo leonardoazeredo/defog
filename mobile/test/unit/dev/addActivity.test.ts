@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { addActivityFromGpx } from "../../../src/dev/addActivity.js";
 import { createHandOffFlow } from "../../../src/flows/handOff.js";
 import { GpxError, parseGpx } from "../../../src/history/gpx.js";
@@ -9,17 +9,22 @@ import { createFakeWatchLink } from "../../../src/link/fakeWatchLink.js";
 const WALK = readFileSync(new URL("../../fixtures/glancemap-walk.gpx", import.meta.url), "utf-8");
 const ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
-function setup(picked: string | null) {
+function setup(picked: string | null, stageFails = false) {
   const link = createFakeWatchLink();
   const activities = createMemoryActivityStore();
   const handOff = createHandOffFlow({ link, activities, parseGpx, now: () => 0 });
+  const staged: Array<Parameters<typeof link.stage>[0]> = [];
   const deps = {
     pick: async () => picked,
-    stage: async (offer: Parameters<typeof link.stage>[0]) => link.stage(offer),
+    stage: async (offer: Parameters<typeof link.stage>[0]) => {
+      if (stageFails) throw new Error("staging failed");
+      staged.push(offer);
+      link.stage(offer);
+    },
     handOff,
     newId: () => ID,
   };
-  return { link, activities, deps };
+  return { link, activities, deps, staged };
 }
 
 describe("developer add activity", () => {
@@ -53,5 +58,27 @@ describe("developer add activity", () => {
 
     expect(await activities.list()).toEqual([]);
     expect(await link.pendingActivities()).toEqual([]);
+  });
+
+  it("stages a walk offer with the dev encoder version and a fresh id", async () => {
+    const { deps, staged } = setup(WALK);
+
+    await addActivityFromGpx(deps);
+
+    expect(staged).toEqual([
+      { activityId: ID, travelMode: "walk", encoderVersion: "dev", gpx: WALK },
+    ]);
+  });
+
+  it("does not hand off when staging fails", async () => {
+    const { activities, deps } = setup(WALK, true);
+    const run = vi.fn(deps.handOff.run);
+
+    await expect(addActivityFromGpx({ ...deps, handOff: { run } })).rejects.toThrow(
+      "staging failed",
+    );
+
+    expect(run).not.toHaveBeenCalled();
+    expect(await activities.list()).toEqual([]);
   });
 });

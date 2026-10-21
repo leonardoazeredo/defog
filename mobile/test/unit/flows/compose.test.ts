@@ -88,4 +88,12 @@ describe("composed flows", () => {
     expect(await activities.get(A)).not.toBeNull();
     expect(sent).toEqual([expect.objectContaining({ type: "activities" })]);
   });
+
+  it("publishes nothing when a hand-off pass stores nothing", async () => {
+    const { sent, flows } = setup();
+
+    await flows.handOffNow();
+
+    expect(sent).toEqual([]);
+  });
 });

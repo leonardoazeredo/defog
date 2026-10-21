@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { NativeToWeb, WebToNative } from "../../src/bridge/protocol.js";
 import type { Controller } from "../../src/controller.js";
 import { createController } from "../../src/controller.js";
@@ -60,7 +60,7 @@ interface Harness {
   devAddActivity: ReturnType<typeof vi.fn>;
 }
 
-function createHarness(): Harness {
+function createHarness(opts: { devHandler?: boolean } = {}): Harness {
   const fs = createMemoryFileStore({ sources });
   const clock = { value: NOW };
   const store = createFogStore(fs, {
@@ -119,7 +119,7 @@ function createHarness(): Harness {
     setBusy: (on) => busy.push(on),
     chunkBytes: 1_048_576,
     flows,
-    devAddActivity,
+    ...(opts.devHandler === false ? {} : { devAddActivity }),
   });
 
   return {
@@ -706,13 +706,16 @@ it("waits for the flow before the next page message is handled", async () => {
   expect(done).toBe(true);
 });
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 it("runs the developer add-activity action in a debug app", async () => {
   vi.stubGlobal("__DEV__", true);
   const h = createHarness();
   await h.c.start();
   await h.c.onWebMessage({ v: 1, type: "devAddActivity" });
   expect(h.devAddActivity).toHaveBeenCalledOnce();
-  vi.unstubAllGlobals();
 });
 
 it("ignores the developer add-activity message in a release app", async () => {
@@ -722,5 +725,13 @@ it("ignores the developer add-activity message in a release app", async () => {
   await h.c.onWebMessage({ v: 1, type: "devAddActivity" });
   expect(h.devAddActivity).not.toHaveBeenCalled();
   expect(h.sent).toEqual([]);
-  vi.unstubAllGlobals();
+});
+
+it("does nothing for the developer add-activity message in a debug app with no handler wired", async () => {
+  vi.stubGlobal("__DEV__", true);
+  const h = createHarness({ devHandler: false });
+  await h.c.start();
+  await h.c.onWebMessage({ v: 1, type: "devAddActivity" });
+  expect(h.devAddActivity).not.toHaveBeenCalled();
+  expect(h.sent).toEqual([]);
 });
