@@ -1,6 +1,6 @@
-import WatchLink, { type KeyState } from "../../modules/watch-link";
+import WatchLink, { type KeyState, type WatchLinkNativeEvents } from "../../modules/watch-link";
 
-export type { KeyState };
+export type { KeyState, WatchLinkNativeEvents };
 
 /** The native side found no usable database key although one was created before. */
 export class KeyLostError extends Error {
@@ -28,4 +28,35 @@ export async function keyState(): Promise<KeyState> {
   const state = await WatchLink.keyState();
   if (!KEY_STATES.includes(state)) throw new Error("watch link returned an unknown key state");
   return state;
+}
+
+// What follows returns native values unchecked: src/link/watchLink.ts validates them.
+
+export function linkStatus(): Promise<unknown> {
+  return WatchLink.status();
+}
+
+export function pendingActivities(): Promise<unknown> {
+  return WatchLink.pendingActivities();
+}
+
+export function readActivity(id: string): Promise<string> {
+  return WatchLink.readActivity(id);
+}
+
+export function releaseActivity(id: string): Promise<void> {
+  return WatchLink.release(id);
+}
+
+export function queueRoute(routeJson: string): Promise<void> {
+  return WatchLink.queueRoute(routeJson);
+}
+
+/** Returns the function that removes the listener. */
+export function onLinkEvent(
+  event: keyof WatchLinkNativeEvents,
+  fn: (payload: unknown) => void,
+): () => void {
+  const subscription = WatchLink.addListener(event, fn);
+  return () => subscription.remove();
 }

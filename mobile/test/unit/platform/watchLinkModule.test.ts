@@ -1,15 +1,31 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const native = { getDatabaseKeyHex: vi.fn(), keyState: vi.fn() };
+const native = {
+  getDatabaseKeyHex: vi.fn(),
+  keyState: vi.fn(),
+  status: vi.fn(),
+  pendingActivities: vi.fn(),
+  readActivity: vi.fn(),
+  release: vi.fn(),
+  queueRoute: vi.fn(),
+  addListener: vi.fn(),
+};
 vi.mock("../../../modules/watch-link", () => ({ default: native }));
 
-const { getDatabaseKeyHex, keyState, KeyLostError } = await import(
-  "../../../src/platform/watchLinkModule"
-);
+const {
+  getDatabaseKeyHex,
+  keyState,
+  KeyLostError,
+  linkStatus,
+  pendingActivities,
+  readActivity,
+  releaseActivity,
+  queueRoute,
+  onLinkEvent,
+} = await import("../../../src/platform/watchLinkModule");
 
 beforeEach(() => {
-  native.getDatabaseKeyHex.mockReset();
-  native.keyState.mockReset();
+  for (const fn of Object.values(native)) fn.mockReset();
 });
 
 describe("getDatabaseKeyHex", () => {
@@ -62,5 +78,34 @@ describe("keyState", () => {
   it("rejects a state it does not know", async () => {
     native.keyState.mockResolvedValue("maybe");
     await expect(keyState()).rejects.toThrow("unknown key state");
+  });
+});
+
+describe("staging and outbox calls", () => {
+  it("forwards each call to the native function of the same job", async () => {
+    native.status.mockResolvedValue({ paired: false });
+    native.pendingActivities.mockResolvedValue([]);
+    native.readActivity.mockResolvedValue("{}");
+    native.release.mockResolvedValue(undefined);
+    native.queueRoute.mockResolvedValue(undefined);
+    await expect(linkStatus()).resolves.toEqual({ paired: false });
+    await expect(pendingActivities()).resolves.toEqual([]);
+    await expect(readActivity("a")).resolves.toBe("{}");
+    await releaseActivity("a");
+    await queueRoute("{}");
+    expect(native.readActivity).toHaveBeenCalledWith("a");
+    expect(native.release).toHaveBeenCalledWith("a");
+    expect(native.queueRoute).toHaveBeenCalledWith("{}");
+  });
+
+  it("subscribes through addListener and unsubscribes through the subscription", () => {
+    const remove = vi.fn();
+    native.addListener.mockReturnValue({ remove });
+    const fn = vi.fn();
+    const off = onLinkEvent("routeSaved", fn);
+    expect(native.addListener).toHaveBeenCalledWith("routeSaved", fn);
+    expect(remove).not.toHaveBeenCalled();
+    off();
+    expect(remove).toHaveBeenCalledOnce();
   });
 });
