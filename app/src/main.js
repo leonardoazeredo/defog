@@ -691,7 +691,7 @@
   gmapsBtn.addEventListener("click", () => { const u = route.googleMapsUrl(); if (u) window.open(u, "_blank", "noopener"); });
 
   // The phone app's page adapter adds and removes cells revealed by activities, then calls fogChanged() so
-  // everything computed from the fog is recomputed the next time it is needed. The suggestion planners need no reset: they
+  // the fog and its panels update now and the street fractions are recomputed on next use. The suggestion planners need no reset: they
   // stamp their graph with fogMap.version and rebuild on their own.
   function fogChanged() {
     if (fogLayer) fogLayer.redraw();

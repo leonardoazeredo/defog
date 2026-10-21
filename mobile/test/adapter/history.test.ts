@@ -33,7 +33,7 @@ const { FogParser, Reveal } = win;
 const WALKER = "11111111-1111-4111-8111-111111111111";
 const RIDER = "22222222-2222-4222-8222-222222222222";
 
-// Streets are a straight line due east at one latitude; x is metres from the origin.
+// A straight line due east at latitude 51; x is metres east of longitude 13.7.
 const KX = 111320 * Math.cos((51 * Math.PI) / 180);
 const lonAt = (x: number) => 13.7 + x / KX;
 const visitedAt = (fog: UpstreamFogMap, x: number): boolean => {
@@ -90,7 +90,7 @@ function summary(id: string): ActivitySummary {
   };
 }
 
-// Sends a track the way the native side does, in chunks.
+// Sends a track the way the native side does, in chunks; `order` reshuffles delivery to check chunks are joined by index.
 function sendTrack(
   sync: {
     onTrack(c: { activityId: string; index: number; total: number; points: TrackPoint[] }): void;

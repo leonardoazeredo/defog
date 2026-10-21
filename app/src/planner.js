@@ -54,7 +54,7 @@
   Heap.prototype.empty = function () { return this.n.length === 0; };
 
   // newFrac is ~25 cell lookups a call; edges sample every 25 m, so cache by a
-  // ~10 m grid (the fog is static while planning).
+  // ~10 m grid (the fog does not change during one plan; a fog change resets this cache at the next build()).
   function fracCache(newFrac) {
     const cache = new Map();
     return (lon, lat) => {

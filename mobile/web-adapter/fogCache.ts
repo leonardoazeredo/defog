@@ -123,7 +123,7 @@ export async function openFogCache(
           const tx = db.transaction(REVEALS, "readonly");
           const req = tx.objectStore(REVEALS).get(activityId);
           req.onsuccess = () => {
-            const raw = req.result as { rulesVersion: number; cells: ArrayBuffer } | undefined;
+            const raw = req.result as CachedReveal | undefined;
             resolve(raw == null ? null : { rulesVersion: raw.rulesVersion, cells: raw.cells });
           };
           req.onerror = () => resolve(null);

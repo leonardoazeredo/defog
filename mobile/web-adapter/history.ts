@@ -32,6 +32,13 @@ declare global {
   }
 }
 
+interface TrackChunk {
+  activityId: string;
+  index: number;
+  total: number;
+  points: TrackPoint[];
+}
+
 export interface HistorySyncDeps {
   pageApi: { needTrack(activityId: string): void };
   cache: FogCache;
@@ -41,7 +48,7 @@ export interface HistorySyncDeps {
 
 export interface HistorySync {
   onActivities(payload: { items: ActivitySummary[] }): void;
-  onTrack(chunk: { activityId: string; index: number; total: number; points: TrackPoint[] }): void;
+  onTrack(chunk: TrackChunk): void;
   /** Resolves when everything received so far has been applied; for tests. */
   settled(): Promise<void>;
 }
@@ -124,12 +131,7 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
     }
   }
 
-  async function applyTrack(chunk: {
-    activityId: string;
-    index: number;
-    total: number;
-    points: TrackPoint[];
-  }): Promise<void> {
+  async function applyTrack(chunk: TrackChunk): Promise<void> {
     const { activityId, index, total, points } = chunk;
     if (!requested.has(activityId)) return;
 
