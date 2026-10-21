@@ -86,9 +86,17 @@ class StagingStoreTest {
   @Test
   fun theDirectoryIsSyncedAfterTheRenameAndBeforeStageReturns() {
     val seen = mutableListOf<Boolean>()
-    val s = store(syncDir = { seen += File(it, "$a.bin").exists() })
+    val s = store(syncDir = { if (it.name == "staging") seen += File(it, "$a.bin").exists() })
     s.stage(a, byteArrayOf(1))
     assertEquals(listOf(true), seen)
+  }
+
+  @Test
+  fun aNewDirectoryIsSyncedIntoItsParentBeforeTheFirstItemExists() {
+    val synced = mutableListOf<String>()
+    store(syncDir = { synced += it.name }).stage(a, byteArrayOf(1))
+    store(syncDir = { synced += it.name }).stage(b, byteArrayOf(1))
+    assertEquals(listOf(tmp.root.name, "staging", "staging"), synced)
   }
 
   @Test
@@ -172,7 +180,7 @@ class StagingStoreTest {
   @Test
   fun idsThatAreNotUuidsAreRefusedEverywhere() {
     val s = store()
-    for (bad in listOf("../keys/db.key.v1", "a", "", "$a/x", "$a.bin", " $a")) {
+    for (bad in listOf("00000000-0000-0000-0000-000000000000", "../keys/db.key.v1", "a", "", "$a/x", "$a.bin", " $a")) {
       assertThrows(bad, IllegalArgumentException::class.java) { s.stage(bad, byteArrayOf(1)) }
       assertThrows(bad, IllegalArgumentException::class.java) { s.read(bad) }
       assertThrows(bad, IllegalArgumentException::class.java) { s.release(bad) }

@@ -41,7 +41,15 @@ export function createNativeWatchLink(): WatchLink {
       );
     },
     async pendingActivities() {
-      return z.array(pendingActivitySchema).parse(await native.pendingActivities());
+      const entries = z.array(z.unknown()).parse(await native.pendingActivities());
+      // One malformed entry must not hide the others. It is dropped from this list with a warning and
+      // is not deleted from the native store.
+      return entries.flatMap((entry) => {
+        const parsed = pendingActivitySchema.safeParse(entry);
+        if (parsed.success) return [parsed.data];
+        console.warn("watch link listed a malformed pending activity");
+        return [];
+      });
     },
     async readActivity(id) {
       const text = await native.readActivity(id);

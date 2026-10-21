@@ -15,6 +15,9 @@ data class ActivityOffer(
   val encoderVersion: String,
   val gpx: String,
 ) {
+  // The generated one would print the whole track into any log or crash report.
+  override fun toString() = "ActivityOffer"
+
   /** What `pendingActivities` lists: the file stays behind `readActivity`. */
   fun summary(): Map<String, Any?> = buildMap {
     put("activityId", activityId)
@@ -30,10 +33,14 @@ data class RouteOffer(
   val travelMode: String,
   val createdAt: String,
   val gpx: String,
-)
+) {
+  override fun toString() = "RouteOffer"
+}
 
 object Frames {
-  private val UUID = Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+  // Matches zod's uuid() except that the nil and max UUIDs are rejected, like StagingStore.ID: a frame
+  // JS would reject must not be staged.
+  private val UUID = Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}")
 
   fun parseActivityOffer(bytes: ByteArray): ActivityOffer {
     val o = parseObject(bytes)
@@ -64,6 +71,9 @@ object Frames {
       JSONObject(String(bytes, Charsets.UTF_8))
     } catch (e: JSONException) {
       throw FrameException("frame is not a JSON object")
+    } catch (e: StackOverflowError) {
+      // org.json recurses, so a deeply nested frame must not take the process down.
+      throw FrameException("frame is nested too deeply")
     }
   }
 

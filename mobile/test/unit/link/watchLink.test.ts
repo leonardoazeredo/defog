@@ -35,8 +35,17 @@ describe("native watch link", () => {
     const summary = { activityId: id, routeId, travelMode: "walk", encoderVersion: "1" };
     native.pendingActivities.mockResolvedValue([summary]);
     await expect(createNativeWatchLink().pendingActivities()).resolves.toEqual([summary]);
-    native.pendingActivities.mockResolvedValue([{ ...summary, activityId: "../x" }]);
+    native.pendingActivities.mockResolvedValue("nope");
     await expect(createNativeWatchLink().pendingActivities()).rejects.toThrow();
+  });
+
+  it("skips one malformed pending entry and still lists the others, warning without its content", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const good = { activityId: id, travelMode: "walk", encoderVersion: "1" };
+    native.pendingActivities.mockResolvedValue([{ ...good, activityId: "../secret" }, good]);
+    await expect(createNativeWatchLink().pendingActivities()).resolves.toEqual([good]);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("secret");
+    warn.mockRestore();
   });
 
   it("reads an activity by parsing the offer JSON the native side returns", async () => {

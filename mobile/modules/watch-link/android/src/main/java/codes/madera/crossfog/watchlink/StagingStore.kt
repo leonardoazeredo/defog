@@ -23,7 +23,12 @@ class StagingStore(
   @Synchronized
   fun stage(id: String, bytes: ByteArray) {
     requireId(id)
-    check(dir.isDirectory || dir.mkdirs()) { "cannot create the staging directory" }
+    if (!dir.isDirectory) {
+      check(dir.mkdirs()) { "cannot create the staging directory" }
+      // The new directory's own entry lives in its parent; without this a power loss after the
+      // first stage can take the whole directory, and the watch has already deleted its copy.
+      syncDir(dir.parentFile!!)
+    }
     val blob = KeyWrap(key, id).wrap(bytes)
     val tmp = File(dir, "$id.tmp")
     // A failure leaves the .tmp behind, as a crash would: the next stage of this id overwrites it
@@ -74,7 +79,9 @@ class StagingStore(
     const val BIN = ".bin"
     // IV (12) and GCM tag (16), see KeyWrap.
     const val OVERHEAD_BYTES = 28
-    // The id becomes a file name and arrives from watch frames and from JS.
-    val ID = Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+    // The id becomes a file name and arrives from watch frames and from JS. The RFC form; it matches
+    // zod's uuid() except that the nil and max UUIDs are rejected here. A looser match would stage
+    // items that pendingActivities then skips.
+    val ID = Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}")
   }
 }

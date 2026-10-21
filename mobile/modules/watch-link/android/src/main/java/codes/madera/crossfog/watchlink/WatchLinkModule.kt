@@ -5,6 +5,7 @@ import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
+import java.io.IOException
 
 class WatchLinkModule : Module() {
   private val context by lazy {
@@ -70,10 +71,13 @@ class WatchLinkModule : Module() {
   }
 
   private fun summaryOf(id: String): Map<String, Any?>? {
-    val bytes = staging.read(id)
+    // An item that cannot be read, parsed or matched to its file name is skipped so it does not hide
+    // the others. A failure of the key itself is not per-item and still propagates or reads as unreadable.
     val offer = try {
-      bytes?.let { Frames.parseActivityOffer(it) }
+      staging.read(id)?.let { Frames.parseActivityOffer(it) }?.takeIf { it.activityId == id }
     } catch (e: FrameException) {
+      null
+    } catch (e: IOException) {
       null
     }
     // A staged item that no longer authenticates or parses is skipped, not deleted: it is the only

@@ -64,6 +64,25 @@ class FramesTest {
   }
 
   @Test
+  fun rejectsAnIdThatIsHexShapedButNotAnRfcUuid() {
+    val zero = "\"00000000-0000-0000-0000-000000000000\""
+    assertThrows(FrameException::class.java) { Frames.parseActivityOffer(activity(activityId = zero)) }
+  }
+
+  @Test
+  fun rejectsADeeplyNestedFrameWithoutCrashing() {
+    val deep = "{\"a\":".repeat(200_000).toByteArray()
+    assertThrows(FrameException::class.java) { Frames.parseActivityOffer(deep) }
+  }
+
+  @Test
+  fun toStringNamesNoContent() {
+    val offer = Frames.parseActivityOffer(activity(gpx = "\"secret-track\""))
+    assertFalse(offer.toString().contains("secret"))
+    assertFalse(offer.toString().contains(id))
+  }
+
+  @Test
   fun rejectsFramesThatAreNotJsonObjects() {
     for (text in listOf("", "[]", "null", "{", "plain")) {
       assertThrows(text, FrameException::class.java) { Frames.parseActivityOffer(text.toByteArray()) }
