@@ -3,18 +3,33 @@ export interface FogCache {
   /** Clears the store and writes `bytes` under `fingerprint` as the sole entry. */
   putOnly(fingerprint: string, bytes: Uint8Array): Promise<void>;
   clearAll(): Promise<void>;
+  /** The cells an activity's track revealed, with the reveal rules that made them. */
+  getReveal(activityId: string): Promise<CachedReveal | null>;
+  putReveal(activityId: string, rulesVersion: number, cells: Int32Array): Promise<void>;
+  deleteReveal(activityId: string): Promise<void>;
+  revealIds(): Promise<string[]>;
+}
+
+interface CachedReveal {
+  rulesVersion: number;
+  /** `[cx, cy]` pairs as Int32 values. */
+  cells: ArrayBuffer;
 }
 
 const DB_NAME = "crossfog";
 const STORE = "copies";
+const REVEALS = "reveals";
 
 function openDb(idb: IDBFactory): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = idb.open(DB_NAME, 1);
+    const req = idb.open(DB_NAME, 2);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE)) {
         db.createObjectStore(STORE);
+      }
+      if (!db.objectStoreNames.contains(REVEALS)) {
+        db.createObjectStore(REVEALS);
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -26,6 +41,10 @@ const noop: FogCache = {
   get: () => Promise.resolve(null),
   putOnly: () => Promise.resolve(),
   clearAll: () => Promise.resolve(),
+  getReveal: () => Promise.resolve(null),
+  putReveal: () => Promise.resolve(),
+  deleteReveal: () => Promise.resolve(),
+  revealIds: () => Promise.resolve([]),
 };
 
 export async function openFogCache(
@@ -94,6 +113,71 @@ export async function openFogCache(
           tx.onerror = () => resolve();
         } catch {
           resolve();
+        }
+      });
+    },
+
+    getReveal(activityId) {
+      return new Promise((resolve) => {
+        try {
+          const tx = db.transaction(REVEALS, "readonly");
+          const req = tx.objectStore(REVEALS).get(activityId);
+          req.onsuccess = () => {
+            const raw = req.result as Partial<CachedReveal> | undefined;
+            const { rulesVersion, cells } = raw ?? {};
+            const whole =
+              typeof rulesVersion === "number" &&
+              Object.prototype.toString.call(cells) === "[object ArrayBuffer]";
+            resolve(whole ? { rulesVersion, cells: cells as ArrayBuffer } : null);
+          };
+          req.onerror = () => resolve(null);
+        } catch {
+          resolve(null);
+        }
+      });
+    },
+
+    putReveal(activityId, rulesVersion, cells) {
+      return new Promise((resolve) => {
+        try {
+          const tx = db.transaction(REVEALS, "readwrite");
+          // slice() copies just this view's bytes; `cells.buffer` could be a larger buffer shared with
+          // other data, and the caller may reuse the array.
+          // A transaction that aborts at commit (a full disk) fires onabort, not onerror; without it this
+          // promise never settles and the history sync, which awaits it, stops for the session.
+          tx.objectStore(REVEALS).put({ rulesVersion, cells: cells.slice().buffer }, activityId);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => resolve();
+          tx.onabort = () => resolve();
+        } catch {
+          resolve();
+        }
+      });
+    },
+
+    deleteReveal(activityId) {
+      return new Promise((resolve) => {
+        try {
+          const tx = db.transaction(REVEALS, "readwrite");
+          tx.objectStore(REVEALS).delete(activityId);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => resolve();
+          tx.onabort = () => resolve();
+        } catch {
+          resolve();
+        }
+      });
+    },
+
+    revealIds() {
+      return new Promise((resolve) => {
+        try {
+          const tx = db.transaction(REVEALS, "readonly");
+          const req = tx.objectStore(REVEALS).getAllKeys();
+          req.onsuccess = () => resolve((req.result as IDBValidKey[]).map(String));
+          req.onerror = () => resolve([]);
+        } catch {
+          resolve([]);
         }
       });
     },

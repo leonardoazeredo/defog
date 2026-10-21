@@ -269,13 +269,13 @@
 
   // The street graph for a profile: what planning and routing (suggestions and the route editor)
   // run on. One per travel class, because each may use different ways;
-  // built lazily, rebuilt only when new streets arrive.
+  // built lazily, rebuilt when new streets arrive or the fog changes.
   SuggestTool.prototype.plannerFor = function (profile) {
     if (!this.streets || !global.GraphPlanner || !this.streets.ways.length) return null;
     // usableFor and onewayFor depend only on the travel class, so profiles sharing one share the graph
     const key = global.StreetIndex.MODE_CLASS[profile] || "foot";
     if (!this._planners[key])
-      this._planners[key] = new global.GraphPlanner(this.streets, this.streets.newFrac, this.streets.usableFor(profile), this.streets.onewayFor(profile));
+      this._planners[key] = new global.GraphPlanner(this.streets, this.streets.newFrac, this.streets.usableFor(profile), this.streets.onewayFor(profile), () => this.fogMap.version || 0);
     return this._planners[key];
   };
 

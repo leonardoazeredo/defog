@@ -196,6 +196,13 @@
     return m2;
   };
 
+  // The fog moved (cells revealed or taken back): every segment is judged against it again, and the
+  // version bump tells graphs built from the old fractions to rebuild.
+  StreetIndex.prototype.invalidateFrac = function () {
+    for (const cell of this.segs.values()) for (const s of cell) s.frac = null;
+    this.version++;
+  };
+
   StreetIndex.TILE_DEG = TILE_DEG;
   StreetIndex.tileOf = (lng, lat) => ({ x: Math.floor(lng / TILE_DEG), y: Math.floor(lat / TILE_DEG) });
   // A bound on a tile edge takes the tile on its inside (a west or south edge the tile it opens, an

@@ -31,6 +31,10 @@ function makeCache(data: Map<string, Uint8Array> = new Map()): FogCache {
       store.set(k, v);
     },
     clearAll: async () => store.clear(),
+    getReveal: async () => null,
+    putReveal: async () => {},
+    deleteReveal: async () => {},
+    revealIds: async () => [],
   };
 }
 
