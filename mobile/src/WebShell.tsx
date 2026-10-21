@@ -8,18 +8,26 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import WebView from "react-native-webview";
 import { WEB_HTML } from "../../generated/web.js";
 import { decideNavigation, shouldOpenWindowExternally } from "./bridge/navigationPolicy.js";
-import { encode, isTrustedSource, ORIGIN, parseWebToNative } from "./bridge/protocol.js";
+import {
+  encode,
+  isTrustedSource,
+  type NativeToWeb,
+  ORIGIN,
+  parseWebToNative,
+} from "./bridge/protocol.js";
 import { type Controller, createController } from "./controller.js";
 import { COPY } from "./copy.js";
 import { pickE2eFixture } from "./e2e/fixturePicker.js";
-import { createNoopFlows } from "./flows/types.js";
+import { type ComposedFlows, createFlows } from "./flows/compose.js";
 import { createReloadGuard } from "./fog/reloadGuard.js";
 import { createFogStore } from "./fog/store.js";
 import { CHUNK_BYTES } from "./fog/transfer.js";
 import { subscribeIncoming } from "./import/incomingQueue.js";
 import { pickBackupFile } from "./import/pick.js";
+import { createNativeWatchLink } from "./link/watchLink.js";
 import { createDatabase } from "./platform/database.js";
 import { createExpoFileStore } from "./platform/expoFileStore.js";
+import { createHistoryStores } from "./platform/historyStores.js";
 import { makeReleaseSource, shareExport } from "./platform/nativeHandlers.js";
 import { sha256Hex } from "./platform/sha256.js";
 
@@ -68,7 +76,7 @@ function buildController(
   setWebKey: (fn: (k: number) => number) => void,
   initialLoadDone: React.RefObject<boolean>,
   setBusy: (on: boolean) => void,
-): Controller {
+): { controller: Controller; flows: ComposedFlows } {
   const fogDir = new Directory(Paths.document, "fog");
   const fs = createExpoFileStore(fogDir);
   const store = createFogStore(fs, { sha256Hex, now: Date.now });
@@ -77,13 +85,19 @@ function buildController(
     cache: Paths.cache.uri,
     inbox: `${Paths.document.uri}Inbox/`,
   });
-  return createController({
+  // A message sent while the page is not loaded is lost; the page asks again through `ready`.
+  const send = (msg: NativeToWeb) => webViewRef.current?.postMessage(encode(msg));
+  const flows = createFlows({
+    link: createNativeWatchLink(),
+    ...createHistoryStores(),
+    send,
+    now: Date.now,
+  });
+  const controller = createController({
     store,
     guard,
     fs,
-    send(msg) {
-      webViewRef.current?.postMessage(encode(msg));
-    },
+    send,
     remount() {
       initialLoadDone.current = false;
       setWebKey((k) => k + 1);
@@ -104,8 +118,9 @@ function buildController(
     setBusy,
     now: Date.now,
     chunkBytes: CHUNK_BYTES,
-    flows: createNoopFlows(),
+    flows,
   });
+  return { controller, flows };
 }
 
 export function WebShell(): React.JSX.Element {
@@ -114,16 +129,19 @@ export function WebShell(): React.JSX.Element {
   const webViewRef = useRef<ShellWebView | null>(null);
   const initialLoadDone = useRef(false);
 
-  // Lazy-initialise the controller once; never rebuild it across re-renders.
-  const controllerRef = useRef<Controller | null>(null);
-  if (controllerRef.current === null) {
-    controllerRef.current = buildController(webViewRef, setWebKey, initialLoadDone, setBusy);
+  // Build the controller and flows once; never rebuild them across re-renders.
+  const builtRef = useRef<ReturnType<typeof buildController> | null>(null);
+  if (builtRef.current === null) {
+    builtRef.current = buildController(webViewRef, setWebKey, initialLoadDone, setBusy);
   }
-  const controller = controllerRef.current;
+  const { controller, flows } = builtRef.current;
 
   useEffect(() => {
     void controller.start();
   }, [controller]);
+
+  // Hand-off runs at start and on every staged activity. It waits for the database to open; if the database is unavailable, offers stay staged until the next run.
+  useEffect(() => flows.start(), [flows]);
 
   // Opening here runs the migration at startup and surfaces a lost key before any code could create an empty history.
   useEffect(() => {

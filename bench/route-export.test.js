@@ -15,6 +15,17 @@ assert.ok(gpx.indexOf("<metadata>") < gpx.indexOf("<trk>"), "GPX 1.1 puts metada
 assert.ok(gpx.indexOf("<copyright") < gpx.indexOf("<link"), "GPX 1.1 metadataType puts copyright before link");
 assert.match(gpx, /<trkpt lat="51\.000000" lon="13\.700000"><ele>120\.5<\/ele><\/trkpt>/, "track points unchanged");
 
+// toGPX writes the route id as a metadata keyword when the caller sets routeId; the watch reads it back to match an activity to its route.
+const ID = "22222222-2222-4222-8222-222222222222";
+const withId = { profile: "trekking", routeId: ID, routeCoords: [[13.7, 51, 120.5], [13.71, 51.001, 121], [13.72, 51.002, 119.25]] };
+const idGpx = RouteTool.prototype.toGPX.call(withId);
+assert.match(idGpx, new RegExp(`<keywords>crossfog-route:${ID}</keywords>`), "route id in the keywords");
+assert.ok(idGpx.indexOf("<link") < idGpx.indexOf("<keywords>"), "GPX 1.1 metadataType puts keywords after link");
+assert.ok(idGpx.indexOf("<keywords>") < idGpx.indexOf("</metadata>"), "keywords sit inside the metadata");
+assert.equal((idGpx.match(/<ele>/g) || []).length, 3, "an <ele> on every point");
+assert.match(idGpx, /<trkpt lat="51\.002000" lon="13\.720000"><ele>119\.3<\/ele><\/trkpt>/, "elevation of the last point");
+assert.doesNotMatch(gpx, /<keywords>/, "a route without an id writes no keywords");
+
 const kml = RouteTool.prototype.toKML.call(tool);
 assert.match(kml, /<description>Map data © OpenStreetMap contributors, ODbL \(https:\/\/opendatacommons\.org\/licenses\/odbl\/\)<\/description>/);
 assert.match(kml, /<coordinates>13\.700000,51\.000000,120\.5 13\.710000,51\.001000,121\.0<\/coordinates>/, "coordinates unchanged");

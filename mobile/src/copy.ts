@@ -13,5 +13,7 @@ export const COPY = {
   cancel: "Cancel",
   historyOpenFailed:
     "Your history could not be opened. Restart the app; if it persists, restore a backup.",
+  routeNotSent: "The route couldn't be saved for the watch.",
+  activityDeleteFailed: "Couldn't delete that activity.",
   historyKeyLost: "Your history key is gone; restore a backup to get it back",
 } as const;

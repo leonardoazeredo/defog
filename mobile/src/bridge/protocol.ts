@@ -8,7 +8,7 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$
 const base64Data = z.string().regex(/^[A-Za-z0-9+/]*={0,2}$/);
 
 const EXPORT_CHUNK_BYTES = 1_048_576;
-const TRACK_CHUNK_POINTS = 2000;
+export const TRACK_CHUNK_POINTS = 2000;
 
 const uuid = z.uuid();
 const travelMode = z.string().min(1).max(32);
