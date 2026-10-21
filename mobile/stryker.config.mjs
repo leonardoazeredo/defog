@@ -28,6 +28,8 @@ const config = {
     "src/controller.ts",
     "src/db/{driver,schema,openHistory}.ts",
     "src/history/*.ts",
+    "src/link/*.ts",
+    "!src/link/fakeWatchLink.ts",
     "src/platform/expoSqliteDriver.ts",
     "src/platform/watchLinkModule.ts",
     "web-adapter/*.ts",
