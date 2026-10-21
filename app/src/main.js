@@ -17,8 +17,6 @@
   const map = L.map("map", { center: [50, 15], zoom: 4, worldCopyJump: false });
   map.createPane("fog");
   map.getPane("fog").style.zIndex = 350;
-  map.createPane("routes"); // what the History tab draws: a walked track and the route it followed
-  map.getPane("routes").style.zIndex = 450;
 
   const BASEMAPS = {
     standard: { url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", max: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors' },

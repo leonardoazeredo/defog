@@ -120,6 +120,7 @@
     }
 
     function renderDetail() {
+      disarm(); // the buttons are rebuilt unarmed, so a pending confirm must not outlive them
       detailEl.textContent = "";
       const s = items.find((x) => x.id === open.id);
       detailEl.appendChild(button("← All activities", "ghost histBack", closeDetail));

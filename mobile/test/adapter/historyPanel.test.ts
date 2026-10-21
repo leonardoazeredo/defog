@@ -234,6 +234,19 @@ describe("History tab", () => {
     expect(alert).not.toHaveBeenCalled();
   });
 
+  it("does not delete on the first tap after the card re-renders while armed", () => {
+    panel.setActivities([summary(A, "2026-03-01T10:00:00Z")]);
+    click(cards()[0] ?? null);
+    sent.length = 0;
+    click(button("Delete"));
+    // the track arriving rebuilds the buttons, which show Delete again
+    panel.setTrack(A, [{ t: 0, lat: 51, lon: 13.7 }]);
+    expect(button("Delete").textContent).toBe("Delete");
+    click(button("Delete"));
+    expect(sent).toEqual([]);
+    expect(button("Confirm").textContent).toBe("Confirm delete");
+  });
+
   it("disarms the delete after a pause", () => {
     vi.useFakeTimers();
     panel.setActivities([summary(A, "2026-03-01T10:00:00Z")]);
