@@ -37,6 +37,7 @@
     "expo-router": "~58.0.20",
     "expo-share-intent": "^8.0.1",
     "expo-sharing": "~58.0.18",
+    "expo-sqlite": "~58.0.13",
     "expo-status-bar": "~58.0.3",
     "react": "19.3.0",
     "react-native": "0.88.0",

@@ -175,6 +175,8 @@ export type WebToNative = z.infer<typeof webToNativeSchema>;
 export type NativeToWeb = z.infer<typeof nativeToWebSchema>;
 export type ChunkMessage = Extract<NativeToWeb, { type: "chunk" }>;
 export type RouteRecord = z.infer<typeof routeRecord>;
+export type ActivitySummary = z.infer<typeof activitySummary>;
+export type TrackPoint = z.infer<typeof trackPoint>;
 export type ExportChunk = Omit<Extract<WebToNative, { type: "exportBinary" }>, "v" | "type">;
 
 export function encode(msg: WebToNative | NativeToWeb): string {
