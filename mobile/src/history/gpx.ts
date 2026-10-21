@@ -49,11 +49,13 @@ function elementText(body: string, local: string): string | undefined {
   return undefined;
 }
 
-function elementNumber(body: string, local: string): number | undefined {
+// The page's schema rejects a negative figure for every field but elevation, and one rejected summary
+// would hide the whole history list; a sentinel such as -1 is read as absent.
+function elementNumber(body: string, local: string, signed = false): number | undefined {
   const text = elementText(body, local);
   if (text === undefined || text === "") return undefined;
   const n = Number(text);
-  return Number.isFinite(n) ? n : undefined;
+  return Number.isFinite(n) && (signed || n >= 0) ? n : undefined;
 }
 
 function attribute(tag: string, name: string): number | undefined {
@@ -85,7 +87,7 @@ function readPoint(tag: string, body: string): TrackPoint {
     // Reveal (app/src/reveal.js) drops points by effective accuracy, so keep that value; the raw one is the fallback.
     accuracy:
       elementNumber(body, "effectiveAccuracyMeters") ?? elementNumber(body, "accuracyMeters"),
-    elevation: elementNumber(body, "ele"),
+    elevation: elementNumber(body, "ele", true),
     speed: elementNumber(body, "speedMps"),
     heartRate: elementNumber(body, "heartRateBpm"),
     steps: elementNumber(body, "stepCount"),

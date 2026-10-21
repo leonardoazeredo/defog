@@ -143,7 +143,7 @@ export function WebShell(): React.JSX.Element {
   // Hand-off runs at start and on every staged activity. It waits for the database to open; if the database is unavailable, offers stay staged until the next run.
   useEffect(() => flows.start(), [flows]);
 
-  // Opening here runs the migration at startup and surfaces a lost key before any code could create an empty history.
+  // Opens the database (shared with the hand-off) so the migration runs at startup and a lost key is surfaced; the open never creates an empty history over a lost key.
   useEffect(() => {
     createDatabase().then(
       (h) => {

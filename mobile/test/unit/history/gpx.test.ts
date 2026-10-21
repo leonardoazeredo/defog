@@ -113,6 +113,19 @@ describe("parseGpx edge cases", () => {
     expect(() => parseGpx(wrap('<trkpt lat="1" lon="2"/>'))).toThrow(GpxError);
   });
 
+  it("reads a negative figure as absent, except for elevation", () => {
+    const p = parseGpx(
+      wrap(
+        pt(
+          "<ele>-12.5</ele><extensions><gmap:speedMps>-1</gmap:speedMps><gmap:heartRateBpm>-1</gmap:heartRateBpm></extensions>",
+        ),
+        "<metadata><extensions><gmap:stepCount>-1</gmap:stepCount><gmap:distanceMeters>-1</gmap:distanceMeters></extensions></metadata>",
+      ),
+    );
+    expect(p.points[0]).toEqual({ t: START, lat: 10, lon: 20, elevation: -12.5 });
+    expect(p.summary).toBeUndefined();
+  });
+
   it("has no summary when the file has no metadata extensions", () => {
     expect(parseGpx(wrap(pt())).summary).toBeUndefined();
   });

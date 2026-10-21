@@ -25,6 +25,9 @@ assert.ok(idGpx.indexOf("<keywords>") < idGpx.indexOf("</metadata>"), "keywords 
 assert.equal((idGpx.match(/<ele>/g) || []).length, 3, "an <ele> on every point");
 assert.match(idGpx, /<trkpt lat="51\.002000" lon="13\.720000"><ele>119\.3<\/ele><\/trkpt>/, "elevation of the last point");
 assert.doesNotMatch(gpx, /<keywords>/, "a route without an id writes no keywords");
+for (const bad of ["", "</keywords><x/>", "a&b"]) {
+  assert.doesNotMatch(RouteTool.prototype.toGPX.call({ ...withId, routeId: bad }), /<keywords>/, "an id that is not a UUID is never written into the XML");
+}
 
 const kml = RouteTool.prototype.toKML.call(tool);
 assert.match(kml, /<description>Map data © OpenStreetMap contributors, ODbL \(https:\/\/opendatacommons\.org\/licenses\/odbl\/\)<\/description>/);

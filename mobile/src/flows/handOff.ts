@@ -35,6 +35,8 @@ export function createHandOffFlow(deps: HandOffDeps): HandOffFlow {
     let activity: Activity;
     try {
       const offer = await link.readActivity(activityId);
+      // The record is filed under the offer's id but released under the staged id; they must be one.
+      if (offer.activityId !== activityId) throw new Error("offer does not match its staged id");
       const parsed = deps.parseGpx(offer.gpx);
       activity = {
         id: offer.activityId,

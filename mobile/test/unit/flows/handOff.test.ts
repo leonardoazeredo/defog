@@ -164,6 +164,17 @@ describe("hand-off", () => {
     expect(await flow.run()).toEqual({ stored: 1, released: 1 });
   });
 
+  it("leaves an offer staged when it names a different id than the staged one", async () => {
+    const { link, activities } = setup();
+    link.stage(offer(A, "2026-03-01T10:00:00Z"));
+    const mismatched = { ...link, readActivity: async () => offer(B, "2026-03-01T10:00:00Z") };
+    const flow = createHandOffFlow({ link: mismatched, activities, parseGpx, now: () => NOW });
+
+    expect(await flow.run()).toEqual({ stored: 0, released: 0 });
+    expect(await activities.list()).toEqual([]);
+    expect(link.released()).toEqual([]);
+  });
+
   it("does not reject when the list of staged offers cannot be read", async () => {
     const { link, activities } = setup();
     const broken = {
