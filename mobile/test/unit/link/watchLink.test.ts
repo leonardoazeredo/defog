@@ -51,8 +51,12 @@ describe("native watch link", () => {
       JSON.stringify({ activityId: id, travelMode: "walk", encoderVersion: "1" }),
     );
     await expect(createNativeWatchLink().readActivity(id)).rejects.toThrow();
-    native.readActivity.mockResolvedValue("not json");
-    await expect(createNativeWatchLink().readActivity(id)).rejects.toThrow();
+    native.readActivity.mockResolvedValue('{"gpx":"secret-track');
+    const e = await createNativeWatchLink()
+      .readActivity(id)
+      .catch((x) => x);
+    expect(e.message).toBe("watch link returned an unreadable activity");
+    expect(e.cause).toBeUndefined();
   });
 
   it("passes the native failure for an unknown id through", async () => {

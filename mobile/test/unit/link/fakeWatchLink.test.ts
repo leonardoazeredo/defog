@@ -107,3 +107,15 @@ describe("fake watch link", () => {
     ]);
   });
 });
+
+describe("fake watch link routes", () => {
+  it("keeps the queued route as it was handed over, whatever the caller does after", async () => {
+    const link = createFakeWatchLink();
+    const r = routeRecord();
+    await link.queueRoute(r);
+    r.coords.length = 0;
+    link.queued()[0]?.waypoints.pop();
+    expect(link.queued()[0]?.coords).toHaveLength(2);
+    expect(link.queued()[0]?.waypoints).toHaveLength(2);
+  });
+});

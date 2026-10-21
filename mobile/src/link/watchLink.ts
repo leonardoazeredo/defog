@@ -44,7 +44,15 @@ export function createNativeWatchLink(): WatchLink {
       return z.array(pendingActivitySchema).parse(await native.pendingActivities());
     },
     async readActivity(id) {
-      return activityOfferSchema.parse(JSON.parse(await native.readActivity(id)));
+      const text = await native.readActivity(id);
+      let offer: unknown;
+      try {
+        offer = JSON.parse(text);
+      } catch {
+        // A JSON engine may quote the input in its error, and the input is a walk's track.
+        throw new Error("watch link returned an unreadable activity");
+      }
+      return activityOfferSchema.parse(offer);
     },
     release: (id) => native.releaseActivity(id),
     on(event, fn) {
