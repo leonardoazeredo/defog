@@ -502,3 +502,31 @@ describe("the history panel", () => {
     expect(history.setTrack).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("a panel that throws", () => {
+  it("does not stop the fog from following the list or a track", async () => {
+    const { lists, sync, history, fogMap } = await setup();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    history.setActivities.mockImplementation(() => {
+      throw new Error("boom");
+    });
+    history.setTrack.mockImplementation(() => {
+      throw new Error("boom");
+    });
+    lists(WALKER);
+    sendTrack(sync, WALKER, walk(0, 300));
+    await sync.settled();
+    expect(visitedAt(fogMap, 50)).toBe(true);
+  });
+
+  it("logs a fixed line, never the error text", async () => {
+    const { lists, history } = await setup();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    history.setActivities.mockImplementation(() => {
+      throw new Error("51.4777, 0.0002");
+    });
+    lists(WALKER);
+    expect(JSON.stringify(log.mock.calls)).not.toContain("51.4777");
+    expect(log).toHaveBeenCalledWith("crossfog: updating the history panel failed");
+  });
+});

@@ -123,6 +123,7 @@
       disarm(); // the buttons are rebuilt unarmed, so a pending confirm must not outlive them
       detailEl.textContent = "";
       const s = items.find((x) => x.id === open.id);
+      if (!s) { closeDetail(); return; }
       detailEl.appendChild(button("← All activities", "ghost histBack", closeDetail));
       const card = el("div", "card");
       card.appendChild(summaryHead(s));
@@ -190,7 +191,7 @@
     return {
       // Newest first, whatever order the phone sends.
       setActivities(list) {
-        items = list.slice().sort((a, b) => (a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : 0));
+        items = list.slice().sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
         if (open && !items.some((x) => x.id === open.id)) { disarm(); clearOverlay(); open = null; }
         render();
       },
@@ -217,14 +218,19 @@
     let state = null; // waiting | onWatch | failed, for `sent`
     let paired = null;
 
+    // A record that cannot be built (no crypto, a bad route) leaves the button off; it must not break the route UI that called update().
+    function record() {
+      try { return opts.getRecord(); }
+      catch (e) { console.error("crossfog: could not build the route record"); return null; }
+    }
     function currentIs(rec) { return rec != null && sent != null && rec.id === sent.id && rec.gpx === sent.gpx; }
     function paint() {
-      btn.disabled = !(opts.canSend() && opts.getRecord() != null);
+      btn.disabled = !(opts.canSend() && record() != null);
       chip.textContent = state ? STATUS_TEXT[state] : paired === false ? "Not paired" : "";
     }
 
     btn.addEventListener("click", () => {
-      const rec = opts.getRecord();
+      const rec = record();
       if (!rec || !opts.canSend()) return;
       sent = { id: rec.id, gpx: rec.gpx };
       state = null;
@@ -235,11 +241,11 @@
     return {
       // The route changed (or went away).
       update() {
-        if (state && !currentIs(opts.getRecord())) { sent = null; state = null; }
+        if (state && !currentIs(record())) { sent = null; state = null; }
         paint();
       },
       routeStatus(msg) {
-        if (!sent || msg.routeId !== sent.id || !STATUS_TEXT[msg.state] || !currentIs(opts.getRecord())) return;
+        if (!sent || msg.routeId !== sent.id || !STATUS_TEXT[msg.state] || !currentIs(record())) return;
         state = msg.state;
         paint();
       },

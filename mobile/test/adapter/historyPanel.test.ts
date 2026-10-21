@@ -129,6 +129,11 @@ describe("History tab", () => {
     expect(cards()[0]?.textContent).toContain("5400 steps");
   });
 
+  it("orders same-second activities by their fractions", () => {
+    panel.setActivities([summary(A, "2026-03-01T10:00:00Z"), summary(B, "2026-03-01T10:00:00.5Z")]);
+    expect(cards().map((c) => c.dataset.id)).toEqual([B, A]);
+  });
+
   it("leaves out the steps line when the summary has no steps", () => {
     panel.setActivities([
       summary(A, "2026-03-01T10:00:00Z", { stats: { durationS: 600, distanceM: 900 } }),
@@ -363,6 +368,16 @@ describe("Send to watch", () => {
     route.clear();
     send.update();
     expect(chip()).toBe("");
+  });
+
+  it("keeps the button off and does not throw when the record cannot be built", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    route.setFixedRoute(PINS(), COORDS, STATS);
+    route.routeRecord = () => {
+      throw new Error("no crypto");
+    };
+    expect(() => send.update()).not.toThrow();
+    expect(sendBtn().disabled).toBe(true);
   });
 
   it("does nothing outside the phone app", () => {

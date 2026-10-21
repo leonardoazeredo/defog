@@ -90,6 +90,15 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
     });
   }
 
+  // The panel is a view: a failure in it must not cost the fog its update. Fixed text, as a message could carry positions.
+  function showInPanel(show: () => void): void {
+    try {
+      show();
+    } catch {
+      console.error("crossfog: updating the history panel failed");
+    }
+  }
+
   function rebuild(): void {
     page.fogMap.clearOverlay();
     for (const cells of revealed.values()) page.fogMap.addCells(cells);
@@ -166,7 +175,7 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
     const track: TrackPoint[] = [];
     for (let i = 0; i < total; i++) track.push(...(got.chunks.get(i) ?? []));
 
-    page.history?.setTrack(activityId, track, got.route);
+    showInPanel(() => page.history?.setTrack(activityId, track, got.route));
     if (!requested.has(activityId)) return;
     requested.delete(activityId);
 
@@ -186,7 +195,7 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
   return {
     onActivities: ({ items }) => {
       // Straight to the panel: it should not wait behind the cache.
-      page.history?.setActivities(items);
+      showInPanel(() => page.history?.setActivities(items));
       enqueue(() => applyList(items));
     },
     onTrack: (chunk) => enqueue(() => applyTrack(chunk)),
