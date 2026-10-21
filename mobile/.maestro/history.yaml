@@ -9,3 +9,17 @@ appId: codes.madera.crossfog
     visible: "glancemap-walk.gpx"
     timeout: 15000
 - tapOn: "glancemap-walk.gpx"
+- tapOn: "History"
+- extendedWaitUntil:
+    visible: "47 steps"
+    timeout: 15000
+- tapOn: "47 steps"
+- extendedWaitUntil:
+    visible: "Show on map"
+    timeout: 15000
+# The first tap only arms the delete; there is no dialog to confirm.
+- tapOn: "Delete"
+- tapOn: "Confirm delete"
+- extendedWaitUntil:
+    visible: "No activities yet.*"
+    timeout: 15000

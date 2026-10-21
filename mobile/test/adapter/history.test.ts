@@ -93,12 +93,19 @@ function summary(id: string): ActivitySummary {
 // Sends a track the way the native side does, in chunks; `order` reshuffles delivery to check chunks are joined by index.
 function sendTrack(
   sync: {
-    onTrack(c: { activityId: string; index: number; total: number; points: TrackPoint[] }): void;
+    onTrack(c: {
+      activityId: string;
+      index: number;
+      total: number;
+      points: TrackPoint[];
+      route?: { coords: Array<[number, number]> };
+    }): void;
   },
   activityId: string,
   points: TrackPoint[],
   perChunk = 20,
   order?: (indices: number[]) => number[],
+  route?: { coords: Array<[number, number]> },
 ): void {
   const total = Math.max(1, Math.ceil(points.length / perChunk));
   const indices = order ? order([...Array(total).keys()]) : [...Array(total).keys()];
@@ -108,6 +115,7 @@ function sendTrack(
       index,
       total,
       points: points.slice(index * perChunk, (index + 1) * perChunk),
+      ...(index === 0 && route ? { route } : {}),
     });
   }
 }
@@ -117,16 +125,22 @@ beforeEach(() => {
   idb = new IDBFactory();
 });
 
-async function setup(options: { cache?: FogCache; rulesVersion?: number } = {}) {
+async function setup(options: { cache?: FogCache; rulesVersion?: number; panel?: boolean } = {}) {
   const fogMap = new FogParser.FogMap();
   const cache = options.cache ?? (await openFogCache(idb, true));
   const fogChanged = vi.fn();
   const needTrack = vi.fn();
   const rules = { ...Reveal.RULES, version: options.rulesVersion ?? Reveal.RULES.version };
-  const page: CrossfogPageApi = { fogMap, fogChanged, reveal: Reveal };
+  const history = { setActivities: vi.fn(), setTrack: vi.fn() };
+  const page: CrossfogPageApi = {
+    fogMap,
+    fogChanged,
+    reveal: Reveal,
+    ...(options.panel === false ? {} : { history }),
+  };
   const sync = createHistorySync({ pageApi: { needTrack }, cache, page, rules });
   const lists = (...ids: string[]) => sync.onActivities({ items: ids.map(summary) });
-  return { fogMap, cache, fogChanged, needTrack, sync, lists, rules };
+  return { fogMap, cache, fogChanged, needTrack, sync, lists, rules, history };
 }
 
 describe("asking for tracks", () => {
@@ -399,5 +413,92 @@ describe("failures", () => {
     expect(visitedAt(fogMap, 450)).toBe(true);
     expect(visitedAt(fogMap, 50)).toBe(false);
     error.mockRestore();
+  });
+});
+
+describe("the history panel", () => {
+  it("is handed every list as it arrives, before any fog work", async () => {
+    const { lists, history } = await setup();
+    lists(WALKER, RIDER);
+    expect(history.setActivities).toHaveBeenCalledTimes(1);
+    expect(history.setActivities.mock.calls[0]?.[0].map((i: ActivitySummary) => i.id)).toEqual([
+      WALKER,
+      RIDER,
+    ]);
+  });
+
+  it("is handed an assembled track, in point order, with the route from the first chunk", async () => {
+    const { lists, sync, history } = await setup();
+    lists(WALKER);
+    const points = walk(0, 300);
+    const route: { coords: Array<[number, number]> } = {
+      coords: [
+        [13.7, 51],
+        [13.71, 51],
+      ],
+    };
+    sendTrack(sync, WALKER, points, 10, (i) => i.reverse(), route);
+    await sync.settled();
+
+    expect(history.setTrack).toHaveBeenCalledTimes(1);
+    const [id, got, gotRoute] = history.setTrack.mock.calls[0] ?? [];
+    expect(id).toBe(WALKER);
+    expect(got).toEqual(points);
+    expect(gotRoute).toEqual(route);
+  });
+
+  it("gets a track the fog did not ask for, and leaves the fog alone", async () => {
+    const first = await setup();
+    first.lists(WALKER);
+    sendTrack(first.sync, WALKER, walk(0, 300));
+    await first.sync.settled();
+    first.fogChanged.mockClear();
+
+    // the reveal is cached now, so a card tapped later asks for a track the fog never requests
+    const second = await setup({ cache: first.cache });
+    second.lists(WALKER);
+    await second.sync.settled();
+    expect(second.needTrack).not.toHaveBeenCalled();
+    second.fogChanged.mockClear();
+
+    sendTrack(second.sync, WALKER, walk(0, 300));
+    await second.sync.settled();
+    expect(second.history.setTrack).toHaveBeenCalledTimes(1);
+    expect(second.fogChanged).not.toHaveBeenCalled();
+  });
+
+  it("drops a half-received track when its activity leaves the list", async () => {
+    const { lists, sync, history } = await setup();
+    lists(WALKER);
+    sync.onTrack({ activityId: WALKER, index: 0, total: 2, points: walk(0, 100) });
+    lists();
+    await sync.settled();
+    sync.onTrack({ activityId: WALKER, index: 1, total: 2, points: walk(110, 200) });
+    await sync.settled();
+    expect(history.setTrack).not.toHaveBeenCalled();
+  });
+
+  it("keeps the fog working when the page has no history panel", async () => {
+    const { lists, sync, fogMap } = await setup({ panel: false });
+    lists(WALKER);
+    sendTrack(sync, WALKER, walk(0, 300));
+    await sync.settled();
+    expect(visitedAt(fogMap, 50)).toBe(true);
+  });
+
+  it("still shows a track when saving the reveal fails", async () => {
+    const cache = await openFogCache(idb, true);
+    const broken: FogCache = {
+      ...cache,
+      putReveal: async () => {
+        throw new Error("quota");
+      },
+    };
+    const { lists, sync, history } = await setup({ cache: broken });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    lists(WALKER);
+    sendTrack(sync, WALKER, walk(0, 300));
+    await sync.settled();
+    expect(history.setTrack).toHaveBeenCalledTimes(1);
   });
 });

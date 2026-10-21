@@ -61,6 +61,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     window.crossfog.on("track", history.onTrack);
   }
 
+  // The phone's answers go to the Send button's chip through CrossfogPage; both are optional so a page without the button ignores them.
+  window.crossfog?.on("routeStatus", (msg) => window.CrossfogPage?.routeStatus?.(msg));
+  window.crossfog?.on("linkStatus", (msg) => window.CrossfogPage?.linkStatus?.(msg));
+
   const zipInput = document.getElementById("zip") as HTMLInputElement;
   const load = (bytes: Uint8Array, name: string) =>
     loadCopy(bytes, name, { zipInput, hooks, assignFiles: assignFilesWithDataTransfer });

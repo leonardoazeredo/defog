@@ -136,6 +136,19 @@
     .wp.sugA { background: #3f7d6d; }
     .wp.sugB { background: #a06a54; }
 
+    /* .chip is the suggestion cards' colour swatch; the Send to watch status reuses the class as text, so it drops the swatch size and shape */
+    #sendStatus.chip { width: auto; height: auto; border-radius: 0; flex: 0 1 auto; font-size: 12.5px; color: var(--muted); }
+    #sendStatus.chip:empty { display: none; }
+
+    /* history cards */
+    .histCard { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 8px 0; cursor: pointer; }
+    .histCard:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .histTop { display: flex; align-items: baseline; gap: 8px; }
+    .histTop b { font-size: 15px; }
+    .histFacts { margin-top: 5px; font-size: 12.5px; color: var(--ink); display: flex; flex-wrap: wrap; gap: 4px 12px; }
+    .histBack { margin-bottom: 4px; }
+    .histDelete.armed { background: #c9384f; border-color: #c9384f; color: #fff; }
+
     .wp { width: 100%; height: 100%; border-radius: 50%; background: var(--accent); color: #fff;
       border: 2px solid #fff; box-shadow: 0 1px 4px #0006; font-size: 11px; font-weight: 700;
       display: flex; align-items: center; justify-content: center; cursor: grab; }
@@ -201,6 +214,7 @@
         <div class="tabs">
           <button id="tabFog" class="active" data-pane="fogPane">Show your fog</button>
           <button id="tabPlan" data-pane="planPane">Plan</button>
+          <button id="tabHistory" data-pane="historyPane">History</button>
         </div>
 
         <!-- SHOW YOUR FOG -->
@@ -391,6 +405,10 @@
             <button id="exportKml" class="ghost grow" disabled>KML</button>
             <button id="openGmaps" class="ghost grow" disabled>Maps ↗</button>
           </div>
+          <div class="row">
+            <button id="sendWatch" class="ghost grow" disabled>Send to watch</button>
+            <span id="sendStatus" class="chip" role="status" aria-live="polite"></span>
+          </div>
 
           <div class="row" style="margin-top:16px; justify-content:flex-end;">
             <span class="muted">Units</span>
@@ -399,6 +417,13 @@
               <button data-u="imperial">mi</button>
             </span>
           </div>
+        </div>
+
+        <!-- HISTORY -->
+        <div class="pane" id="historyPane">
+          <div id="historyEmpty" class="muted">No activities yet. Walks you record on your watch show up here.</div>
+          <div id="historyList"></div>
+          <div id="historyDetail" style="display:none"></div>
         </div>
       </aside>
     </div>
@@ -429,6 +454,7 @@
   <script src="src/router.js"></script>
   <script src="src/routeLocal.js"></script>
   <script src="src/suggest.js"></script>
+  <script src="src/history.js"></script>
   <script src="src/main.js"></script>
 </body>
 </html>
