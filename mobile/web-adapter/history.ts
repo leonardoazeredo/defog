@@ -105,7 +105,7 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
       if (!wanted.has(id)) await cache.deleteReveal(id);
     }
 
-    let restored = false;
+    const restored: Int32Array[] = [];
     for (const id of wanted) {
       if (revealed.has(id) || requested.has(id)) continue;
       const cells = await cachedCells(id);
@@ -115,18 +115,16 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
         continue;
       }
       revealed.set(id, cells);
-      restored = true;
+      restored.push(cells);
     }
 
     if (removed) {
       rebuild();
       page.fogChanged();
-    } else if (restored) {
+    } else if (restored.length > 0) {
+      // only the ones restored now: addCells bumps the fog version even when it adds nothing
       let added = 0;
-      for (const id of wanted) {
-        const cells = revealed.get(id);
-        if (cells != null) added += page.fogMap.addCells(cells);
-      }
+      for (const cells of restored) added += page.fogMap.addCells(cells);
       if (added > 0) page.fogChanged();
     }
   }

@@ -269,7 +269,7 @@
 
   // The street graph for a profile: what planning and routing (suggestions and the route editor)
   // run on. One per travel class, because each may use different ways;
-  // built lazily, rebuilt only when new streets arrive.
+  // built lazily, rebuilt when new streets arrive or the fog changes.
   SuggestTool.prototype.plannerFor = function (profile) {
     if (!this.streets || !global.GraphPlanner || !this.streets.ways.length) return null;
     // usableFor and onewayFor depend only on the travel class, so profiles sharing one share the graph
