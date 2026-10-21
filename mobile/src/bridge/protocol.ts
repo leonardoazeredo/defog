@@ -115,6 +115,8 @@ const webToNativeSchema = z.union([
     .refine((c) => c.index < c.total, "index must be less than total"),
   z.object({ v: z.literal(1), type: z.literal("backup") }),
   z.object({ v: z.literal(1), type: z.literal("restore") }),
+  // Only the e2e page sends it and only a debug app acts on it; the schema is harmless in release.
+  z.object({ v: z.literal(1), type: z.literal("devAddActivity") }),
 ]);
 
 const nativeToWebSchema = z.union([

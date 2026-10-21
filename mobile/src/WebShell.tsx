@@ -71,6 +71,12 @@ function notify(text: string): void {
   }
 }
 
+function devAddActivity(flows: ComposedFlows, notify: (text: string) => void): () => Promise<void> {
+  const { createDevAddActivity } =
+    require("./dev/devActions.js") as typeof import("./dev/devActions.js");
+  return createDevAddActivity({ run: flows.handOffNow }, notify);
+}
+
 function buildController(
   webViewRef: React.RefObject<ShellWebView | null>,
   setWebKey: (fn: (k: number) => number) => void,
@@ -119,6 +125,7 @@ function buildController(
     now: Date.now,
     chunkBytes: CHUNK_BYTES,
     flows,
+    ...(__DEV__ ? { devAddActivity: devAddActivity(flows, notify) } : {}),
   });
   return { controller, flows };
 }

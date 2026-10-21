@@ -1,5 +1,11 @@
 {
-  "entry": ["app/**/*.{ts,tsx}", "scripts/*.ts", "web-adapter/index.ts", "test/**/*.ts"],
+  "entry": [
+    "app/**/*.{ts,tsx}",
+    "src/dev/devActions.ts",
+    "scripts/*.ts",
+    "web-adapter/index.ts",
+    "test/**/*.ts"
+  ],
   "project": ["src/**", "modules/watch-link/**/*.ts", "web-adapter/**", "scripts/**", "test/**"],
   "ignoreDependencies": ["expo-updates", "expo-system-ui", "@noble/hashes"],
   "ignoreBinaries": ["maestro", "plutil"]

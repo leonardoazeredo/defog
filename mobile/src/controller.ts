@@ -27,6 +27,8 @@ export interface ControllerDeps {
   now(): number;
   chunkBytes: number;
   flows: Flows;
+  /** Wired only when `__DEV__` is true; the controller ignores `devAddActivity` without it. */
+  devAddActivity?: () => Promise<void>;
 }
 
 export interface Controller {
@@ -231,6 +233,9 @@ export function createController(deps: ControllerDeps): Controller {
           break;
         case "restore":
           await deps.flows.restore();
+          break;
+        case "devAddActivity":
+          if (__DEV__) await deps.devAddActivity?.();
           break;
         case "back:result":
           if (!msg.handled) {

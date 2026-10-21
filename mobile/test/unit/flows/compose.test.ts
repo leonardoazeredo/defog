@@ -77,4 +77,23 @@ describe("composed flows", () => {
     await flows.deleteActivity(A);
     expect(sent.map((m) => m.type)).toEqual(["routeStatus", "activities"]);
   });
+
+  it("hands off now and publishes once an activity was stored", async () => {
+    const { link, activities, sent, flows } = setup();
+    link.stage({ activityId: A, travelMode: "walk", encoderVersion: "e", gpx: GPX });
+    sent.length = 0;
+
+    await flows.handOffNow();
+
+    expect(await activities.get(A)).not.toBeNull();
+    expect(sent).toEqual([expect.objectContaining({ type: "activities" })]);
+  });
+
+  it("publishes nothing when a hand-off pass stores nothing", async () => {
+    const { sent, flows } = setup();
+
+    await flows.handOffNow();
+
+    expect(sent).toEqual([]);
+  });
 });

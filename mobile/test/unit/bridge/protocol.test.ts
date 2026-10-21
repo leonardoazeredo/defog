@@ -138,6 +138,7 @@ const webSamples = [
   },
   { v: 1 as const, type: "backup" as const },
   { v: 1 as const, type: "restore" as const },
+  { v: 1 as const, type: "devAddActivity" as const },
 ];
 
 const nativeSamples = [
