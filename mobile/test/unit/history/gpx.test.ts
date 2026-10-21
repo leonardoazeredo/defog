@@ -58,7 +58,7 @@ describe("parseGpx on a GlanceMap recording", () => {
   it("takes the summary figures from the metadata, not from a point", () => {
     expect(parsed.summary).toEqual({
       steps: 47,
-      calories: 14.2,
+      calories: 9.8,
       heartRateAvg: 98,
       heartRateMax: 104,
       durationS: 33,
@@ -143,7 +143,7 @@ describe("activityStats", () => {
       distanceM: 71.5,
       paceSPerKm: 33 / 0.0715,
       steps: 47,
-      calories: 14.2,
+      calories: 9.8,
       heartRateAvg: 98,
       heartRateMax: 104,
     });

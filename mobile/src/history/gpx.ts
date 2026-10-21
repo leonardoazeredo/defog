@@ -102,8 +102,8 @@ function readSummary(text: string): GpxSummary | undefined {
   const meta = text.slice(start, end);
   const summary = defined<GpxSummary>({
     steps: elementNumber(meta, "stepCount"),
-    // Gross is the total; the watch also offers an active figure as its own dashboard metric.
-    calories: elementNumber(meta, "caloriesGrossKcal"),
+    // Active (gross minus resting), not gross: the resting baseline is not effort. A file without the active figure gives no calories, not gross.
+    calories: elementNumber(meta, "caloriesActiveKcal"),
     heartRateAvg: elementNumber(meta, "averageHeartRateBpm"),
     heartRateMax: elementNumber(meta, "maxHeartRateBpm"),
     durationS: elementNumber(meta, "durationSeconds"),
