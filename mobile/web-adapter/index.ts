@@ -70,7 +70,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   if (__CROSSFOG_DEV_TOOLS__) {
-    installDevTools(document, cache);
+    installDevTools(document, cache, send);
   }
 
   onNativeMessage(window, document, (msg) => void session.onMessage(msg));

@@ -10,6 +10,8 @@ import { createNoopFlows, type Flows } from "./types.js";
 export interface ComposedFlows extends Flows {
   /** Runs the hand-off now and on every staged activity; returns the function that stops listening. */
   start(): () => void;
+  /** Resolves once a hand-off pass that began after this call has finished, publishing the history if that pass stored an activity; `start` runs the same path. */
+  handOffNow(): Promise<void>;
 }
 
 export interface ComposeDeps {
@@ -41,6 +43,7 @@ export function createFlows(deps: ComposeDeps): ComposedFlows {
       await history.publish();
       await sendFlow.sendStatus();
     },
+    handOffNow: handOffAndPublish,
     sendRoute: sendFlow.sendRoute,
     needTrack: history.needTrack,
     deleteActivity: history.deleteActivity,

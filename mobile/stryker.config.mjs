@@ -26,6 +26,7 @@ const config = {
     "src/fog/*.ts",
     "src/import/{incoming,incomingQueue}.ts",
     "src/controller.ts",
+    "src/dev/addActivity.ts",
     "src/db/{driver,schema,openHistory}.ts",
     "src/history/*.ts",
     "src/link/*.ts",

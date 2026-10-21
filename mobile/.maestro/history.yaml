@@ -1,0 +1,11 @@
+appId: codes.madera.crossfog
+---
+# Needs mobile/test/fixtures/glancemap-walk.gpx pushed to the device's Downloads (adb push) and a
+# debug build made with CROSSFOG_E2E=1: the Release e2e build shows the button, but there the
+# handler is not wired (the message is accepted and ignored) and the native stageForTest exists only
+# in the debug source set.
+- tapOn: "Dev: add activity from GPX"
+- extendedWaitUntil:
+    visible: "glancemap-walk.gpx"
+    timeout: 15000
+- tapOn: "glancemap-walk.gpx"

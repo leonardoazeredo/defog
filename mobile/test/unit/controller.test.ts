@@ -57,6 +57,7 @@ interface Harness {
   openAbout: ReturnType<typeof vi.fn>;
   busy: boolean[];
   flows: { [K in keyof Flows]: ReturnType<typeof vi.fn> };
+  devAddActivity: ReturnType<typeof vi.fn>;
 }
 
 function createHarness(): Harness {
@@ -80,6 +81,7 @@ function createHarness(): Harness {
   const openExternal = vi.fn(() => Promise.resolve());
   const openAbout = vi.fn();
   const busy: boolean[] = [];
+  const devAddActivity = vi.fn(() => Promise.resolve());
   const noop = createNoopFlows();
   const flows = {
     ready: vi.fn(noop.ready),
@@ -117,6 +119,7 @@ function createHarness(): Harness {
     setBusy: (on) => busy.push(on),
     chunkBytes: 1_048_576,
     flows,
+    devAddActivity,
   });
 
   return {
@@ -138,6 +141,7 @@ function createHarness(): Harness {
     openAbout,
     busy,
     flows,
+    devAddActivity,
   };
 }
 
@@ -700,4 +704,23 @@ it("waits for the flow before the next page message is handled", async () => {
   gate.resolve();
   await handled;
   expect(done).toBe(true);
+});
+
+it("runs the developer add-activity action in a debug app", async () => {
+  vi.stubGlobal("__DEV__", true);
+  const h = createHarness();
+  await h.c.start();
+  await h.c.onWebMessage({ v: 1, type: "devAddActivity" });
+  expect(h.devAddActivity).toHaveBeenCalledOnce();
+  vi.unstubAllGlobals();
+});
+
+it("ignores the developer add-activity message in a release app", async () => {
+  vi.stubGlobal("__DEV__", false);
+  const h = createHarness();
+  await h.c.start();
+  await h.c.onWebMessage({ v: 1, type: "devAddActivity" });
+  expect(h.devAddActivity).not.toHaveBeenCalled();
+  expect(h.sent).toEqual([]);
+  vi.unstubAllGlobals();
 });
