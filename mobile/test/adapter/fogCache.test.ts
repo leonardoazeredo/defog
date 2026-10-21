@@ -141,6 +141,26 @@ describe("reveals", () => {
     expect(await c.revealIds()).toEqual([ACT]);
   });
 
+  it("treats a stored record of the wrong shape as missing", async () => {
+    const c = await openFogCache(idb, true);
+    await new Promise<void>((resolve, reject) => {
+      const req = idb.open("crossfog", 2);
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction("reveals", "readwrite");
+        tx.objectStore("reveals").put({ rulesVersion: 1 }, ACT);
+        tx.objectStore("reveals").put({ rulesVersion: "1", cells: new ArrayBuffer(8) }, OTHER);
+        tx.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        tx.onerror = () => reject(tx.error);
+      };
+    });
+    expect(await c.getReveal(ACT)).toBeNull();
+    expect(await c.getReveal(OTHER)).toBeNull();
+  });
+
   it("does nothing when disabled", async () => {
     const c = await openFogCache(idb, false);
     await c.putReveal(ACT, 1, cells);

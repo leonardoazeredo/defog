@@ -123,8 +123,12 @@ export async function openFogCache(
           const tx = db.transaction(REVEALS, "readonly");
           const req = tx.objectStore(REVEALS).get(activityId);
           req.onsuccess = () => {
-            const raw = req.result as CachedReveal | undefined;
-            resolve(raw == null ? null : { rulesVersion: raw.rulesVersion, cells: raw.cells });
+            const raw = req.result as Partial<CachedReveal> | undefined;
+            const { rulesVersion, cells } = raw ?? {};
+            const whole =
+              typeof rulesVersion === "number" &&
+              Object.prototype.toString.call(cells) === "[object ArrayBuffer]";
+            resolve(whole ? { rulesVersion, cells: cells as ArrayBuffer } : null);
           };
           req.onerror = () => resolve(null);
         } catch {
@@ -139,9 +143,12 @@ export async function openFogCache(
           const tx = db.transaction(REVEALS, "readwrite");
           // slice() copies just this view's bytes; `cells.buffer` could be a larger buffer shared with
           // other data, and the caller may reuse the array.
+          // A transaction that aborts at commit (a full disk) fires onabort, not onerror; without it this
+          // promise never settles and the history sync, which awaits it, stops for the session.
           tx.objectStore(REVEALS).put({ rulesVersion, cells: cells.slice().buffer }, activityId);
           tx.oncomplete = () => resolve();
           tx.onerror = () => resolve();
+          tx.onabort = () => resolve();
         } catch {
           resolve();
         }
@@ -155,6 +162,7 @@ export async function openFogCache(
           tx.objectStore(REVEALS).delete(activityId);
           tx.oncomplete = () => resolve();
           tx.onerror = () => resolve();
+          tx.onabort = () => resolve();
         } catch {
           resolve();
         }

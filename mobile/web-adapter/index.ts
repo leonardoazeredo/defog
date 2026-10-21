@@ -50,7 +50,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // Listening before `ready` goes out, so the first `activities` message is not missed.
   const page = window.CrossfogPage;
-  if (page != null && window.crossfog != null) {
+  if (page?.reveal != null && window.crossfog != null) {
     const history = createHistorySync({
       pageApi: { needTrack: (activityId) => send({ v: 1, type: "needTrack", activityId }) },
       cache,
