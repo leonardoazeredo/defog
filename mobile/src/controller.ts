@@ -1,12 +1,12 @@
 import type { NativeToWeb, WebToNative } from "./bridge/protocol.js";
 import { COPY } from "./copy.js";
+import { createImportFlow } from "./flows/importFlow.js";
 import type { Flows } from "./flows/types.js";
 import type { FileStore } from "./fog/fileStore.js";
 import type { ReloadGuard } from "./fog/reloadGuard.js";
 import type { FogStore, SourceFile } from "./fog/store.js";
 import { zipName } from "./fog/store.js";
 import { streamCopy } from "./fog/transfer.js";
-import { acceptIncoming } from "./import/incoming.js";
 
 export interface ControllerDeps {
   store: FogStore;
@@ -45,17 +45,10 @@ export function createController(deps: ControllerDeps): Controller {
   let pageReady = false;
   const noticeQueue: string[] = [];
 
-  let importActive = false;
-  let pendingShare: SourceFile | null = null;
   let activeFingerprint: string | null = null;
   let activeAbort: AbortController | null = null;
 
   let lastBackAt: number | null = null;
-
-  function clearImportActive(): void {
-    importActive = false;
-    deps.setBusy(false);
-  }
 
   function sendMsg(msg: NativeToWeb): void {
     if (pageReady) deps.send(msg);
@@ -79,6 +72,17 @@ export function createController(deps: ControllerDeps): Controller {
     pageReady = false;
     deps.remount();
   }
+
+  const importFlow = createImportFlow({
+    store,
+    pickFile: deps.pickFile,
+    confirmReplace: deps.confirmReplace,
+    notify: deps.notify,
+    releaseSource: deps.releaseSource,
+    setBusy: deps.setBusy,
+    queueNotice,
+    remount: doRemount,
+  });
 
   async function handleReady(): Promise<void> {
     const pending = await store.pending();
@@ -118,6 +122,7 @@ export function createController(deps: ControllerDeps): Controller {
       }
     }
     flushNotices();
+    await deps.flows.ready();
   }
 
   async function handleNeedBytes(fingerprint: string): Promise<void> {
@@ -139,15 +144,6 @@ export function createController(deps: ControllerDeps): Controller {
     });
   }
 
-  async function endImport(): Promise<void> {
-    clearImportActive();
-    const queued = pendingShare;
-    pendingShare = null;
-    if (queued) {
-      await handleIncoming(queued);
-    }
-  }
-
   async function handleLoaded(msg: Extract<WebToNative, { type: "loaded" }>): Promise<void> {
     const pending = await store.pending();
     if (!pending || pending.sha256 !== msg.fingerprint) {
@@ -159,77 +155,7 @@ export function createController(deps: ControllerDeps): Controller {
       }
       return;
     }
-
-    if (msg.ok) {
-      await store.promotePending();
-      clearImportActive();
-      const queued = pendingShare;
-      pendingShare = null;
-      if (queued) await handleIncoming(queued);
-    } else {
-      await store.discardPending();
-      queueNotice(COPY.notABackup);
-      await endImport();
-      await doRemount();
-    }
-  }
-
-  async function doImport(file: SourceFile, source: "picker" | "share"): Promise<boolean> {
-    deps.setBusy(true);
-    try {
-      await store.beginImport(file, source);
-      await deps.releaseSource(file.uri);
-      await doRemount();
-      return true;
-    } catch {
-      queueNotice(COPY.importFailed);
-      return false;
-    }
-  }
-
-  async function handlePickBackup(): Promise<void> {
-    if (importActive) return;
-    importActive = true;
-    try {
-      const file = await deps.pickFile();
-      if (!file) {
-        clearImportActive();
-        return;
-      }
-      if (!acceptIncoming(file.name)) {
-        deps.notify(COPY.zipOnly);
-        clearImportActive();
-        return;
-      }
-      const ok = await doImport(file, "picker");
-      if (!ok) clearImportActive();
-    } catch {
-      queueNotice(COPY.importFailed);
-      clearImportActive();
-    }
-  }
-
-  async function handleIncoming(file: SourceFile): Promise<void> {
-    if (!acceptIncoming(file.name)) {
-      deps.notify(COPY.zipOnly);
-      await deps.releaseSource(file.uri);
-      return;
-    }
-    if (importActive) {
-      pendingShare = file;
-      return;
-    }
-    const current = await store.current();
-    if (current) {
-      const confirmed = await deps.confirmReplace(file.name);
-      if (!confirmed) {
-        await deps.releaseSource(file.uri);
-        return;
-      }
-    }
-    importActive = true;
-    const ok = await doImport(file, "share");
-    if (!ok) clearImportActive();
+    await importFlow.loaded(msg);
   }
 
   return {
@@ -259,10 +185,10 @@ export function createController(deps: ControllerDeps): Controller {
           await handleLoaded(msg);
           break;
         case "pickBackup":
-          await handlePickBackup();
+          await importFlow.pick();
           break;
         case "clearSavedFog":
-          if (importActive) return;
+          if (importFlow.active()) return;
           if (await deps.confirmClear()) {
             await store.clear();
             await guard.reset();
@@ -323,20 +249,12 @@ export function createController(deps: ControllerDeps): Controller {
 
     async onIncoming(file: SourceFile) {
       await started;
-      await handleIncoming(file);
+      await importFlow.incoming(file);
     },
 
     async onProcessGone() {
       await started;
-      if (importActive) {
-        const pending = await store.pending();
-        if (pending) {
-          await store.discardPending();
-          queueNotice(COPY.importFailed);
-        }
-        clearImportActive();
-        pendingShare = null;
-      }
+      await importFlow.processGone();
       await doRemount();
     },
 

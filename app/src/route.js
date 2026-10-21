@@ -333,6 +333,8 @@
   // ----- export ----------------------------------------------------------------
   RouteTool.prototype.toGPX = function () {
     const name = "FogToMaps route (" + this.profile + ")";
+    // GPX 1.1 metadata keywords carry the route id, so no extension namespace is needed; the watch reads it back to match an activity to this route
+    const keywords = /^[0-9a-f-]{36}$/i.test(this.routeId) ? `\n    <keywords>crossfog-route:${this.routeId}</keywords>` : "";
     const pts = this.routeCoords.map((c) => {
       const ele = c.length > 2 ? `<ele>${c[2].toFixed(1)}</ele>` : "";
       return `      <trkpt lat="${c[1].toFixed(6)}" lon="${c[0].toFixed(6)}">${ele}</trkpt>`;
@@ -341,7 +343,7 @@
 <gpx version="1.1" creator="FogToMaps" xmlns="http://www.topografix.com/GPX/1/1">
   <metadata>
     <copyright author="OpenStreetMap contributors"><license>https://opendatacommons.org/licenses/odbl/</license></copyright>
-    <link href="https://www.openstreetmap.org/copyright"><text>Map data © OpenStreetMap contributors</text></link>
+    <link href="https://www.openstreetmap.org/copyright"><text>Map data © OpenStreetMap contributors</text></link>${keywords}
   </metadata>
   <trk>
     <name>${name}</name>

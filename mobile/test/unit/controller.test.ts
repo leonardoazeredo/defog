@@ -82,6 +82,7 @@ function createHarness(): Harness {
   const busy: boolean[] = [];
   const noop = createNoopFlows();
   const flows = {
+    ready: vi.fn(noop.ready),
     sendRoute: vi.fn(noop.sendRoute),
     needTrack: vi.fn(noop.needTrack),
     deleteActivity: vi.fn(noop.deleteActivity),
@@ -154,6 +155,25 @@ it("first run sends none", async () => {
   await h.c.start();
   await h.c.onWebMessage(ready);
   expect(h.sent).toEqual([{ v: 1, type: "none" }]);
+});
+
+it("tells the flows the page is ready once it has the reload message", async () => {
+  const h = createHarness();
+  await saveToStore(h.store, aSrc, "a.zip");
+  h.flows.ready.mockImplementation(async () => {
+    expect(h.sent.map((m) => m.type)).toEqual(["reload"]);
+  });
+  await h.c.start();
+  await h.c.onWebMessage(ready);
+  expect(h.flows.ready).toHaveBeenCalledTimes(1);
+});
+
+it("tells the flows again each time the page reloads", async () => {
+  const h = createHarness();
+  await h.c.start();
+  await h.c.onWebMessage(ready);
+  await h.c.onWebMessage(ready);
+  expect(h.flows.ready).toHaveBeenCalledTimes(2);
 });
 
 it("reloads the saved copy", async () => {
