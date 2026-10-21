@@ -67,12 +67,16 @@
 
   // usable: wayId -> may this travel class use the way; dirOf: wayId -> 1 when the way
   // may only be travelled along its node order, -1 against it, 0 both ways
-  function GraphPlanner(streets, newFrac, usable, dirOf) {
+  // fogVersion: () -> a number that changes whenever the fog does; the graph's rewards are rebuilt when it moves
+  function GraphPlanner(streets, newFrac, usable, dirOf, fogVersion) {
     this.streets = streets;
     this.usable = usable || (() => true);
     this.dirOf = dirOf || (() => 0);
+    this.fogVersion = fogVersion || (() => 0);
+    this.rawFrac = newFrac;
     this.newFrac = fracCache(newFrac);
-    this.builtStamp = ""; // what the graph was built from; rebuild when a fetch changed it
+    this.fracFog = this.fogVersion(); // the fog the fraction cache is filled under
+    this.builtStamp = ""; // what the graph was built from; rebuild when a fetch or the fog changed it
   }
 
   // ---- graph construction --------------------------------------------------
@@ -81,8 +85,11 @@
   GraphPlanner.prototype.build = function () {
     const ways = this.streets.ways;
     // new ways, or lists (classes, one-ways) that a fetch changed on ways we already hold
-    const stamp = ways.length + "." + (this.streets.version || 0);
+    const fog = this.fogVersion();
+    const stamp = ways.length + "." + (this.streets.version || 0) + "." + fog;
     if (this.builtStamp === stamp && this.adj) return;
+    // the cache memoises fractions per ~10 m, so after a fog change it would hand the rebuild the old ones
+    if (fog !== this.fracFog) { this.newFrac = fracCache(this.rawFrac); this.fracFog = fog; }
     const t0 = Date.now();
     const uses = new Map();
     for (const w of ways) {

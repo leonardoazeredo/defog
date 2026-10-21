@@ -19,7 +19,7 @@ function findAppSrc(): string {
 
 const APP_SRC = findAppSrc();
 
-// installFakeUpstream loads the upstream app's unzip.js and parser.js into the
+// installFakeUpstream loads the upstream app's unzip.js, parser.js and reveal.js into the
 // test window via eval (the same way the mobile webview hosts them) and wires
 // up the same "zip input change" listener the real app uses. pako is shimmed
 // with fflate since pako is not available in Node.
@@ -33,6 +33,7 @@ export function installFakeUpstream(win: Window, doc: Document): void {
 
   (winAny.eval as (code: string) => void)(readFileSync(resolve(APP_SRC, "unzip.js"), "utf-8"));
   (winAny.eval as (code: string) => void)(readFileSync(resolve(APP_SRC, "parser.js"), "utf-8"));
+  (winAny.eval as (code: string) => void)(readFileSync(resolve(APP_SRC, "reveal.js"), "utf-8"));
 
   const FogParser = winAny.FogParser as {
     FogMap: new () => { addTile(name: string, data: Uint8Array): boolean };

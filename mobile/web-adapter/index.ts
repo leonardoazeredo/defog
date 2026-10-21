@@ -4,6 +4,7 @@ import { createSend, onNativeMessage } from "./bridge.js";
 import { installDevTools } from "./devTools.js";
 import { installDownloads } from "./downloads.js";
 import { openFogCache } from "./fogCache.js";
+import { createHistorySync } from "./history.js";
 import { installImportButtons } from "./importButtons.js";
 import { installLinks } from "./links.js";
 import { assignFilesWithDataTransfer, installOutcomeHooks, loadCopy } from "./loader.js";
@@ -46,6 +47,19 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   const hooks = installOutcomeHooks(window);
   const cache = await openFogCache(indexedDB, CACHE_ENABLED);
+
+  // Listening before `ready` goes out, so the first `activities` message is not missed.
+  const page = window.CrossfogPage;
+  if (page != null && window.crossfog != null) {
+    const history = createHistorySync({
+      pageApi: { needTrack: (activityId) => send({ v: 1, type: "needTrack", activityId }) },
+      cache,
+      page,
+      rules: page.reveal.RULES,
+    });
+    window.crossfog.on("activities", history.onActivities);
+    window.crossfog.on("track", history.onTrack);
+  }
 
   const zipInput = document.getElementById("zip") as HTMLInputElement;
   const load = (bytes: Uint8Array, name: string) =>

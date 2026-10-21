@@ -275,7 +275,7 @@
     // usableFor and onewayFor depend only on the travel class, so profiles sharing one share the graph
     const key = global.StreetIndex.MODE_CLASS[profile] || "foot";
     if (!this._planners[key])
-      this._planners[key] = new global.GraphPlanner(this.streets, this.streets.newFrac, this.streets.usableFor(profile), this.streets.onewayFor(profile));
+      this._planners[key] = new global.GraphPlanner(this.streets, this.streets.newFrac, this.streets.usableFor(profile), this.streets.onewayFor(profile), () => this.fogMap.version || 0);
     return this._planners[key];
   };
 

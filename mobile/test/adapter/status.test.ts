@@ -143,6 +143,10 @@ it("the dev button drops the cache", async () => {
     get: vi.fn(),
     putOnly: vi.fn(),
     clearAll: vi.fn().mockResolvedValue(undefined),
+    getReveal: vi.fn(),
+    putReveal: vi.fn(),
+    deleteReveal: vi.fn(),
+    revealIds: vi.fn(),
   };
   installDevTools(document, cache, vi.fn());
   const btn = document.querySelector("button[data-crossfog-dev]") as HTMLButtonElement;

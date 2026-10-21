@@ -239,6 +239,7 @@
     if (b) map.fitBounds(b, { padding: [20, 20] });
     setLoad(`${fogMap.tileCount} tiles loaded ✓`);
     updateDefog();
+    streets.invalidateFrac(); // the street index remembers each segment's fogged share, from the old fog
     streetsLayer.invalidateFog(); // streets must be judged against the fog that just arrived
     syncSug(); // fog just arrived, so the Suggest button can wake up
   }
@@ -688,4 +689,16 @@
   exportGpxBtn.addEventListener("click", () => route.downloadGPX());
   exportKmlBtn.addEventListener("click", () => route.downloadKML());
   gmapsBtn.addEventListener("click", () => { const u = route.googleMapsUrl(); if (u) window.open(u, "_blank", "noopener"); });
+
+  // The phone app's page adapter adds and removes cells revealed by activities, then calls fogChanged() so
+  // everything computed from the fog is recomputed the next time it is needed. The suggestion planners need no reset: they
+  // stamp their graph with fogMap.version and rebuild on their own.
+  function fogChanged() {
+    if (fogLayer) fogLayer.redraw();
+    streets.invalidateFrac();
+    streetsLayer.invalidateFog();
+    updateDefog();
+    syncSug();
+  }
+  window.CrossfogPage = { fogMap, fogChanged, reveal: window.Reveal };
 })();

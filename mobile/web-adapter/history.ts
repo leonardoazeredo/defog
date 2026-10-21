@@ -1,0 +1,167 @@
+import type { ActivitySummary, TrackPoint } from "../src/bridge/protocol.js";
+import type { FogCache } from "./fogCache.js";
+
+// app/src/reveal.js `Reveal.RULES`: results are only comparable within one `version`.
+interface RevealRules {
+  version: number;
+  maxAccuracyM: number;
+  maxGapS: number;
+  maxGapM: number;
+  halfWidthM: number;
+}
+
+// What app/src/main.js hands the adapter as `window.CrossfogPage`.
+export interface CrossfogPageApi {
+  fogMap: {
+    addCells(cells: Int32Array): number;
+    clearOverlay(): void;
+  };
+  fogChanged(): void;
+  reveal: {
+    RULES: RevealRules;
+    reveal(
+      track: Array<{ t: number; lat: number; lon: number; accuracy?: number | undefined }>,
+      rules: RevealRules,
+    ): Int32Array;
+  };
+}
+
+declare global {
+  interface Window {
+    CrossfogPage?: CrossfogPageApi;
+  }
+}
+
+export interface HistorySyncDeps {
+  pageApi: { needTrack(activityId: string): void };
+  cache: FogCache;
+  page: CrossfogPageApi;
+  rules: RevealRules;
+}
+
+export interface HistorySync {
+  onActivities(payload: { items: ActivitySummary[] }): void;
+  onTrack(chunk: { activityId: string; index: number; total: number; points: TrackPoint[] }): void;
+  /** Resolves when everything received so far has been applied; for tests. */
+  settled(): Promise<void>;
+}
+
+// Keeps the page's explored cells equal to the import plus the reveal of every kept activity.
+// The cache only saves re-revealing; the in-memory map is what a rebuild after a delete reads, so a
+// disabled or broken cache costs one track request per activity on each start and nothing else.
+export function createHistorySync(deps: HistorySyncDeps): HistorySync {
+  const { pageApi, cache, page, rules } = deps;
+
+  const revealed = new Map<string, Int32Array>();
+  const requested = new Set<string>();
+  const partial = new Map<string, { total: number; chunks: Map<number, TrackPoint[]> }>();
+  let wanted = new Set<string>();
+
+  // One job at a time: a rebuild must not clear the overlay while a reveal is still on its way in.
+  let tail: Promise<void> = Promise.resolve();
+  function enqueue(job: () => Promise<void>): void {
+    tail = tail.then(job).catch(() => {
+      // Fixed text: a message could carry positions, which must not reach logs.
+      console.error("crossfog: updating the fog from the history failed");
+    });
+  }
+
+  function rebuild(): void {
+    page.fogMap.clearOverlay();
+    for (const cells of revealed.values()) page.fogMap.addCells(cells);
+  }
+
+  async function cachedCells(id: string): Promise<Int32Array | null> {
+    const hit = await cache.getReveal(id);
+    if (hit == null || hit.rulesVersion !== rules.version) return null;
+    // a whole number of [cx, cy] pairs, or the entry is damaged
+    if (hit.cells.byteLength % 8 !== 0) return null;
+    return new Int32Array(hit.cells);
+  }
+
+  async function applyList(items: ActivitySummary[]): Promise<void> {
+    wanted = new Set(items.map((item) => item.id));
+
+    let removed = false;
+    for (const id of [...revealed.keys()]) {
+      if (wanted.has(id)) continue;
+      revealed.delete(id);
+      removed = true;
+    }
+    for (const id of [...requested]) {
+      if (wanted.has(id)) continue;
+      requested.delete(id);
+      partial.delete(id);
+    }
+    // reveals left on disk by an activity deleted while the page was closed
+    for (const id of await cache.revealIds()) {
+      if (!wanted.has(id)) await cache.deleteReveal(id);
+    }
+
+    let restored = false;
+    for (const id of wanted) {
+      if (revealed.has(id) || requested.has(id)) continue;
+      const cells = await cachedCells(id);
+      if (cells == null) {
+        requested.add(id);
+        pageApi.needTrack(id);
+        continue;
+      }
+      revealed.set(id, cells);
+      restored = true;
+    }
+
+    if (removed) {
+      rebuild();
+      page.fogChanged();
+    } else if (restored) {
+      let added = 0;
+      for (const id of wanted) {
+        const cells = revealed.get(id);
+        if (cells != null) added += page.fogMap.addCells(cells);
+      }
+      if (added > 0) page.fogChanged();
+    }
+  }
+
+  async function applyTrack(chunk: {
+    activityId: string;
+    index: number;
+    total: number;
+    points: TrackPoint[];
+  }): Promise<void> {
+    const { activityId, index, total, points } = chunk;
+    if (!requested.has(activityId)) return;
+
+    let got = partial.get(activityId);
+    if (got == null || got.total !== total) {
+      got = { total, chunks: new Map() };
+      partial.set(activityId, got);
+    }
+    got.chunks.set(index, points);
+    if (got.chunks.size < total) return;
+
+    partial.delete(activityId);
+    requested.delete(activityId);
+    const track: TrackPoint[] = [];
+    for (let i = 0; i < total; i++) track.push(...(got.chunks.get(i) ?? []));
+
+    const cells = page.reveal.reveal(
+      track.map((p) => ({ t: p.t, lat: p.lat, lon: p.lon, accuracy: p.accuracy })),
+      rules,
+    );
+    await cache.putReveal(activityId, rules.version, cells);
+    if (!wanted.has(activityId)) {
+      await cache.deleteReveal(activityId);
+      return;
+    }
+    revealed.set(activityId, cells);
+    if (page.fogMap.addCells(cells) > 0) page.fogChanged();
+  }
+
+  return {
+    onActivities: ({ items }) => enqueue(() => applyList(items)),
+    onTrack: (chunk) => enqueue(() => applyTrack(chunk)),
+    settled: () => tail,
+  };
+}
