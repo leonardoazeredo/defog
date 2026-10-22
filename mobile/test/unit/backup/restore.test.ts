@@ -155,6 +155,22 @@ describe("restore flow", () => {
     expect(await r.run()).toBe("notABackup");
   });
 
+  it("blames the file, not a passphrase, when a plain SQLite file will not open", async () => {
+    const r = restore({
+      copyFromUri: async (_u, dest) => {
+        writeFileSync(dest, "SQLite format 3\0 but cut short");
+        return { size: 8192, head: PLAIN };
+      },
+    });
+    expect(await r.run()).toBe("notABackup");
+    expect(r.askPassphrase).not.toHaveBeenCalled();
+  });
+
+  it("blames the passphrase when an encrypted-looking file is opened with none", async () => {
+    const r = restore({}, { kind: "none" });
+    expect(await r.run()).toBe("wrongPassphrase");
+  });
+
   it("changes nothing when the confirmation is declined", async () => {
     expect(await restore({ confirm: async () => false }).run()).toBe("cancelled");
     expect(await ids(target)).toEqual([OTHER_ID]);
@@ -227,7 +243,7 @@ describe("restore flow", () => {
     expect(target.scratch.left()).toEqual([]);
   });
 
-  it("reports the failure, not success, when promoting the import fails after the swap", async () => {
+  it("tells the page to reload, with a distinct result, when the fog cannot follow the swap", async () => {
     const r = restore({
       fogStore: {
         ...target.fogStore,
@@ -236,11 +252,40 @@ describe("restore flow", () => {
         },
       },
     });
-    await expect(r.run()).rejects.toThrow("rename failed");
-    // The history is the backup's by now; the settings are not applied.
+    expect(await r.run()).toBe("fogNotReplaced");
+    // The history is the backup's by now; the fog is untouched: nothing is promoted and the import stays pending.
     expect(await ids(target)).toEqual([activity().id]);
+    expect(await target.fogStore.current()).toBeNull();
+    expect((await target.fogStore.pending())?.name).toBe("Sync.zip");
     expect(r.apply).not.toHaveBeenCalled();
     expect(target.scratch.left()).toEqual([]);
+  });
+
+  it("discards the pending import when staging it fails halfway", async () => {
+    const discard = vi.fn(async () => {});
+    const r = restore({
+      fogStore: {
+        ...target.fogStore,
+        beginImport: async () => {
+          throw new Error("no space");
+        },
+        discardPending: discard,
+      },
+    });
+    await expect(r.run()).rejects.toThrow("no space");
+    expect(discard).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the outcome when removing the scratch files fails", async () => {
+    const r = restore({
+      scratch: {
+        ...target.scratch,
+        remove: async () => {
+          throw new Error("locked");
+        },
+      },
+    });
+    expect(await r.run()).toBe("restored");
   });
 
   it("ignores settings in the backup that are not f2m_ keys", async () => {

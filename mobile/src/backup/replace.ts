@@ -19,13 +19,31 @@ function removeWithSidecars(files: DatabaseFiles, name: string): void {
   for (const s of SIDECARS) files.remove(name + s);
 }
 
-/** Puts back what an interrupted swap took away: a missing live file with the replaced one still beside it. */
+/**
+ * Puts back the old file when a swap left no live one, and removes a staged RESTORING_DB. Safe at
+ * any time: swap() runs its moves with no await between them, so a running process never sees that
+ * state; only a killed one leaves it.
+ * The replaced copy is not deleted here: with both files present the new one is unproven.
+ */
 export function recoverInterruptedReplace(files: DatabaseFiles): void {
   if (!files.exists(LIVE_DB) && files.exists(REPLACED_DB)) {
     files.move(REPLACED_DB, LIVE_DB);
   }
-  removeWithSidecars(files, REPLACED_DB);
   removeWithSidecars(files, RESTORING_DB);
+}
+
+/** Makes the old file live again, discarding the live one; otherwise it only removes a staged RESTORING_DB. */
+export function putBackReplacedCopy(files: DatabaseFiles): void {
+  if (files.exists(REPLACED_DB)) {
+    removeWithSidecars(files, LIVE_DB);
+    files.move(REPLACED_DB, LIVE_DB);
+  }
+  removeWithSidecars(files, RESTORING_DB);
+}
+
+/** Drops the old file once the new one has opened and migrated. */
+export function discardReplacedCopy(files: DatabaseFiles): void {
+  removeWithSidecars(files, REPLACED_DB);
 }
 
 export interface ReplaceDeps {
@@ -53,8 +71,9 @@ async function count(db: { all<T>(sql: string): Promise<T[]> }, table: string): 
 /**
  * Makes the opened backup the history database: a new file keyed with the device key, checked
  * against the backup, then swapped in. The old file is kept until the new one opens, so a failure
- * before the swap, or when the new file does not open, leaves the phone as it was; one during the
- * swap itself is undone by `recoverInterruptedReplace` at the next start.
+ * before the swap, during it, or when the new file does not open, leaves the phone as it was. A
+ * process killed between the two moves in swap() is undone by `recoverInterruptedReplace`; killed
+ * after the second, the new file stays live and the next first open decides.
  */
 export function createDatabaseReplacer(
   deps: ReplaceDeps,
@@ -104,10 +123,9 @@ export function createDatabaseReplacer(
     files.move(RESTORING_DB, LIVE_DB);
   }
 
-  function rollback(): void {
-    removeWithSidecars(files, LIVE_DB);
-    if (files.exists(REPLACED_DB)) files.move(REPLACED_DB, LIVE_DB);
-  }
+  // Leaves the live file alone when the swap failed before the old file moved; still removes
+  // a staged RESTORING_DB.
+  const rollback = () => putBackReplacedCopy(files);
 
   return (backup) =>
     deps.exclusive(async () => {
@@ -120,14 +138,14 @@ export function createDatabaseReplacer(
         await deps.reopen().catch(() => undefined);
         throw e;
       }
-      swap();
       try {
+        swap();
         await deps.reopen();
       } catch (e) {
         rollback();
         await deps.reopen().catch(() => undefined);
         throw e;
       }
-      removeWithSidecars(files, REPLACED_DB);
+      discardReplacedCopy(files);
     });
 }

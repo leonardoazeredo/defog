@@ -41,8 +41,9 @@ export function createBackupFlows(deps: BackupFlowsDeps): BackupFlows {
           if (result.status === "saved") deps.notify(COPY.backupSaved(result.name));
         } catch (e) {
           if (e instanceof BackupError && e.code === "noSpace") deps.notify(COPY.backupNoSpace);
-          else if (e instanceof BackupError) deps.notify(COPY.backupNoSettings);
-          else {
+          else if (e instanceof BackupError && e.code === "noSettings") {
+            deps.notify(COPY.backupNoSettings);
+          } else {
             console.warn("crossfog: backup failed", e instanceof Error ? e.name : "unknown");
             deps.notify(COPY.backupFailed);
           }
@@ -55,6 +56,9 @@ export function createBackupFlows(deps: BackupFlowsDeps): BackupFlows {
           switch (result) {
             case "restored":
               deps.notify(COPY.restoreDone);
+              return true;
+            case "fogNotReplaced":
+              deps.notify(COPY.restoreFogNotReplaced);
               return true;
             case "wrongPassphrase":
               deps.notify(COPY.restoreWrongPassphrase);

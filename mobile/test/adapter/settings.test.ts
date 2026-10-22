@@ -41,6 +41,19 @@ describe("page settings", () => {
     });
   });
 
+  it("skips only the keys the phone would refuse", () => {
+    localStorage.setItem("f2m_units", "metric");
+    localStorage.setItem("f2m_bad-key", "x");
+    localStorage.setItem(`f2m_${"k".repeat(70)}`, "x");
+    expect(JSON.parse(createPageSettings(localStorage).collect())).toEqual({ f2m_units: "metric" });
+  });
+
+  it("keeps what fits when the settings are too large", () => {
+    localStorage.setItem("f2m_a", "small");
+    localStorage.setItem("f2m_b", "x".repeat(20_000));
+    expect(JSON.parse(createPageSettings(localStorage).collect())).toEqual({ f2m_a: "small" });
+  });
+
   it("collects an empty object when there are none", () => {
     expect(createPageSettings(localStorage).collect()).toBe("{}");
   });
@@ -52,6 +65,17 @@ describe("page settings", () => {
     expect(localStorage.getItem("f2m_old")).toBeNull();
     expect(localStorage.getItem("f2m_units")).toBe("metric");
     expect(localStorage.getItem("other")).toBe("kept");
+  });
+
+  it("leaves the old settings in place when a write fails", () => {
+    localStorage.setItem("f2m_old", "kept");
+    const failing = new MemoryStorage();
+    failing.setItem("f2m_old", "kept");
+    failing.setItem = () => {
+      throw new Error("quota");
+    };
+    expect(createPageSettings(failing).apply('{"f2m_new":"x"}')).toBe(false);
+    expect(failing.getItem("f2m_old")).toBe("kept");
   });
 
   it("changes nothing when the settings are not valid", () => {

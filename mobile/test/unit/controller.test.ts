@@ -721,6 +721,25 @@ it("refuses a restore while an import is running and says why", async () => {
   pick.resolve(null);
 });
 
+it("refuses an import, a clear and a shared file while a restore runs", async () => {
+  const h = createHarness();
+  await h.c.start();
+  const restoring = deferred<boolean>();
+  h.flows.restore.mockReturnValueOnce(restoring.promise);
+  const running = h.c.onWebMessage({ v: 1, type: "restore" });
+  await Promise.resolve();
+  await h.c.onWebMessage(pickBackup);
+  await h.c.onWebMessage({ v: 1, type: "clearSavedFog" });
+  await h.c.onIncoming({ uri: bSrc, name: "b.zip" });
+  expect(h.pickFile).not.toHaveBeenCalled();
+  expect(h.confirmClear).not.toHaveBeenCalled();
+  expect(h.notified.filter((t) => t === COPY.restoreRunning)).toHaveLength(3);
+  restoring.resolve(false);
+  await running;
+  await h.c.onWebMessage(pickBackup);
+  expect(h.pickFile).toHaveBeenCalledOnce();
+});
+
 it("waits for the flow before the next page message is handled", async () => {
   const h = createHarness();
   const gate = deferred<void>();

@@ -1,6 +1,8 @@
 import type { NativeToWeb } from "../bridge/protocol.js";
 
 const KEY_RE = /^f2m_[A-Za-z0-9_]{1,64}$/;
+
+export const isSettingsKey = (key: string): boolean => KEY_RE.test(key);
 export const MAX_SETTINGS_BYTES = 16_384;
 
 /** The page's saved choices as `{key: value}`; null when the text is anything else, so nothing foreign reaches localStorage. */

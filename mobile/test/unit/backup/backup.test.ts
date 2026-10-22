@@ -194,6 +194,37 @@ describe("backup flow", () => {
     small.cleanup();
   });
 
+  it("refuses when the database size is unknown rather than letting the check pass", async () => {
+    const f = createBackupFlow({
+      withDb: (fn) => h.gate.shared(() => fn(h.db)),
+      openBackup: openNodeBackup,
+      fogStore: h.fogStore,
+      fs: h.fs,
+      scratch: { ...h.scratch, databaseBytes: async () => Number.NaN },
+      settings: { request: async () => SETTINGS },
+      askPassphrase: async () => ({ kind: "passphrase", passphrase: "correct horse" }),
+      confirmUnencrypted: async () => true,
+      saveAs: async () => null,
+      now: () => NOW,
+    });
+    await expect(f.run()).rejects.toMatchObject({ code: "noSpace" });
+  });
+
+  it("keeps a saved backup saved when removing the temporary file fails", async () => {
+    const { f } = flow(
+      { kind: "passphrase", passphrase: "correct horse" },
+      {
+        scratch: {
+          ...h.scratch,
+          remove: async (p: string) => {
+            if (p.endsWith(".db")) throw new Error("locked");
+          },
+        },
+      },
+    );
+    expect((await f.run()).status).toBe("saved");
+  });
+
   it("fails without a file when the page does not give its settings", async () => {
     const { f, saveAs } = flow(
       { kind: "passphrase", passphrase: "correct horse" },

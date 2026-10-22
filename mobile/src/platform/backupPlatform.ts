@@ -48,7 +48,7 @@ export function createScratch(): Scratch & { clear(): void } {
     async databaseBytes() {
       const live = new File(sqliteDir(), LIVE_DB);
       const wal = new File(sqliteDir(), `${LIVE_DB}-wal`);
-      return live.size + wal.size;
+      return (live.size || 0) + (wal.size || 0);
     },
     // A crash mid-backup leaves a copy of the history in the cache; the next start removes it.
     clear() {
@@ -67,7 +67,9 @@ export async function saveFileAs(
   const uri = await createDocument(name, mime);
   if (uri === null) return null;
   await copyToUri(path, uri);
-  return { name: (await displayNameOf(uri)) ?? name };
+  // The file is written by now; failing to learn its name must not report the backup as failed.
+  const shown = await displayNameOf(uri).catch(() => null);
+  return { name: shown ?? name };
 }
 
 /** Picks a backup file without copying it: the native side streams it into the cache. */

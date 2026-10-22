@@ -77,20 +77,24 @@ export function createBackupFlow(deps: BackupDeps): { run(): Promise<BackupResul
       } catch {
         throw new BackupError("noSettings");
       }
-      if ((await deps.scratch.freeBytes()) < SPACE_FACTOR * (await deps.scratch.databaseBytes())) {
+      // Negated so a free size that is not a number (unknown, NaN or undefined) fails safe as no space.
+      if (
+        !((await deps.scratch.freeBytes()) >= SPACE_FACTOR * (await deps.scratch.databaseBytes()))
+      ) {
         throw new BackupError("noSpace");
       }
 
       const name = backupName(deps.now());
       const tmp = deps.scratch.path(name);
-      await deps.scratch.remove(tmp);
+      // A leftover from a killed run is cleared if it can be; an export onto one that cannot fails by itself.
+      await deps.scratch.remove(tmp).catch(() => undefined);
       try {
         await deps.withDb((db) => db.exportTo(tmp, choice.key));
         await addBlobs(tmp, choice.key, settings);
         const saved = await deps.saveAs(tmp, name, BACKUP_MIME);
         return saved === null ? cancelled : { status: "saved", name: saved.name };
       } finally {
-        await deps.scratch.remove(tmp);
+        await deps.scratch.remove(tmp).catch(() => undefined);
       }
     },
   };

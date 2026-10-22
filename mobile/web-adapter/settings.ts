@@ -1,4 +1,4 @@
-import { MAX_SETTINGS_BYTES, parseSettings } from "../src/backup/settings.js";
+import { isSettingsKey, MAX_SETTINGS_BYTES, parseSettings } from "../src/backup/settings.js";
 
 export interface PageSettings {
   /** The page's saved choices (its `f2m_` localStorage keys) as JSON. */
@@ -25,21 +25,24 @@ export function createPageSettings(storage: Storage): PageSettings {
       try {
         for (const key of ownKeys(storage)) {
           const value = storage.getItem(key);
-          if (value !== null) out[key] = value;
+          // Entries the receiving side would refuse, or that would push past
+          // MAX_SETTINGS_BYTES, are dropped one at a time so the rest still restore.
+          if (value === null || !isSettingsKey(key)) continue;
+          out[key] = value;
+          if (JSON.stringify(out).length > MAX_SETTINGS_BYTES) delete out[key];
         }
       } catch {
         return "{}";
       }
-      // Only what the receiving side would accept: a backup that cannot be restored is worse than one without settings.
-      const json = JSON.stringify(out);
-      return json.length <= MAX_SETTINGS_BYTES && parseSettings(json) !== null ? json : "{}";
+      return JSON.stringify(out);
     },
     apply(json) {
       const settings = parseSettings(json);
       if (settings === null) return false;
       try {
-        for (const key of ownKeys(storage)) storage.removeItem(key);
+        // New values first, so a write that fails leaves the old settings next to the new ones rather than none.
         for (const [key, value] of Object.entries(settings)) storage.setItem(key, value);
+        for (const key of ownKeys(storage)) if (!(key in settings)) storage.removeItem(key);
       } catch {
         return false;
       }

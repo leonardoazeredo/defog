@@ -4,7 +4,13 @@ import { BLOB_IMPORT, BLOB_SETTINGS, classifyBackupFile, isBackupDatabase } from
 import { parseSettings } from "./settings.js";
 import type { PassphraseAnswer, Scratch } from "./types.js";
 
-export type RestoreResult = "restored" | "cancelled" | "wrongPassphrase" | "notABackup";
+/** `fogNotReplaced`: the history is the backup's but the saved fog import could not be swapped. */
+export type RestoreResult =
+  | "restored"
+  | "fogNotReplaced"
+  | "cancelled"
+  | "wrongPassphrase"
+  | "notABackup";
 
 export interface RestoreDeps {
   pickFile(): Promise<SourceFile | null>;
@@ -78,15 +84,21 @@ export function createRestoreFlow(deps: RestoreDeps): { run(): Promise<RestoreRe
         const settingsRow = await blob(backup, BLOB_SETTINGS);
         const settings =
           settingsRow === null ? null : new TextDecoder().decode(new Uint8Array(settingsRow.bytes));
-        const hasImport = await stageImport(backup, tmpZip);
+        let hasImport: boolean;
         try {
+          hasImport = await stageImport(backup, tmpZip);
           await deps.replaceDatabase(backup);
         } catch (e) {
-          if (hasImport) await fogStore.discardPending();
+          await fogStore.discardPending().catch(() => undefined);
           throw e;
         }
-        if (hasImport) await fogStore.promotePending();
-        else await fogStore.clear();
+        try {
+          if (hasImport) await fogStore.promotePending();
+          else await fogStore.clear();
+        } catch {
+          // The history is already the backup's; the page must reload even though the fog could not follow.
+          return "fogNotReplaced";
+        }
 
         if (settings !== null && parseSettings(settings) !== null) {
           // The history and the fog are already back; a page that does not answer only keeps its old settings.
@@ -94,9 +106,10 @@ export function createRestoreFlow(deps: RestoreDeps): { run(): Promise<RestoreRe
         }
         return "restored";
       } finally {
+        // Cleanup runs after the outcome is known and must not turn it into a failure.
         await backup?.close().catch(() => undefined);
-        await scratch.remove(tmpDb);
-        await scratch.remove(tmpZip);
+        await scratch.remove(tmpDb).catch(() => undefined);
+        await scratch.remove(tmpZip).catch(() => undefined);
       }
     },
   };
