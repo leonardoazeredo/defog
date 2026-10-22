@@ -16,6 +16,8 @@ const nonNegative = z.number().min(0);
 const lat = z.number().min(-90).max(90);
 const lon = z.number().min(-180).max(180);
 
+const routeCoords = z.array(z.tuple([lon, lat, z.number().optional()])).min(2);
+
 // `seconds` is null when the travel mode has no time model (app/src/estimates.js); `ascentM` and
 // `descentM` are null when no elevation arrived (app/src/routeLocal.js). The schema accepts them so
 // such a route is sent rather than rejected.
@@ -26,7 +28,7 @@ const routeRecord = z.object({
   travelMode,
   targetDistanceM: nonNegative.optional(),
   waypoints: z.array(z.object({ lat, lng: lon })).min(2),
-  coords: z.array(z.tuple([lon, lat, z.number().optional()])).min(2),
+  coords: routeCoords,
   stats: z.object({
     distanceM: nonNegative,
     seconds: nonNegative.nullable(),
@@ -169,6 +171,8 @@ const nativeToWebSchema = z.union([
       index: z.number().int().min(0),
       total: z.number().int().min(1),
       points: z.array(trackPoint).max(TRACK_CHUNK_POINTS),
+      // The route the activity followed; only the first chunk carries it.
+      route: z.object({ coords: routeCoords }).optional(),
     })
     .refine((c) => c.index < c.total, "index must be less than total"),
 ]);

@@ -11,8 +11,23 @@
     return L.divIcon({ className: "", html: '<div class="wp">' + n + "</div>", iconSize: [WP_SZ, WP_SZ], iconAnchor: [WP_SZ / 2, WP_SZ / 2] });
   }
 
+  const LOOP_CLOSE_M = 50; // a route that ends this close to its start counts as a loop
+
   // a bug in the routing code, not a street problem: the hint says so
   const INTERNAL = { error: true, why: { reason: "internal" } };
+
+  // crypto.randomUUID needs a secure context; the phone app's page may not have one.
+  function newUuid() {
+    const c = global.crypto;
+    if (c.randomUUID) return c.randomUUID();
+    const b = c.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6] & 15) | 64; b[8] = (b[8] & 63) | 128;
+    const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+    return h.slice(0, 8) + "-" + h.slice(8, 12) + "-" + h.slice(12, 16) + "-" + h.slice(16, 20) + "-" + h.slice(20);
+  }
+  // Leaflet keeps counting past the antimeridian; GPX and the phone app's messages stop at 180.
+  const wrapLng = (lng) => (lng >= -180 && lng <= 180 ? lng : ((((lng + 180) % 360) + 360) % 360) - 180);
+  const clampLat = (lat) => Math.max(-90, Math.min(90, lat));
 
   function RouteTool(map, opts) {
     opts = opts || {};
@@ -25,6 +40,9 @@
     this.fogReady = opts.fogReady || null;   // () -> is fog data loaded?
     this.wps = [];            // { marker, latlng, _ri }
     this.routeCoords = [];    // [[lon,lat,ele], ...] from the last successful route
+    this.stats = null;        // {km, seconds, ascent, descent} of routeCoords; null while they are not a routed line
+    this.routeId = null;      // identifies the route to the phone app and the watch; minted by routeRecord, new per route
+    this.routeCreatedAt = null;
     // One-colour base line (waypoint-only / drag preview / no-fog fallback), plus two
     // fog-aware overlays: solid red where the route breaks new ground, dashed ("hatched")
     // red where you've already defogged.
@@ -111,6 +129,7 @@
 
   // Replace all waypoints at once (used when adopting a suggested route), in one recalc.
   RouteTool.prototype.setWaypoints = function (latlngs) {
+    this._newRoute();
     this.wps.forEach((w) => this.map.removeLayer(w.marker));
     this.wps = latlngs.map((ll, i) => this._makeWp(L.latLng(ll), i));
     this._emitWps();
@@ -122,6 +141,7 @@
   // stats: {km, seconds, ascent, descent}, as routeWaypoints returns them. Returns a token for
   // refineFixedRoute.
   RouteTool.prototype.setFixedRoute = function (latlngs, coords, stats) {
+    this._newRoute();
     this.wps.forEach((w) => this.map.removeLayer(w.marker));
     this.wps = latlngs.map((ll, i) => this._makeWp(L.latLng(ll), i));
     this._emitWps();
@@ -156,12 +176,17 @@
     this.wps.forEach((w) => this.map.removeLayer(w.marker));
     this.wps = [];
     this.routeCoords = [];
+    this.stats = null;
+    this._newRoute();
     this.line.setLatLngs([]);
     this.hit.setLatLngs([]);
     this._clearSegs();
     this._emitWps();
     this._emit(null);
   };
+
+  // A different route, not an edit of this one: the next record gets a new id.
+  RouteTool.prototype._newRoute = function () { this.routeId = null; this.routeCreatedAt = null; };
 
   RouteTool.prototype._clearSegs = function () { this.segNew.setLatLngs([]); this.segOld.setLatLngs([]); };
 
@@ -273,6 +298,7 @@
   // ----- routing ---------------------------------------------------------------
   RouteTool.prototype._recalc = async function () {
     const reqId = ++this._reqId; // also for fewer than two pins: a reply in flight must not redraw the old route
+    this.stats = null; // until the reply, routeCoords is the old route and not the pins' route
     if (this.wps.length < 2) {
       this.routeCoords = [];
       this._clearSegs();
@@ -306,6 +332,7 @@
 
   RouteTool.prototype._applyRoute = function (coords, stats) {
     this.routeCoords = coords;
+    this.stats = stats;
     this._renderLine(coords);
     this._indexWaypoints();
     this._emit(Object.assign({ points: this.wps.length }, stats));
@@ -336,8 +363,8 @@
     // GPX 1.1 metadata keywords carry the route id, so no extension namespace is needed; the watch reads it back to match an activity to this route
     const keywords = /^[0-9a-f-]{36}$/i.test(this.routeId) ? `\n    <keywords>crossfog-route:${this.routeId}</keywords>` : "";
     const pts = this.routeCoords.map((c) => {
-      const ele = c.length > 2 ? `<ele>${c[2].toFixed(1)}</ele>` : "";
-      return `      <trkpt lat="${c[1].toFixed(6)}" lon="${c[0].toFixed(6)}">${ele}</trkpt>`;
+      const ele = Number.isFinite(c[2]) ? `<ele>${c[2].toFixed(1)}</ele>` : "";
+      return `      <trkpt lat="${c[1].toFixed(6)}" lon="${wrapLng(c[0]).toFixed(6)}">${ele}</trkpt>`;
     }).join("\n");
     return `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="FogToMaps" xmlns="http://www.topografix.com/GPX/1/1">
@@ -352,6 +379,29 @@ ${pts}
     </trkseg>
   </trk>
 </gpx>`;
+  };
+
+  // The route as the phone app's `sendRoute` carries it, or null when there is no routed line to send
+  // (nothing drawn, a request in flight, a straight-line fallback after a failure). The id and the
+  // creation time are minted the first time a record is asked for and kept through edits, so a re-send replaces the
+  // route the watch has; clear or a different route starts over.
+  RouteTool.prototype.routeRecord = function () {
+    const s = this.stats;
+    if (!s || !Number.isFinite(s.km) || this.wps.length < 2 || this.routeCoords.length < 2) return null;
+    if (!this.routeId) { this.routeId = newUuid(); this.routeCreatedAt = new Date().toISOString(); }
+    const num = (v) => (Number.isFinite(v) ? v : null);
+    const pins = this.wps.map((w) => ({ lat: clampLat(w.latlng.lat), lng: wrapLng(w.latlng.lng) }));
+    const closed = this.wps[0].latlng.distanceTo(this.wps[this.wps.length - 1].latlng) < LOOP_CLOSE_M;
+    return {
+      id: this.routeId,
+      createdAt: this.routeCreatedAt,
+      mode: closed ? "loop" : "p2p",
+      travelMode: this.profile,
+      waypoints: pins,
+      coords: this.routeCoords.map((c) => (Number.isFinite(c[2]) ? [wrapLng(c[0]), clampLat(c[1]), c[2]] : [wrapLng(c[0]), clampLat(c[1])])),
+      stats: { distanceM: s.km * 1000, seconds: num(s.seconds), ascentM: num(s.ascent), descentM: num(s.descent) },
+      gpx: this.toGPX(),
+    };
   };
 
   RouteTool.prototype.toKML = function () {

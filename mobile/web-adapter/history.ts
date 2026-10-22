@@ -1,4 +1,4 @@
-import type { ActivitySummary, TrackPoint } from "../src/bridge/protocol.js";
+import type { ActivitySummary, RouteRecord, TrackPoint } from "../src/bridge/protocol.js";
 import type { FogCache } from "./fogCache.js";
 
 // app/src/reveal.js `Reveal.RULES`: results are only comparable within one `version`.
@@ -10,6 +10,8 @@ interface RevealRules {
   halfWidthM: number;
 }
 
+type RouteGeometry = { coords: RouteRecord["coords"] };
+
 // What app/src/main.js hands the adapter as `window.CrossfogPage`.
 export interface CrossfogPageApi {
   fogMap: {
@@ -17,6 +19,14 @@ export interface CrossfogPageApi {
     clearOverlay(): void;
   };
   fogChanged(): void;
+  /** The History tab; absent on a page without it. */
+  history?: {
+    setActivities(items: ActivitySummary[]): void;
+    setTrack(activityId: string, points: TrackPoint[], route?: RouteGeometry): void;
+  };
+  /** The Send button's answers from the phone. */
+  routeStatus?(msg: { routeId: string; state: string; why?: string | undefined }): void;
+  linkStatus?(msg: { paired: boolean; reachable: boolean }): void;
   reveal: {
     RULES: RevealRules;
     reveal(
@@ -37,6 +47,13 @@ interface TrackChunk {
   index: number;
   total: number;
   points: TrackPoint[];
+  route?: RouteGeometry | undefined;
+}
+
+interface PartialTrack {
+  total: number;
+  chunks: Map<number, TrackPoint[]>;
+  route?: RouteGeometry | undefined;
 }
 
 export interface HistorySyncDeps {
@@ -61,7 +78,7 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
 
   const revealed = new Map<string, Int32Array>();
   const requested = new Set<string>();
-  const partial = new Map<string, { total: number; chunks: Map<number, TrackPoint[]> }>();
+  const partial = new Map<string, PartialTrack>();
   let wanted = new Set<string>();
 
   // One job at a time: a rebuild must not clear the overlay while a reveal is still on its way in.
@@ -71,6 +88,15 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
       // Fixed text: a message could carry positions, which must not reach logs.
       console.error("crossfog: updating the fog from the history failed");
     });
+  }
+
+  // The panel is a view: a failure in it must not cost the fog its update. Fixed text, as a message could carry positions.
+  function showInPanel(show: () => void): void {
+    try {
+      show();
+    } catch {
+      console.error("crossfog: updating the history panel failed");
+    }
   }
 
   function rebuild(): void {
@@ -96,9 +122,11 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
       removed = true;
     }
     for (const id of [...requested]) {
-      if (wanted.has(id)) continue;
-      requested.delete(id);
-      partial.delete(id);
+      if (!wanted.has(id)) requested.delete(id);
+    }
+    // the panel asks for tracks too, so a half-received one may belong to an id the fog never requested
+    for (const id of [...partial.keys()]) {
+      if (!wanted.has(id)) partial.delete(id);
     }
     // reveals left on disk by an activity deleted while the page was closed
     for (const id of await cache.revealIds()) {
@@ -131,7 +159,8 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
 
   async function applyTrack(chunk: TrackChunk): Promise<void> {
     const { activityId, index, total, points } = chunk;
-    if (!requested.has(activityId)) return;
+    // The panel asks for tracks the fog never requests (a reveal is cached), so every list member's chunks are joined.
+    if (!wanted.has(activityId)) return;
 
     let got = partial.get(activityId);
     if (got == null || got.total !== total) {
@@ -139,12 +168,16 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
       partial.set(activityId, got);
     }
     got.chunks.set(index, points);
+    if (chunk.route != null) got.route = chunk.route;
     if (got.chunks.size < total) return;
 
     partial.delete(activityId);
-    requested.delete(activityId);
     const track: TrackPoint[] = [];
     for (let i = 0; i < total; i++) track.push(...(got.chunks.get(i) ?? []));
+
+    showInPanel(() => page.history?.setTrack(activityId, track, got.route));
+    if (!requested.has(activityId)) return;
+    requested.delete(activityId);
 
     const cells = page.reveal.reveal(
       track.map((p) => ({ t: p.t, lat: p.lat, lon: p.lon, accuracy: p.accuracy })),
@@ -160,7 +193,11 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
   }
 
   return {
-    onActivities: ({ items }) => enqueue(() => applyList(items)),
+    onActivities: ({ items }) => {
+      // Straight to the panel: it should not wait behind the cache.
+      showInPanel(() => page.history?.setActivities(items));
+      enqueue(() => applyList(items));
+    },
     onTrack: (chunk) => enqueue(() => applyTrack(chunk)),
     settled: () => tail,
   };

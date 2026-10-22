@@ -1,4 +1,4 @@
-# history.yaml is pending: it needs a debug build and the history screen (see its header).
+# history.yaml is pending: it needs a debug build (see its header).
 flows:
   - import.yaml
   - restart.yaml

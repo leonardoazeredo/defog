@@ -1,9 +1,10 @@
-import { type NativeToWeb, TRACK_CHUNK_POINTS } from "../bridge/protocol.js";
+import { type NativeToWeb, type RouteRecord, TRACK_CHUNK_POINTS } from "../bridge/protocol.js";
 import { COPY } from "../copy.js";
-import type { ActivityStore } from "../history/types.js";
+import type { ActivityStore, RouteStore } from "../history/types.js";
 
 export interface HistoryDeps {
   activities: Pick<ActivityStore, "list" | "get" | "delete">;
+  routes: Pick<RouteStore, "get">;
   send(msg: NativeToWeb): void;
 }
 
@@ -21,7 +22,7 @@ function warn(what: string, e: unknown): void {
 }
 
 export function createHistoryFlow(deps: HistoryDeps): HistoryFlow {
-  const { activities, send } = deps;
+  const { activities, routes, send } = deps;
 
   async function publish(): Promise<void> {
     try {
@@ -39,11 +40,29 @@ export function createHistoryFlow(deps: HistoryDeps): HistoryFlow {
         const activity = await activities.get(id);
         if (!activity) return;
         const { track } = activity;
+        // The history panel draws the route beside the track; a route that cannot be read costs only that line.
+        let route: { coords: RouteRecord["coords"] } | undefined;
+        if (activity.routeId != null) {
+          try {
+            const stored = await routes.get(activity.routeId);
+            if (stored) route = { coords: stored.coords };
+          } catch (e) {
+            warn("could not read a followed route", e);
+          }
+        }
         // An empty track still needs one message: the page counts chunks, and `total` is at least 1.
         const total = Math.max(1, Math.ceil(track.length / TRACK_CHUNK_POINTS));
         for (let index = 0; index < total; index++) {
           const points = track.slice(index * TRACK_CHUNK_POINTS, (index + 1) * TRACK_CHUNK_POINTS);
-          send({ v: 1, type: "track", activityId: id, index, total, points });
+          send({
+            v: 1,
+            type: "track",
+            activityId: id,
+            index,
+            total,
+            points,
+            ...(index === 0 && route ? { route } : {}),
+          });
         }
       } catch (e) {
         warn("could not read a track", e);

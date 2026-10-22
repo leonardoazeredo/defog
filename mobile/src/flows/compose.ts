@@ -23,7 +23,11 @@ export interface ComposeDeps {
 }
 
 export function createFlows(deps: ComposeDeps): ComposedFlows {
-  const history = createHistoryFlow({ activities: deps.activities, send: deps.send });
+  const history = createHistoryFlow({
+    activities: deps.activities,
+    routes: deps.routes,
+    send: deps.send,
+  });
   const sendFlow = createSendFlow({ link: deps.link, routes: deps.routes, send: deps.send });
   const handOff = createHandOffFlow({
     link: deps.link,

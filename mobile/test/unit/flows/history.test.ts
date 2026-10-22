@@ -1,17 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { encode, type NativeToWeb, parseNativeToWeb } from "../../../src/bridge/protocol.js";
 import { createHistoryFlow } from "../../../src/flows/history.js";
-import { createMemoryActivityStore } from "../../../src/history/memoryStores.js";
+import {
+  createMemoryActivityStore,
+  createMemoryRouteStore,
+} from "../../../src/history/memoryStores.js";
 import type { Activity } from "../../../src/history/types.js";
-import { activity } from "../history/fixtures.js";
+import { activity, route } from "../history/fixtures.js";
 
 const ID = (n: number) => `1111111${n}-1111-4111-8111-111111111111`;
 
 function setup() {
   const activities = createMemoryActivityStore();
+  const routes = createMemoryRouteStore();
   const sent: NativeToWeb[] = [];
-  const flow = createHistoryFlow({ activities, send: (m) => sent.push(m) });
-  return { activities, sent, flow };
+  const flow = createHistoryFlow({ activities, routes, send: (m) => sent.push(m) });
+  return { activities, routes, sent, flow };
 }
 
 function valid(sent: NativeToWeb[]): void {
@@ -85,6 +89,57 @@ describe("history", () => {
     valid(sent);
   });
 
+  it("sends the followed route's geometry with the first chunk only", async () => {
+    const { activities, routes, sent, flow } = setup();
+    const followed = route({ id: ID(5) });
+    await routes.save(followed);
+    await activities.add(activity({ id: ID(1), routeId: ID(5), track: longTrack(2500) }));
+
+    await flow.needTrack(ID(1));
+
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toMatchObject({ index: 0, route: { coords: followed.coords } });
+    expect(sent[1]).not.toHaveProperty("route");
+    valid(sent);
+  });
+
+  it("sends no route for an activity that followed none", async () => {
+    const { activities, sent, flow } = setup();
+    await activities.add(activity({ id: ID(1) }));
+    await flow.needTrack(ID(1));
+    expect(sent[0]).not.toHaveProperty("route");
+  });
+
+  it("sends the track alone when the followed route is not stored", async () => {
+    const { activities, sent, flow } = setup();
+    await activities.add(activity({ id: ID(1), routeId: ID(5) }));
+    await flow.needTrack(ID(1));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).not.toHaveProperty("route");
+    valid(sent);
+  });
+
+  it("sends the track alone when reading the followed route fails", async () => {
+    const { activities, routes, sent } = setup();
+    const flow = createHistoryFlow({
+      activities,
+      routes: {
+        get: async () => {
+          throw new Error("database is locked");
+        },
+      },
+      send: (m) => sent.push(m),
+    });
+    await routes.save(route({ id: ID(5) }));
+    await activities.add(activity({ id: ID(1), routeId: ID(5) }));
+
+    await flow.needTrack(ID(1));
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ type: "track", index: 0 });
+    expect(sent[0]).not.toHaveProperty("route");
+  });
+
   it("sends nothing for an activity it does not have", async () => {
     const { sent, flow } = setup();
     await flow.needTrack(ID(9));
@@ -115,6 +170,7 @@ describe("history", () => {
   it("tells the page when the store fails, and does not reject", async () => {
     const { activities, sent } = setup();
     const flow = createHistoryFlow({
+      routes: createMemoryRouteStore(),
       activities: {
         ...activities,
         delete: async () => {

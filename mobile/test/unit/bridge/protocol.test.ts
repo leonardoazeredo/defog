@@ -231,6 +231,20 @@ const nativeSamples = [
     ],
   },
   { v: 1 as const, type: "track" as const, activityId, index: 1, total: 2, points: [] },
+  {
+    v: 1 as const,
+    type: "track" as const,
+    activityId,
+    index: 0,
+    total: 1,
+    points: [],
+    route: {
+      coords: [
+        [20, 10, 55],
+        [20.001, 10.001],
+      ] as Array<[number, number, number?]>,
+    },
+  },
 ];
 
 describe("protocol", () => {
@@ -443,6 +457,35 @@ describe("protocol", () => {
         index: 0,
         total: 1,
         points: Array.from({ length: 2001 }, (_, i) => ({ t: i, lat: 0, lon: 0 })),
+      },
+    ],
+    [
+      "a track whose route has one coordinate",
+      {
+        v: 1,
+        type: "track",
+        activityId,
+        index: 0,
+        total: 1,
+        points: [],
+        route: { coords: [[0, 0]] },
+      },
+    ],
+    [
+      "a track whose route has a longitude off the globe",
+      {
+        v: 1,
+        type: "track",
+        activityId,
+        index: 0,
+        total: 1,
+        points: [],
+        route: {
+          coords: [
+            [181, 0],
+            [0, 0],
+          ],
+        },
       },
     ],
     [

@@ -439,6 +439,15 @@
       : "Couldn't find a route." + tail;
   }
 
+  // The History tab and Send to watch; the phone app's adapter feeds them through CrossfogPage.
+  const { panel: history, send: sendControl } = HistoryPanel.install({
+    doc: document, map,
+    getUnits: () => units,
+    getRecord: () => route.routeRecord(),
+    phone: () => window.crossfog || null,
+    onShown: () => sidebar.classList.remove("open") // mobile: the sheet would cover the drawn track
+  });
+
   const route = new RouteTool(map, {
     profile,
     routeWaypoints: RouteLocal.create({ streets, plannerFor: (p) => suggest.plannerFor(p), elevation, estimates: Estimates, streetKind: SuggestTool.streetKind }),
@@ -446,6 +455,7 @@
     fogReady: () => fogMap.tileCount > 0,
     onWaypoints: renderWps,
     onChange: (s) => {
+      sendControl.update();
       if (!s) { clearRouteInfo(IDLE); setExports(false); return; }
       if (s.loading) { routeHint.textContent = `Routing ${s.points} waypoints…`; routeHint.style.display = ""; return; }
       if (s.error) { clearRouteInfo(routeErrorHint(s.why)); setExports(route.routeCoords.length >= 2); return; }
@@ -670,7 +680,7 @@
     b.addEventListener("click", () => {
       units = b.dataset.u; localStorage.setItem("f2m_units", units);
       unitSeg.querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
-      renderStats(); renderElev(); renderSug(); syncDistInput(); syncTargetInput();
+      renderStats(); renderElev(); renderSug(); syncDistInput(); syncTargetInput(); history.refresh();
     });
   });
 
@@ -700,5 +710,9 @@
     updateDefog();
     syncSug();
   }
-  window.CrossfogPage = { fogMap, fogChanged, reveal: window.Reveal };
+  // `history` is the History tab the adapter feeds; `routeStatus` and `linkStatus` carry the phone's answers to the Send button.
+  window.CrossfogPage = {
+    fogMap, fogChanged, reveal: window.Reveal, history,
+    routeStatus: sendControl.routeStatus, linkStatus: sendControl.linkStatus
+  };
 })();
