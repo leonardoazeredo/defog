@@ -11,6 +11,11 @@ const base64Data = z.string().regex(/^[A-Za-z0-9+/]*={0,2}$/);
 const settingsJson = z.string().max(16_384);
 
 const EXPORT_CHUNK_BYTES = 1_048_576;
+// exportId and tileFileName become path segments under the cache.
+const exportId = z.string().regex(/^[A-Za-z0-9-]{1,64}$/);
+const tileFileName = z.string().regex(/^[a-z0-9]{1,32}$/);
+// A zip without ZIP64 holds 65535 entries.
+const EXPORT_MAX_FILES = 65_535;
 export const TRACK_CHUNK_POINTS = 2000;
 
 const uuid = z.uuid();
@@ -111,10 +116,11 @@ const webToNativeSchema = z.union([
     .object({
       v: z.literal(1),
       type: z.literal("exportBinary"),
-      exportId: z.string().min(1).max(64),
-      name: shortName,
+      exportId,
+      name: tileFileName,
       index: z.number().int().min(0),
       total: z.number().int().min(1),
+      files: z.number().int().min(1).max(EXPORT_MAX_FILES),
       data: base64Data.max(Math.ceil(EXPORT_CHUNK_BYTES / 3) * 4),
     })
     .refine((c) => c.index < c.total, "index must be less than total"),

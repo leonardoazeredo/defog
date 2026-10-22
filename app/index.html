@@ -139,6 +139,10 @@
     /* .chip is the suggestion cards' colour swatch; the Send to watch status reuses the class as text, so it drops the swatch size and shape */
     #sendStatus.chip { width: auto; height: auto; border-radius: 0; flex: 0 1 auto; font-size: 12.5px; color: var(--muted); }
     #sendStatus.chip:empty { display: none; }
+    #exportWarning { margin: 9px 0; padding: 10px 12px; border: 1px solid #c8932f; border-radius: 10px; background: #fff7e6; font-size: 13px; }
+    #exportWarning[hidden] { display: none; }
+    #exportWarning p { margin: 0 0 8px; }
+    #exportWarning .row { margin: 0; }
 
     /* history cards */
     .histCard { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 8px 0; cursor: pointer; }
@@ -410,6 +414,17 @@
             <button id="openGmaps" class="ghost grow" disabled>Maps ↗</button>
           </div>
           <div class="row">
+            <button id="exportFow" class="ghost grow" type="button" disabled style="display:none">Export for Fog of World</button>
+            <span id="exportFowStatus" class="muted" role="status" aria-live="polite"></span>
+          </div>
+          <div id="exportWarning" role="alertdialog" aria-labelledby="exportWarningText" hidden>
+            <p id="exportWarningText"></p>
+            <div class="row">
+              <button id="exportContinue" class="ghost" type="button">Continue</button>
+              <button id="exportCancel" class="ghost" type="button">Cancel</button>
+            </div>
+          </div>
+          <div class="row">
             <button id="sendWatch" class="ghost grow" disabled>Send to watch</button>
             <span id="sendStatus" class="chip" role="status" aria-live="polite"></span>
           </div>
@@ -445,6 +460,7 @@
   <script src="src/parser.js"></script>
   <script src="src/md5.js"></script>
   <script src="src/fogWriter.js"></script>
+  <script src="src/fowExport.js"></script>
   <script src="src/reveal.js"></script>
   <script src="src/fogLayer.js"></script>
   <script src="src/route.js"></script>
@@ -460,6 +476,7 @@
   <script src="src/suggest.js"></script>
   <script src="src/history.js"></script>
   <script src="src/backup.js"></script>
+  <script src="src/exportWarning.js"></script>
   <script src="src/main.js"></script>
 </body>
 </html>

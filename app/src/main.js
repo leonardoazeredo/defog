@@ -201,7 +201,18 @@
     const decimals = Math.max(0, 1 - Math.floor(Math.log10(p)));
     return p.toFixed(decimals) + "%";
   }
+  const fowBtn = $("exportFow"), fowStatus = $("exportFowStatus");
+  // Only the phone app can save the export; the button shows once the page has loaded with window.crossfog present.
+  function updateFowButton() {
+    fowBtn.style.display = window.crossfog ? "" : "none";
+    fowBtn.disabled = !(fogMap.totalVisited() > 0);
+  }
+  function showFowResult(n) {
+    fowStatus.textContent = n === null ? "Couldn't write the export." : n === 0 ? "There is no fog to export yet." : "Choose where to save it…";
+  }
+  window.addEventListener("load", updateFowButton);
   function updateDefog() {
+    updateFowButton();
     if (!fogMap.tileCount) { hintEl.style.display = ""; defogEl.style.display = "none"; return; }
     hintEl.style.display = "none"; defogEl.style.display = "flex";
     // Exact count of defogged cells in the visible Mercator rectangle / total cells in it.
@@ -531,7 +542,7 @@
       return;
     }
     if (s.error) {
-      console.debug("[suggest]", s.reason, s.why);
+      console.debug("[suggest]", s.reason);
       const w = s.why || {};
       const pin = (i) => (suggest.mode === "loop" ? "The start" : i ? "B" : "A");
       const msg = s.reason === "streets-fetch" ? `Couldn't download the street map (${String(w).replace(/[<&]/g, " ")}). Try again in a minute.`
@@ -698,9 +709,12 @@
   // Reverse re-routes from the flipped waypoints rather than replaying the line backwards,
   // so the router picks the legs that suit the new direction.
   reverseBtn.addEventListener("click", () => route.reverse());
-  exportGpxBtn.addEventListener("click", () => route.downloadGPX());
-  exportKmlBtn.addEventListener("click", () => route.downloadKML());
-  gmapsBtn.addEventListener("click", () => { const u = route.googleMapsUrl(); if (u) window.open(u, "_blank", "noopener"); });
+  // Every plaintext export sits behind its warning; Cancel runs nothing.
+  const warn = ExportWarning.install({ doc: document });
+  exportGpxBtn.addEventListener("click", warn.guard("gpx", () => route.downloadGPX()));
+  exportKmlBtn.addEventListener("click", warn.guard("kml", () => route.downloadKML()));
+  fowBtn.addEventListener("click", warn.guard("fog", () => showFowResult(FowExport.run({ fogMap, phone: window.crossfog, newId: RouteTool.newUuid }))));
+  gmapsBtn.addEventListener("click", warn.guard("maps", () => { const u = route.googleMapsUrl(); if (u) window.open(u, "_blank", "noopener"); }));
 
   // The phone app's page adapter adds and removes cells revealed by activities, then calls fogChanged() so
   // the fog and its panels update now and the street fractions are recomputed on next use. The suggestion planners need no reset: they

@@ -23,6 +23,7 @@ import { COPY } from "./copy.js";
 import { pickE2eFixture } from "./e2e/fixturePicker.js";
 import { createBackupFlows } from "./flows/backup.js";
 import { type ComposedFlows, createFlows } from "./flows/compose.js";
+import { createExportFlow } from "./flows/exportFlow.js";
 import { createReloadGuard } from "./fog/reloadGuard.js";
 import { createFogStore } from "./fog/store.js";
 import { CHUNK_BYTES } from "./fog/transfer.js";
@@ -32,9 +33,10 @@ import { createNativeWatchLink } from "./link/watchLink.js";
 import { createScratch, pickRestoreFile, saveFileAs } from "./platform/backupPlatform.js";
 import { createDatabase } from "./platform/database.js";
 import { createExpoFileStore } from "./platform/expoFileStore.js";
+import { createExportFs } from "./platform/exportFiles.js";
 import { createOpenBackup } from "./platform/expoSqliteDriver.js";
 import { createHistoryStores, withHistoryDb } from "./platform/historyStores.js";
-import { makeReleaseSource, shareExport } from "./platform/nativeHandlers.js";
+import { clearShareCopies, makeReleaseSource, shareExport } from "./platform/nativeHandlers.js";
 import { replaceDatabase } from "./platform/replaceDatabase.js";
 import { sha256Hex } from "./platform/sha256.js";
 import { copyFromUri } from "./platform/watchLinkModule.js";
@@ -136,11 +138,21 @@ function buildController(
     }),
     notify,
   });
+  // A crash or a page reload mid-export leaves plaintext tiles in the cache; the next start removes them.
+  const exportFlow = createExportFlow({
+    fs: createExportFs(),
+    saveAs: saveFileAs,
+    notify,
+    now: Date.now,
+  });
+  void exportFlow.clear();
+  clearShareCopies();
   const flows = createFlows({
     link: createNativeWatchLink(),
     ...createHistoryStores(),
     send,
     backup: backupFlows,
+    exportFlow,
     settings,
     now: Date.now,
   });

@@ -35,6 +35,7 @@ const config = {
     "!src/link/fakeWatchLink.ts",
     "src/platform/expoSqliteDriver.ts",
     "src/platform/watchLinkModule.ts",
+    "src/platform/{zipWriter,crashLog}.ts",
     "web-adapter/*.ts",
     "!web-adapter/index.ts",
     "!web-adapter/globals.d.ts",

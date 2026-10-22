@@ -11,12 +11,16 @@ export interface UpstreamFogMap {
   tileCount: number;
   addTile(name: string, data: Uint8Array): boolean;
   isVisitedCell(cx: number, cy: number): boolean;
+  addCells(cells: Int32Array): number;
+  totalVisited(): number;
 }
 
 export interface UpstreamApi {
   unzip(zip: Uint8Array): Array<{ name: string; data: Uint8Array }>;
   newFogMap(): UpstreamFogMap;
   parseTileId(name: string): number | null;
+  /** The page's fogWriter.js run with fflate level 5 in place of pako level 5: the tiles inflate to the same data, but the bytes can differ. */
+  writeSync(fogMap: UpstreamFogMap): Array<{ name: string; bytes: Uint8Array }>;
 }
 
 let _cached: UpstreamApi | null = null;
@@ -27,12 +31,21 @@ function createUpstream(): UpstreamApi {
     inflateRaw: (data: Uint8Array) => fflate.inflateSync(data),
     inflate: (data: Uint8Array) => fflate.unzlibSync(data),
   };
-  const context = vm.createContext({ window, TextDecoder, pako });
+  const context = vm.createContext({ window, TextDecoder, TextEncoder, pako });
   vm.runInContext(readFileSync(`${APP_SRC}/unzip.js`, "utf-8"), context);
   vm.runInContext(readFileSync(`${APP_SRC}/parser.js`, "utf-8"), context);
+  vm.runInContext(readFileSync(`${APP_SRC}/md5.js`, "utf-8"), context);
+  // fogWriter.js names MD5 as a bare global, which a browser has and this context does not.
+  context.MD5 = window.MD5;
+  vm.runInContext(readFileSync(`${APP_SRC}/fogWriter.js`, "utf-8"), context);
+
+  // The writer checks `instanceof Uint8Array` inside the context, so a host-realm result is copied into it.
+  const intoContext = vm.runInContext("(f) => (b) => new Uint8Array(f(b))", context) as (
+    f: (b: Uint8Array) => Uint8Array,
+  ) => (b: Uint8Array) => Uint8Array;
 
   // biome-ignore lint/suspicious/noExplicitAny: vm context types are unknown
-  const { FogZip, FogParser } = window as any;
+  const { FogZip, FogParser, FogWriter } = window as any;
 
   return {
     unzip(zip: Uint8Array) {
@@ -47,6 +60,11 @@ function createUpstream(): UpstreamApi {
     },
     parseTileId(name: string): number | null {
       return FogParser.parseTileId(name) as number | null;
+    },
+    writeSync(fogMap) {
+      return FogWriter.writeSync(fogMap, {
+        deflate: intoContext((buf) => fflate.zlibSync(buf, { level: 5 })),
+      }) as Array<{ name: string; bytes: Uint8Array }>;
     },
   };
 }

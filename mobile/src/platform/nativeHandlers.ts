@@ -14,11 +14,22 @@ export async function shareExport(file: {
   const dest = new File(exportsDir, safe);
   await dest.write(file.text);
   const uti = utiFor(file.filename);
-  await Sharing.shareAsync(dest.uri, {
-    mimeType: file.mime,
-    ...(uti !== undefined && { UTI: uti }),
-    dialogTitle: file.filename,
-  });
+  try {
+    await Sharing.shareAsync(dest.uri, {
+      mimeType: file.mime,
+      ...(uti !== undefined && { UTI: uti }),
+      dialogTitle: file.filename,
+    });
+  } finally {
+    // The copy holds the route in plaintext, so it is removed once the share sheet closes.
+    if (dest.exists) dest.delete();
+  }
+}
+
+/** Removes the share copies a crash left behind. */
+export function clearShareCopies(): void {
+  const dir = new Directory(Paths.cache, "exports");
+  if (dir.exists) dir.delete();
 }
 
 export function makeReleaseSource(roots: { cache: string; inbox: string }) {
