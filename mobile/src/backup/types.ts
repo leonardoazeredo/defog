@@ -8,7 +8,6 @@ export interface Scratch {
   path(name: string): string;
   /** The same file as a URI, for the APIs that take one. */
   uri(path: string): string;
-  size(path: string): Promise<number>;
   writeBytes(path: string, bytes: Uint8Array): Promise<void>;
   remove(path: string): Promise<void>;
   freeBytes(): Promise<number>;

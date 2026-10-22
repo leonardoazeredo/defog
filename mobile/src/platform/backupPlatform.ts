@@ -1,6 +1,6 @@
 import * as DocumentPicker from "expo-document-picker";
 import { Directory, File, Paths } from "expo-file-system";
-import type { DatabaseFiles } from "../backup/replace.js";
+import { type DatabaseFiles, LIVE_DB } from "../backup/replace.js";
 import type { Scratch } from "../backup/types.js";
 import type { SourceFile } from "../fog/store.js";
 import { copyToUri, createDocument, displayNameOf } from "./watchLinkModule.js";
@@ -35,7 +35,6 @@ export function createScratch(): Scratch & { clear(): void } {
   return {
     path: (name) => toPath(new File(dir, name).uri),
     uri: toUri,
-    size: async (path) => new File(toUri(path)).size,
     async writeBytes(path, bytes) {
       await new File(toUri(path)).write(bytes);
     },
@@ -47,8 +46,8 @@ export function createScratch(): Scratch & { clear(): void } {
       return Paths.availableDiskSpace;
     },
     async databaseBytes() {
-      const live = new File(sqliteDir(), "crossfog.db");
-      const wal = new File(sqliteDir(), "crossfog.db-wal");
+      const live = new File(sqliteDir(), LIVE_DB);
+      const wal = new File(sqliteDir(), `${LIVE_DB}-wal`);
       return live.size + wal.size;
     },
     // A crash mid-backup leaves a copy of the history in the cache; the next start removes it.

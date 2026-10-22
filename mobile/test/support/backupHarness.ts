@@ -60,7 +60,6 @@ export async function createHarness(opts: { free?: number } = {}): Promise<Harne
   const scratch: Harness["scratch"] = {
     path: (name) => join(scratchDir, name),
     uri: (p) => p,
-    size: async (p) => statSync(p).size,
     writeBytes: async (p, bytes) => {
       writeFileSync(p, bytes);
       sources[p] = bytes;
