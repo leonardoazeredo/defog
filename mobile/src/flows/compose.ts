@@ -4,6 +4,7 @@ import { parseGpx } from "../history/gpx.js";
 import type { ActivityStore, RouteStore } from "../history/types.js";
 import type { WatchLink } from "../link/types.js";
 import type { BackupFlows } from "./backup.js";
+import type { ExportFlow } from "./exportFlow.js";
 import { createHandOffFlow } from "./handOff.js";
 import { createHistoryFlow } from "./history.js";
 import { createSendFlow } from "./send.js";
@@ -24,6 +25,8 @@ export interface ComposeDeps {
   /** Backup and restore; absent where the platform has none. */
   backup?: BackupFlows;
   settings?: SettingsChannel;
+  /** The Fog of World export; absent where the platform has none. */
+  exportFlow?: ExportFlow;
   now(): number;
 }
 
@@ -56,6 +59,7 @@ export function createFlows(deps: ComposeDeps): ComposedFlows {
     sendRoute: sendFlow.sendRoute,
     needTrack: history.needTrack,
     deleteActivity: history.deleteActivity,
+    ...(deps.exportFlow && { exportBinary: deps.exportFlow.onChunk }),
     ...(deps.backup && { backup: deps.backup.backup, restore: deps.backup.restore }),
     ...(deps.settings && {
       settings: async (json: string) => deps.settings?.onSettings(json),

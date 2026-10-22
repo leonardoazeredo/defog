@@ -672,7 +672,14 @@ const route: Extract<WebToNative, { type: "sendRoute" }>["route"] = {
   stats: { distanceM: 1000, seconds: 700, ascentM: 3, descentM: 1 },
   gpx: "<gpx/>",
 };
-const chunk = { exportId: "e1", name: "a.tile", index: 0, total: 2, data: "AAEC" };
+const chunk = {
+  exportId: "e1",
+  name: "abcdef123456",
+  index: 0,
+  total: 2,
+  files: 1,
+  data: "AAEC",
+};
 
 it.each<[string, WebToNative, keyof Flows, unknown[]]>([
   ["sendRoute", { v: 1, type: "sendRoute", route }, "sendRoute", [route]],

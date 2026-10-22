@@ -33,6 +33,7 @@ vi.mock("expo-file-system", () => {
       return disk.get(this.uri) ?? "";
     }
     delete() {
+      if (failDelete) throw new Error("locked");
       disk.delete(this.uri);
     }
   }
@@ -53,9 +54,12 @@ vi.mock("expo-file-system", () => {
 });
 
 const shared: { uri: string; content: string | undefined }[] = [];
+let failShare = false;
+let failDelete = false;
 vi.mock("expo-sharing", () => ({
   shareAsync: async (uri: string) => {
     shared.push({ uri, content: disk.get(uri) });
+    if (failShare) throw new Error("no share target");
   },
 }));
 
@@ -63,6 +67,8 @@ beforeEach(() => {
   disk.clear();
   shared.length = 0;
   failWrites = false;
+  failShare = false;
+  failDelete = false;
 });
 
 it("createText renames the temp file only after its content is written", async () => {
@@ -78,6 +84,29 @@ it("shareExport hands the share sheet a file that already holds the export", asy
   const { shareExport } = await import("../../../src/platform/nativeHandlers.js");
   await shareExport({ filename: "route.gpx", mime: "application/gpx+xml", text: "<gpx/>" });
   expect(shared).toEqual([{ uri: "cache/exports/route.gpx", content: "<gpx/>" }]);
+});
+
+it("shareExport removes its cache copy once the share sheet returns", async () => {
+  const { shareExport } = await import("../../../src/platform/nativeHandlers.js");
+  await shareExport({ filename: "route.gpx", mime: "application/gpx+xml", text: "<gpx/>" });
+  expect(disk.has("cache/exports/route.gpx")).toBe(false);
+});
+
+it("shareExport removes its cache copy when sharing fails", async () => {
+  failShare = true;
+  const { shareExport } = await import("../../../src/platform/nativeHandlers.js");
+  await expect(
+    shareExport({ filename: "route.gpx", mime: "application/gpx+xml", text: "<gpx/>" }),
+  ).rejects.toThrow("no share target");
+  expect(disk.has("cache/exports/route.gpx")).toBe(false);
+});
+
+it("shareExport still reports a successful share when its copy cannot be removed", async () => {
+  failDelete = true;
+  const { shareExport } = await import("../../../src/platform/nativeHandlers.js");
+  await expect(
+    shareExport({ filename: "route.gpx", mime: "application/gpx+xml", text: "<gpx/>" }),
+  ).resolves.toBeUndefined();
 });
 
 it("logCrash swallows a failing write instead of rejecting later", async () => {

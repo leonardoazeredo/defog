@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { NativeToWeb } from "../../../src/bridge/protocol.js";
 import { createFlows } from "../../../src/flows/compose.js";
 import {
@@ -95,5 +95,21 @@ describe("composed flows", () => {
     await flows.handOffNow();
 
     expect(sent).toEqual([]);
+  });
+
+  it("hands an export chunk to the export flow when there is one, and drops it otherwise", async () => {
+    const chunk = { exportId: "e1", name: "abcd", index: 0, total: 1, files: 1, data: "" };
+    const onChunk = vi.fn(async () => {});
+    const withExport = createFlows({
+      link: createFakeWatchLink(),
+      activities: createMemoryActivityStore(),
+      routes: createMemoryRouteStore(),
+      send: () => {},
+      exportFlow: { onChunk, clear: async () => {} },
+      now: () => 0,
+    });
+    await withExport.exportBinary(chunk);
+    expect(onChunk).toHaveBeenCalledExactlyOnceWith(chunk);
+    await expect(setup().flows.exportBinary(chunk)).resolves.toBeUndefined();
   });
 });

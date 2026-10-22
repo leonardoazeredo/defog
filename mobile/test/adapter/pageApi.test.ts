@@ -22,7 +22,14 @@ const route: RouteRecord = {
   gpx: "<gpx/>",
 };
 
-const chunk: ExportChunk = { exportId: "e1", name: "a.tile", index: 0, total: 1, data: "AAEC" };
+const chunk: ExportChunk = {
+  exportId: "e1",
+  name: "abcdef123456",
+  index: 0,
+  total: 1,
+  files: 1,
+  data: "AAEC",
+};
 
 const trackPayload = {
   activityId,

@@ -454,5 +454,6 @@ ${pts}
     return url;
   };
 
+  RouteTool.newUuid = newUuid; // a UUID satisfies the bridge's exportId pattern, so the export reuses the generator
   global.RouteTool = RouteTool;
 })(window);

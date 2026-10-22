@@ -66,6 +66,13 @@ encrypted with a passphrase you type into the app, never into the page (SQLCiphe
 "No encryption" after a warning: an unencrypted backup shows where you were and when. If you lose the
 passphrase nobody can open that backup, and if you lose the phone without a backup your history is gone.
 **Restore…** replaces everything on the phone with a backup, after you confirm.
+Exports are plain files and happen only when you tap them, each after a warning you can cancel (Cancel
+sends nothing). **Export for Fog of World** (phone app) writes the cells you have explored, imported and
+from activities, in Fog of World's own format, which has no encryption and no times; the phone app zips
+the tiles under `Sync/` and asks where to save the zip. **GPX** and **KML** write the route you planned,
+point by point, and **"Maps ↗"** hands its start, end and stops to Google Maps. The crash log and the
+page's log lines carry no positions: a decimal number with three or more places is replaced by `[n]`
+before the crash log is written.
 The site also counts visits with [GoatCounter](https://www.goatcounter.com/), a
 privacy-friendly, cookie-less counter (page views only; no personal data, no tracking
 across sites).
