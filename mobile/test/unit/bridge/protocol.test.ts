@@ -7,6 +7,7 @@ import {
   parseWebToNative,
   type RouteRecord,
 } from "../../../src/bridge/protocol.js";
+import { loadUpstream } from "../../support/loadUpstream.js";
 
 const fp = "a".repeat(64);
 const routeId = "6f1c1a52-3f1e-4c55-9d52-0a1d6c2b7e10";
@@ -427,7 +428,8 @@ describe("protocol", () => {
       ["a path in the export id", { exportId: "../e" }],
       ["an export id over 64 characters", { exportId: "e".repeat(65) }],
       ["zero files", { files: 0 }],
-      ["more files than a zip without ZIP64 holds", { files: 65_536 }],
+      ["more files than a zip without ZIP64 holds", { files: 65_535 }],
+      ["more chunks than a file may have", { total: 1025, index: 0 }],
     ].map(
       ([what, over]) =>
         [
@@ -628,5 +630,32 @@ describe("protocol", () => {
     expect(isTrustedSource("https://crossfog.madera.codes.evil.example/")).toBe(false);
     expect(isTrustedSource("http://crossfog.madera.codes/")).toBe(false);
     expect(isTrustedSource("about:blank")).toBe(false);
+  });
+});
+
+describe("exportBinary against what the page really sends", () => {
+  const up = loadUpstream();
+  const chunk = (name: string, exportId: string) =>
+    JSON.stringify({
+      v: 1,
+      type: "exportBinary",
+      exportId,
+      name,
+      index: 0,
+      total: 1,
+      files: 1,
+      data: "",
+    });
+
+  it("accepts the Fog of World tile name of every tile id it samples", () => {
+    const ids = [0, 1, 9, 10, 99, 511, 512, 117_660, 262_143];
+    for (let id = 0; id < 262_144; id += 997) ids.push(id);
+    for (const id of ids) {
+      expect(parseWebToNative(chunk(up.tileName(id), "e1")), `tile id ${id}`).not.toBeNull();
+    }
+  });
+
+  it("accepts a version 4 UUID as the export id", () => {
+    expect(parseWebToNative(chunk("abcd", "4a8c9ca7-0205-4821-81d7-9b02e4e3d80c"))).not.toBeNull();
   });
 });

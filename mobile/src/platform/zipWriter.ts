@@ -3,7 +3,8 @@ export interface ZipEntry {
   bytes: Uint8Array;
 }
 
-const MAX_ENTRIES = 0xffff;
+// 0xffff in the end record means "see the ZIP64 record", so it is not a valid count here.
+const MAX_ENTRIES = 0xfffe;
 const MAX_SIZE = 0xffffffff;
 // 1980-01-01 00:00: the format needs a date, and an export should not say when it was made.
 const DOS_TIME = 0;

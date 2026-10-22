@@ -104,13 +104,27 @@ const settle = () => new Promise((r) => setImmediate(r));
     assert.deepEqual(placed, [["fog tab", true], ["plan tab", true]]);
   }
 
-  // an unknown kind never runs its action
+  // an unknown kind is a programming error: it throws and never runs its action
   {
     const { doc } = fakeDoc();
     const warn = ExportWarning.install({ doc });
     let ran = 0;
-    await warn.guard("nope", () => { ran++; })();
+    assert.throws(() => warn.guard("nope", () => { ran++; })(), /unknown export kind/);
     assert.equal(ran, 0);
+  }
+
+  // an action that throws is logged by its class and nothing else
+  {
+    const { doc, els } = fakeDoc();
+    const warn = ExportWarning.install({ doc });
+    const logged = [];
+    const orig = console.warn;
+    console.warn = (...a) => logged.push(a.join(" "));
+    const done = warn.guard("gpx", () => { throw new RangeError("lat 48.12345"); })();
+    els.exportContinue.click();
+    await done;
+    console.warn = orig;
+    assert.deepEqual(logged, ["[export] failed RangeError"]);
   }
 
   // what each warning says

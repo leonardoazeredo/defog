@@ -2,7 +2,15 @@ import { Directory, File, Paths } from "expo-file-system";
 import type { ExportFs } from "../flows/exportFlow.js";
 
 const segments = (path: string) => path.split("/");
-const baseName = (uri: string) => decodeURIComponent(uri.replace(/\/$/, "").split("/").pop() ?? "");
+const baseName = (uri: string) => {
+  const last = uri.replace(/\/$/, "").split("/").pop() ?? "";
+  // A stray % in an entry name must not stop the sweep.
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
+  }
+};
 
 /** The export flow's files, inside the cache directory. */
 export function createExportFs(): ExportFs {
@@ -27,9 +35,17 @@ export function createExportFs(): ExportFs {
       if (file.exists) file.delete();
     },
     async removeMatching(prefix) {
+      let failed = 0;
       for (const item of new Directory(Paths.cache).list()) {
-        if (baseName(item.uri).startsWith(prefix)) item.delete();
+        if (!baseName(item.uri).startsWith(prefix)) continue;
+        // One entry that will not go must not leave the rest, which hold plaintext tiles.
+        try {
+          item.delete();
+        } catch {
+          failed++;
+        }
       }
+      if (failed > 0) throw new Error(`${failed} cache entries not removed`);
     },
     absolute: (path) => decodeURIComponent(fileAt(path).uri.replace(/^file:\/\//, "")),
   };

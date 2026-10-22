@@ -19,6 +19,7 @@ export interface UpstreamApi {
   unzip(zip: Uint8Array): Array<{ name: string; data: Uint8Array }>;
   newFogMap(): UpstreamFogMap;
   parseTileId(name: string): number | null;
+  tileName(id: number): string;
   /** The page's fogWriter.js run with fflate level 5 in place of pako level 5: the tiles inflate to the same data, but the bytes can differ. */
   writeSync(fogMap: UpstreamFogMap): Array<{ name: string; bytes: Uint8Array }>;
 }
@@ -61,6 +62,7 @@ function createUpstream(): UpstreamApi {
     parseTileId(name: string): number | null {
       return FogParser.parseTileId(name) as number | null;
     },
+    tileName: (id: number) => FogWriter.tileName(id) as string,
     writeSync(fogMap) {
       return FogWriter.writeSync(fogMap, {
         deflate: intoContext((buf) => fflate.zlibSync(buf, { level: 5 })),

@@ -48,6 +48,14 @@ it("stores a fixed date so the file says nothing about when it was made", () => 
   expect(dv(zip).getUint16(12, true)).toBe(0x21);
 });
 
+it("refuses an entry count that a zip reader takes for the ZIP64 marker", () => {
+  const many = Array.from({ length: 65_535 }, (_, i) => ({
+    name: `n${i}`,
+    bytes: new Uint8Array(0),
+  }));
+  expect(() => writeZip(many)).toThrow(/ZIP64/);
+});
+
 it("refuses more entries than a zip without ZIP64 holds", () => {
   const many = Array.from({ length: 65_536 }, (_, i) => ({
     name: `n${i}`,

@@ -9,7 +9,7 @@ export interface ExportFs {
   read(path: string): Promise<Uint8Array>;
   /** Removes a file or a directory with everything in it; a path that is not there is fine. */
   remove(path: string): Promise<void>;
-  /** Removes every top-level entry whose name starts with `prefix`. */
+  /** Removes every top-level entry whose name starts with `prefix`. Tries every match, then rejects if any could not be removed. */
   removeMatching(prefix: string): Promise<void>;
   /** A file system path (no scheme) for a path inside the cache. */
   absolute(path: string): string;
@@ -26,7 +26,7 @@ export interface ExportFlowDeps {
 export interface ExportFlow {
   /** Never rejects: a failure is reported to the user and drops that export. */
   onChunk(chunk: ExportChunk): Promise<void>;
-  /** Called once at startup: removes the directories of exports that never finished. */
+  /** Called once at startup: removes the directories of exports that never finished. Never rejects. */
   clear(): Promise<void>;
 }
 
@@ -61,6 +61,10 @@ export function createExportFlow(deps: ExportFlowDeps): ExportFlow {
   const dir = (id: string) => `${DIR_PREFIX}${id}`;
   const partPath = (c: ExportChunk) => `${dir(c.exportId)}/parts/${c.name}/${c.index}`;
   const filePath = (id: string, name: string) => `${dir(id)}/Sync/${name}`;
+
+  function logCleanupFailure(e: unknown): void {
+    console.warn("crossfog: export cleanup failed", e instanceof Error ? e.name : "unknown");
+  }
 
   async function drop(id: string): Promise<void> {
     open.delete(id);
@@ -127,7 +131,8 @@ export function createExportFlow(deps: ExportFlowDeps): ExportFlow {
     try {
       await finish(id, state);
     } finally {
-      await deps.fs.remove(dir(id));
+      // A cleanup failure after a save must not read as a failed export.
+      await deps.fs.remove(dir(id)).catch(logCleanupFailure);
     }
   }
 
@@ -137,14 +142,14 @@ export function createExportFlow(deps: ExportFlowDeps): ExportFlow {
       queue = run.catch(() => undefined);
       return run.catch(async (e) => {
         console.warn("crossfog: export failed", e instanceof Error ? e.name : "unknown");
-        await drop(chunk.exportId).catch(() => undefined);
+        await drop(chunk.exportId).catch(logCleanupFailure);
         deps.notify(COPY.fogExportFailed);
       });
     },
     clear() {
       // Queued with the chunks, so a chunk that arrives right after startup is handled after the sweep.
-      const run = queue.then(() => deps.fs.removeMatching(DIR_PREFIX));
-      queue = run.catch(() => undefined);
+      const run = queue.then(() => deps.fs.removeMatching(DIR_PREFIX)).catch(logCleanupFailure);
+      queue = run;
       return run;
     },
   };

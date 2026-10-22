@@ -25,7 +25,8 @@
     // A second request replaces the first, which counts as cancelled. The card is inserted after `anchor`
     // (a DOM element) when given, because the exports live in different tabs.
     function ask(kind, anchor) {
-      if (!Object.prototype.hasOwnProperty.call(TEXT, kind)) return Promise.resolve(false);
+      // A programming error, so it throws out of the click handler and is not logged as a user failure.
+      if (!Object.prototype.hasOwnProperty.call(TEXT, kind)) throw new Error("unknown export kind");
       settle(false);
       text.textContent = TEXT[kind];
       if (anchor && anchor.after) anchor.after(card);
@@ -37,7 +38,8 @@
 
     // The handler to put on a button: it shows the warning, after `anchor` when given, and runs `action` only after Continue.
     function guard(kind, action, anchor) {
-      return () => ask(kind, anchor).then((ok) => { if (ok) action(); });
+      // The class only: no positions in a log.
+      return () => ask(kind, anchor).then((ok) => { if (ok) action(); }).catch((e) => console.warn("[export] failed", e && e.name));
     }
 
     proceed.addEventListener("click", () => settle(true));

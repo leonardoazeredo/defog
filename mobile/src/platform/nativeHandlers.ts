@@ -21,15 +21,24 @@ export async function shareExport(file: {
       dialogTitle: file.filename,
     });
   } finally {
-    // The copy holds the route in plaintext, so it is removed once the share sheet closes.
-    if (dest.exists) dest.delete();
+    // The copy holds the route in plaintext, so it is removed once the share sheet closes; a failure to
+    // remove it must not replace the share's own result.
+    try {
+      if (dest.exists) dest.delete();
+    } catch (e) {
+      console.warn("crossfog: share copy not removed", e instanceof Error ? e.name : "unknown");
+    }
   }
 }
 
 /** Removes the share copies a crash left behind. */
 export function clearShareCopies(): void {
-  const dir = new Directory(Paths.cache, "exports");
-  if (dir.exists) dir.delete();
+  try {
+    const dir = new Directory(Paths.cache, "exports");
+    if (dir.exists) dir.delete();
+  } catch (e) {
+    console.warn("crossfog: share copies not removed", e instanceof Error ? e.name : "unknown");
+  }
 }
 
 export function makeReleaseSource(roots: { cache: string; inbox: string }) {

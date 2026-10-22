@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ExportChunk } from "../../../src/bridge/protocol.js";
+import { COPY } from "../../../src/copy.js";
 import { createExportFlow } from "../../../src/flows/exportFlow.js";
 import { loadUpstream } from "../../support/loadUpstream.js";
 import { createMemoryExportFs } from "../../support/memoryExportFs.js";
@@ -125,6 +126,87 @@ describe("the Fog of World export flow", () => {
     await Promise.all([sweeping, ...chunks]);
     expect(saveAs).toHaveBeenCalledTimes(1);
     expect(fs.files.size).toBe(0);
+  });
+
+  it("drops the export when it sends more files than it declared", async () => {
+    const { flow, fs, saveAs, notify } = setup();
+    await flow.onChunk(chunk("aaaa", 0, 2, A, { files: 1 }));
+    await flow.onChunk(chunk("bbbb", 0, 1, B, { files: 1 }));
+    await flow.onChunk(chunk("aaaa", 1, 2, A, { files: 1 }));
+    expect(saveAs).not.toHaveBeenCalled();
+    expect(fs.files.size).toBe(0);
+    expect(notify).toHaveBeenCalledExactlyOnceWith(COPY.fogExportFailed);
+  });
+
+  it("tells the user when a disagreement drops an export", async () => {
+    const { flow, notify } = setup();
+    await flow.onChunk(chunk("aaaa", 0, 1, A, { files: 2 }));
+    await flow.onChunk(chunk("bbbb", 0, 1, B, { files: 3 }));
+    expect(notify).toHaveBeenCalledExactlyOnceWith(COPY.fogExportFailed);
+  });
+
+  it("ignores a chunk that arrives after the export was saved", async () => {
+    const { flow, fs, saveAs, notify } = setup();
+    for (const c of CHUNKS) await flow.onChunk(c);
+    notify.mockClear();
+    await flow.onChunk(CHUNKS[0] as ExportChunk);
+    expect(saveAs).toHaveBeenCalledTimes(1);
+    expect(fs.files.size).toBe(0);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("ignores the rest of an export that was dropped", async () => {
+    const { flow, fs, saveAs, notify } = setup();
+    await flow.onChunk(chunk("aaaa", 0, 3, A, { files: 2 }));
+    await flow.onChunk(chunk("aaaa", 1, 2, A, { files: 2 }));
+    notify.mockClear();
+    for (const c of CHUNKS) await flow.onChunk(c);
+    expect(saveAs).not.toHaveBeenCalled();
+    expect(fs.files.size).toBe(0);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("cleans up, says so once without a path, and still serves the next export when a read fails", async () => {
+    const { flow, fs, saveAs, notify } = setup();
+    const read = fs.read.bind(fs);
+    let failNext = true;
+    fs.read = async (path) => {
+      if (failNext && path.includes("/parts/")) {
+        failNext = false;
+        throw new Error("/data/user/0/secret/path");
+      }
+      return read(path);
+    };
+    for (const c of CHUNKS) await flow.onChunk(c);
+    expect(saveAs).not.toHaveBeenCalled();
+    expect(fs.files.size).toBe(0);
+    expect(notify).toHaveBeenCalledExactlyOnceWith(COPY.fogExportFailed);
+
+    for (const c of CHUNKS) await flow.onChunk({ ...c, exportId: "e2" });
+    expect(saveAs).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report a failed export when only the cleanup after a save fails", async () => {
+    const { flow, fs, notify } = setup();
+    const remove = fs.remove.bind(fs);
+    fs.remove = async (path) => {
+      if (path === "export-e1") throw new Error("locked");
+      return remove(path);
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    for (const c of CHUNKS) await flow.onChunk(c);
+    warn.mockRestore();
+    expect(notify).toHaveBeenCalledExactlyOnceWith(COPY.fogExportSaved("Saved.zip"));
+  });
+
+  it("never rejects from the startup sweep", async () => {
+    const { flow, fs } = setup();
+    fs.removeMatching = async () => {
+      throw new Error("1 cache entries not removed");
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(flow.clear()).resolves.toBeUndefined();
+    warn.mockRestore();
   });
 
   it("removes what an earlier run left in the cache", async () => {

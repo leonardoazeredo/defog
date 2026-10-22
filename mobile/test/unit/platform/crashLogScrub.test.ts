@@ -34,6 +34,18 @@ it("replaces a number with exactly three decimals and keeps one with two", async
   expect(scrubCoordinates("1.234 and 1.23")).toBe("[n] and 1.23");
 });
 
+it("replaces cache paths, which carry the export id, with [path]", async () => {
+  const { scrubCoordinates } = await import("../../../src/platform/crashLog.js");
+  expect(
+    scrubCoordinates(
+      "ENOENT file:///data/user/0/codes.madera.crossfog/cache/export-4a8c/Sync/ab12: no such file",
+    ),
+  ).toBe("ENOENT [path]: no such file");
+  expect(scrubCoordinates("open /storage/emulated/0/Download/x.zip failed (code 500)")).toBe(
+    "open [path] failed (code 500)",
+  );
+});
+
 it("writes the scrubbed message and keeps the timestamp", async () => {
   const { logCrash } = await import("../../../src/platform/crashLog.js");
   await logCrash(new Error("no street near 48.12345,16.54321"));
