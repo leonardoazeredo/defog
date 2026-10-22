@@ -61,6 +61,7 @@ let status: Status & { calls: unknown[][] };
 let loadOutcomes: LoadOutcome[];
 let dispatched: NativeToWeb[];
 const pageApi: PageApi = { dispatch: (m) => dispatched.push(m) };
+const noSettings = { collect: () => "{}", apply: () => true };
 
 beforeEach(() => {
   dispatched = [];
@@ -80,6 +81,7 @@ function makeSession(loadOutcomeQueue?: LoadOutcome[]) {
     sha256Hex,
     handleBack: () => true,
     pageApi,
+    settings: noSettings,
   });
 }
 
@@ -163,6 +165,7 @@ it("first run: none empties the cache and hides the line", async () => {
     sha256Hex,
     handleBack: () => false,
     pageApi,
+    settings: noSettings,
   });
   await sess.onMessage({ v: 1, type: "none" });
   expect(await c.get(fp)).toBeNull();
@@ -332,6 +335,7 @@ it("back reports whether the sheet closed", async () => {
     sha256Hex,
     handleBack: () => true,
     pageApi,
+    settings: noSettings,
   });
   await sess.onMessage({ v: 1, type: "back" });
   expect(sent).toContainEqual({ v: 1, type: "back:result", handled: true });
@@ -344,6 +348,7 @@ it("back reports whether the sheet closed", async () => {
     sha256Hex,
     handleBack: () => false,
     pageApi,
+    settings: noSettings,
   });
   await sess2.onMessage({ v: 1, type: "back" });
   expect(sent).toContainEqual({ v: 1, type: "back:result", handled: false });
@@ -378,4 +383,59 @@ it("ignores a message type it does not know", async () => {
   expect(dispatched).toEqual([]);
   expect(sent).toEqual([]);
   expect(status.calls).toEqual([]);
+});
+
+it("answers needSettings with the page's settings", async () => {
+  const sess = createSession({
+    send: (m) => sent.push(m),
+    cache,
+    status,
+    load: async () => ({ ok: true, tiles: 2 }),
+    sha256Hex,
+    handleBack: () => false,
+    pageApi,
+    settings: { collect: () => '{"f2m_units":"metric"}', apply: () => true },
+  });
+  await sess.onMessage({ v: 1, type: "needSettings" });
+  expect(sent).toEqual([{ v: 1, type: "settings", json: '{"f2m_units":"metric"}' }]);
+});
+
+it("applies settings first and confirms after", async () => {
+  const order: string[] = [];
+  const sess = createSession({
+    send: (m) => {
+      order.push(m.type);
+      sent.push(m);
+    },
+    cache,
+    status,
+    load: async () => ({ ok: true, tiles: 2 }),
+    sha256Hex,
+    handleBack: () => false,
+    pageApi,
+    settings: {
+      collect: () => "{}",
+      apply: () => {
+        order.push("apply");
+        return true;
+      },
+    },
+  });
+  await sess.onMessage({ v: 1, type: "applySettings", json: "{}" });
+  expect(order).toEqual(["apply", "settingsApplied"]);
+});
+
+it("does not confirm settings it could not apply", async () => {
+  const sess = createSession({
+    send: (m) => sent.push(m),
+    cache,
+    status,
+    load: async () => ({ ok: true, tiles: 2 }),
+    sha256Hex,
+    handleBack: () => false,
+    pageApi,
+    settings: { collect: () => "{}", apply: () => false },
+  });
+  await sess.onMessage({ v: 1, type: "applySettings", json: "{}" });
+  expect(sent).toEqual([]);
 });

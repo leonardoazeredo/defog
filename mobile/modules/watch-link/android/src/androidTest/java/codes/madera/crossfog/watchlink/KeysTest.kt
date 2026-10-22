@@ -113,6 +113,27 @@ class KeysTest {
     assertEquals(first, second)
   }
 
+  @Test
+  fun replacingALostKeyGivesAWorkingNewKey() {
+    val keys = Keys(context)
+    val old = keys.databaseKey()
+    keys.databaseKeyFile.delete()
+    assertEquals(KeyState.LOST, keys.keyState())
+    val fresh = keys.replaceLostDatabaseKey()
+    assertEquals(32, fresh.size)
+    assertFalse(fresh.contentEquals(old))
+    assertEquals(KeyState.EXISTING, keys.keyState())
+    assertArrayEquals(fresh, Keys(context).databaseKey())
+  }
+
+  @Test
+  fun aKeyThatStillWorksCannotBeReplaced() {
+    val keys = Keys(context)
+    val key = keys.databaseKey()
+    assertThrows(IllegalStateException::class.java) { keys.replaceLostDatabaseKey() }
+    assertArrayEquals(key, keys.databaseKey())
+  }
+
   private fun reset() {
     Keys(context).databaseKeyFile.delete()
     KeyStore.getInstance("AndroidKeyStore").apply {

@@ -34,6 +34,9 @@ const MIGRATIONS: readonly string[] = [
   );`,
 ];
 
+/** The schema version this build writes; a backup from a higher one is from a newer app. */
+export const SCHEMA_VERSION = MIGRATIONS.length;
+
 export async function migrate(db: SqlDriver): Promise<number> {
   return db.transaction(async (tx) => {
     const [row] = await tx.all<{ user_version: number }>("PRAGMA user_version");

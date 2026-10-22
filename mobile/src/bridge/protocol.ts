@@ -7,6 +7,9 @@ const shortName = z.string().min(1).max(255);
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/);
 const base64Data = z.string().regex(/^[A-Za-z0-9+/]*={0,2}$/);
 
+// The page's f2m_* settings as JSON; src/backup/settings.ts checks the content, this bounds the message.
+const settingsJson = z.string().max(16_384);
+
 const EXPORT_CHUNK_BYTES = 1_048_576;
 export const TRACK_CHUNK_POINTS = 2000;
 
@@ -117,6 +120,8 @@ const webToNativeSchema = z.union([
     .refine((c) => c.index < c.total, "index must be less than total"),
   z.object({ v: z.literal(1), type: z.literal("backup") }),
   z.object({ v: z.literal(1), type: z.literal("restore") }),
+  z.object({ v: z.literal(1), type: z.literal("settings"), json: settingsJson }),
+  z.object({ v: z.literal(1), type: z.literal("settingsApplied") }),
   // Only the e2e page sends it and only a debug app acts on it; the schema is harmless in release.
   z.object({ v: z.literal(1), type: z.literal("devAddActivity") }),
 ]);
@@ -162,6 +167,8 @@ const nativeToWebSchema = z.union([
     paired: z.boolean(),
     reachable: z.boolean(),
   }),
+  z.object({ v: z.literal(1), type: z.literal("needSettings") }),
+  z.object({ v: z.literal(1), type: z.literal("applySettings"), json: settingsJson }),
   z.object({ v: z.literal(1), type: z.literal("activities"), items: z.array(activitySummary) }),
   z
     .object({

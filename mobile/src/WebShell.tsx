@@ -7,6 +7,9 @@ import { Alert, BackHandler, Platform, StyleSheet, Text, ToastAndroid, View } fr
 import { SafeAreaView } from "react-native-safe-area-context";
 import WebView from "react-native-webview";
 import { WEB_HTML } from "../../generated/web.js";
+import { createBackupFlow } from "./backup/backup.js";
+import { createRestoreFlow } from "./backup/restore.js";
+import { createSettingsChannel } from "./backup/settings.js";
 import { decideNavigation, shouldOpenWindowExternally } from "./bridge/navigationPolicy.js";
 import {
   encode,
@@ -18,6 +21,7 @@ import {
 import { type Controller, createController } from "./controller.js";
 import { COPY } from "./copy.js";
 import { pickE2eFixture } from "./e2e/fixturePicker.js";
+import { createBackupFlows } from "./flows/backup.js";
 import { type ComposedFlows, createFlows } from "./flows/compose.js";
 import { createReloadGuard } from "./fog/reloadGuard.js";
 import { createFogStore } from "./fog/store.js";
@@ -25,11 +29,17 @@ import { CHUNK_BYTES } from "./fog/transfer.js";
 import { subscribeIncoming } from "./import/incomingQueue.js";
 import { pickBackupFile } from "./import/pick.js";
 import { createNativeWatchLink } from "./link/watchLink.js";
+import { createScratch, pickRestoreFile, saveFileAs } from "./platform/backupPlatform.js";
 import { createDatabase } from "./platform/database.js";
 import { createExpoFileStore } from "./platform/expoFileStore.js";
-import { createHistoryStores } from "./platform/historyStores.js";
+import { createOpenBackup } from "./platform/expoSqliteDriver.js";
+import { createHistoryStores, withHistoryDb } from "./platform/historyStores.js";
 import { makeReleaseSource, shareExport } from "./platform/nativeHandlers.js";
+import { replaceDatabase } from "./platform/replaceDatabase.js";
 import { sha256Hex } from "./platform/sha256.js";
+import { copyFromUri } from "./platform/watchLinkModule.js";
+import { PassphraseDialog, type PassphraseRequest } from "./ui/PassphraseDialog.js";
+import type { PassphraseAnswer } from "./ui/passphraseForm.js";
 
 // react-native-webview 14 defaults its props generic to `undefined`, which makes the props type
 // `never` for a bare `WebView` type. Drop this alias if that default changes.
@@ -82,6 +92,7 @@ function buildController(
   setWebKey: (fn: (k: number) => number) => void,
   initialLoadDone: React.RefObject<boolean>,
   setBusy: (on: boolean) => void,
+  askPassphrase: (mode: PassphraseRequest["mode"]) => Promise<PassphraseAnswer | null>,
 ): { controller: Controller; flows: ComposedFlows } {
   const fogDir = new Directory(Paths.document, "fog");
   const fs = createExpoFileStore(fogDir);
@@ -93,10 +104,44 @@ function buildController(
   });
   // A message sent while the page is not loaded is lost; the page asks again through `ready`.
   const send = (msg: NativeToWeb) => webViewRef.current?.postMessage(encode(msg));
+  const settings = createSettingsChannel({ send, timeoutMs: 5000 });
+  const scratch = createScratch();
+  scratch.clear();
+  const openBackup = createOpenBackup();
+  const backupFlows = createBackupFlows({
+    backup: createBackupFlow({
+      withDb: withHistoryDb,
+      openBackup,
+      fogStore: store,
+      fs,
+      scratch,
+      settings,
+      askPassphrase: () => askPassphrase("backup"),
+      confirmUnencrypted: () =>
+        confirmAlert(COPY.unencryptedTitle, COPY.unencryptedWarning, COPY.unencryptedConfirm),
+      saveAs: saveFileAs,
+      now: Date.now,
+    }),
+    restore: createRestoreFlow({
+      pickFile: pickRestoreFile,
+      copyFromUri,
+      scratch,
+      openBackup,
+      replaceDatabase,
+      fogStore: store,
+      confirm: () =>
+        confirmAlert(COPY.restoreConfirmTitle, COPY.restoreConfirmMessage, COPY.replaceEverything),
+      askPassphrase: () => askPassphrase("restore"),
+      settings,
+    }),
+    notify,
+  });
   const flows = createFlows({
     link: createNativeWatchLink(),
     ...createHistoryStores(),
     send,
+    backup: backupFlows,
+    settings,
     now: Date.now,
   });
   const controller = createController({
@@ -133,13 +178,29 @@ function buildController(
 export function WebShell(): React.JSX.Element {
   const [webKey, setWebKey] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [passphraseRequest, setPassphraseRequest] = useState<PassphraseRequest | null>(null);
   const webViewRef = useRef<ShellWebView | null>(null);
   const initialLoadDone = useRef(false);
 
   // Build the controller and flows once; never rebuild them across re-renders.
   const builtRef = useRef<ReturnType<typeof buildController> | null>(null);
   if (builtRef.current === null) {
-    builtRef.current = buildController(webViewRef, setWebKey, initialLoadDone, setBusy);
+    builtRef.current = buildController(
+      webViewRef,
+      setWebKey,
+      initialLoadDone,
+      setBusy,
+      (mode) =>
+        new Promise((resolve) => {
+          setPassphraseRequest({
+            mode,
+            resolve(answer) {
+              setPassphraseRequest(null);
+              resolve(answer);
+            },
+          });
+        }),
+    );
   }
   const { controller, flows } = builtRef.current;
 
@@ -229,6 +290,7 @@ export function WebShell(): React.JSX.Element {
         }}
         style={{ flex: 1, backgroundColor: PAGE_BG }}
       />
+      <PassphraseDialog request={passphraseRequest} />
       {busy ? (
         <View style={[StyleSheet.absoluteFill, styles.busyLayer]} pointerEvents="none">
           <View style={styles.busyCard}>

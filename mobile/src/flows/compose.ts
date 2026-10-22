@@ -1,7 +1,9 @@
+import type { SettingsChannel } from "../backup/settings.js";
 import type { NativeToWeb } from "../bridge/protocol.js";
 import { parseGpx } from "../history/gpx.js";
 import type { ActivityStore, RouteStore } from "../history/types.js";
 import type { WatchLink } from "../link/types.js";
+import type { BackupFlows } from "./backup.js";
 import { createHandOffFlow } from "./handOff.js";
 import { createHistoryFlow } from "./history.js";
 import { createSendFlow } from "./send.js";
@@ -19,6 +21,9 @@ export interface ComposeDeps {
   activities: ActivityStore;
   routes: RouteStore;
   send(msg: NativeToWeb): void;
+  /** Backup and restore; absent where the platform has none. */
+  backup?: BackupFlows;
+  settings?: SettingsChannel;
   now(): number;
 }
 
@@ -51,6 +56,11 @@ export function createFlows(deps: ComposeDeps): ComposedFlows {
     sendRoute: sendFlow.sendRoute,
     needTrack: history.needTrack,
     deleteActivity: history.deleteActivity,
+    ...(deps.backup && { backup: deps.backup.backup, restore: deps.backup.restore }),
+    ...(deps.settings && {
+      settings: async (json: string) => deps.settings?.onSettings(json),
+      settingsApplied: async () => deps.settings?.onApplied(),
+    }),
     start() {
       const offSend = sendFlow.start();
       const offStaged = deps.link.on("activityStaged", () => void handOffAndPublish());

@@ -10,6 +10,7 @@ import { installLinks } from "./links.js";
 import { assignFilesWithDataTransfer, installOutcomeHooks, loadCopy } from "./loader.js";
 import { installPageApi } from "./pageApi.js";
 import { createSession, createStatusActions } from "./session.js";
+import { createPageSettings } from "./settings.js";
 import { createStatus } from "./status.js";
 
 z.config({ jitless: true });
@@ -85,6 +86,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       return true;
     },
     pageApi,
+    settings: createPageSettings(localStorage),
   });
 
   if (__CROSSFOG_DEV_TOOLS__) {

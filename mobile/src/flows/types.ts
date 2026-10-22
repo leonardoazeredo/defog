@@ -10,7 +10,12 @@ export interface Flows {
   deleteActivity(activityId: string): Promise<void>;
   exportBinary(chunk: ExportChunk): Promise<void>;
   backup(): Promise<void>;
-  restore(): Promise<void>;
+  /** Resolves true when the phone's data was replaced and the page must reload. */
+  restore(): Promise<boolean>;
+  /** The page's answer to `needSettings`. */
+  settings(json: string): Promise<void>;
+  /** The page's confirmation that it wrote the settings from `applySettings`. */
+  settingsApplied(): Promise<void>;
 }
 
 export function createNoopFlows(): Flows {
@@ -22,6 +27,8 @@ export function createNoopFlows(): Flows {
     deleteActivity: done,
     exportBinary: done,
     backup: done,
-    restore: done,
+    restore: () => Promise.resolve(false),
+    settings: done,
+    settingsApplied: done,
   };
 }

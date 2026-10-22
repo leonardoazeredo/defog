@@ -3,6 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const native = {
   getDatabaseKeyHex: vi.fn(),
   keyState: vi.fn(),
+  resetLostDatabaseKey: vi.fn(),
+  createDocument: vi.fn(),
+  copyToUri: vi.fn(),
+  displayNameOf: vi.fn(),
+  copyFromUri: vi.fn(),
   status: vi.fn(),
   pendingActivities: vi.fn(),
   readActivity: vi.fn(),
@@ -15,6 +20,11 @@ vi.mock("../../../modules/watch-link", () => ({ default: native }));
 const {
   getDatabaseKeyHex,
   keyState,
+  resetLostDatabaseKeyHex,
+  createDocument,
+  copyToUri,
+  displayNameOf,
+  copyFromUri,
   KeyLostError,
   linkStatus,
   pendingActivities,
@@ -107,5 +117,50 @@ describe("staging and outbox calls", () => {
     expect(remove).not.toHaveBeenCalled();
     off();
     expect(remove).toHaveBeenCalledOnce();
+  });
+});
+
+describe("backup file functions", () => {
+  it("checks the key a reset returns", async () => {
+    native.resetLostDatabaseKey.mockResolvedValue("ab".repeat(32));
+    await expect(resetLostDatabaseKeyHex()).resolves.toBe("ab".repeat(32));
+    native.resetLostDatabaseKey.mockResolvedValue("nope");
+    await expect(resetLostDatabaseKeyHex()).rejects.toThrow("malformed database key");
+  });
+
+  it("passes the picker's answer through, null included", async () => {
+    native.createDocument.mockResolvedValueOnce("content://x/1").mockResolvedValueOnce(null);
+    await expect(createDocument("b.db", "application/octet-stream")).resolves.toBe("content://x/1");
+    await expect(createDocument("b.db", "application/octet-stream")).resolves.toBeNull();
+    expect(native.createDocument).toHaveBeenCalledWith("b.db", "application/octet-stream");
+  });
+
+  it("passes the provider's document name through", async () => {
+    native.displayNameOf.mockResolvedValue("backup (1).db");
+    await expect(displayNameOf("content://x/1")).resolves.toBe("backup (1).db");
+  });
+
+  it("passes the copy arguments through", async () => {
+    native.copyToUri.mockResolvedValue(12);
+    await expect(copyToUri("/cache/b.db", "content://x/1")).resolves.toBe(12);
+    expect(native.copyToUri).toHaveBeenCalledWith("/cache/b.db", "content://x/1");
+  });
+
+  it("accepts a well-formed copy result", async () => {
+    native.copyFromUri.mockResolvedValue({ size: 4096, head: "53514c69" });
+    await expect(copyFromUri("content://x/1", "/cache/r.db")).resolves.toEqual({
+      size: 4096,
+      head: "53514c69",
+    });
+  });
+
+  it.each([
+    ["no size", { head: "00" }],
+    ["a head that is not hex", { size: 1, head: "zz" }],
+    ["a head that is too long", { size: 1, head: "00".repeat(17) }],
+    ["nothing", undefined],
+  ])("rejects a copy result with %s", async (_n, result) => {
+    native.copyFromUri.mockResolvedValue(result);
+    await expect(copyFromUri("u", "p")).rejects.toThrow("malformed copy result");
   });
 });

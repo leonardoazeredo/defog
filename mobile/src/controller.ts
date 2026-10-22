@@ -232,7 +232,20 @@ export function createController(deps: ControllerDeps): Controller {
           await deps.flows.backup();
           break;
         case "restore":
-          await deps.flows.restore();
+          if (importFlow.active()) {
+            deps.notify(COPY.restoreBusy);
+            return;
+          }
+          if (await deps.flows.restore()) {
+            await guard.reset();
+            await doRemount();
+          }
+          break;
+        case "settings":
+          await deps.flows.settings(msg.json);
+          break;
+        case "settingsApplied":
+          await deps.flows.settingsApplied();
           break;
         case "devAddActivity":
           if (__DEV__) await deps.devAddActivity?.();

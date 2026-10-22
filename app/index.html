@@ -230,6 +230,10 @@
               <input id="zip" type="file" accept=".zip,application/zip" />
             </label>
           </div>
+          <div class="row" id="backupRow" style="display:none">
+            <button id="backupBtn" class="ghost" type="button">Back up…</button>
+            <button id="restoreBtn" class="ghost" type="button">Restore…</button>
+          </div>
           <details>
             <summary>Where's my Sync folder?</summary>
             <p>Fog of World keeps a folder named <b>Sync</b> full of small files. Point the folder picker at it.</p>
@@ -455,6 +459,7 @@
   <script src="src/routeLocal.js"></script>
   <script src="src/suggest.js"></script>
   <script src="src/history.js"></script>
+  <script src="src/backup.js"></script>
   <script src="src/main.js"></script>
 </body>
 </html>
