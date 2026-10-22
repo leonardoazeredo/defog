@@ -22,20 +22,22 @@
       resolve(ok);
     }
 
-    // A second request replaces the first, which counts as cancelled.
-    function ask(kind) {
+    // A second request replaces the first, which counts as cancelled. The card is inserted after `anchor`
+    // (a DOM element) when given, because the exports live in different tabs.
+    function ask(kind, anchor) {
       if (!Object.prototype.hasOwnProperty.call(TEXT, kind)) return Promise.resolve(false);
       settle(false);
       text.textContent = TEXT[kind];
+      if (anchor && anchor.after) anchor.after(card);
       card.hidden = false;
       // The safe answer takes the focus.
       if (cancel.focus) cancel.focus();
       return new Promise((resolve) => { pending = resolve; });
     }
 
-    // The handler to put on a button: it shows the warning and runs `action` only after Continue.
-    function guard(kind, action) {
-      return () => ask(kind).then((ok) => { if (ok) action(); });
+    // The handler to put on a button: it shows the warning, after `anchor` when given, and runs `action` only after Continue.
+    function guard(kind, action, anchor) {
+      return () => ask(kind, anchor).then((ok) => { if (ok) action(); });
     }
 
     proceed.addEventListener("click", () => settle(true));

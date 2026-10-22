@@ -90,6 +90,20 @@ const settle = () => new Promise((r) => setImmediate(r));
     assert.equal(second, 1);
   }
 
+  // the card moves under the row of the button that asked, because the plan and fog exports sit in different tabs
+  {
+    const { doc, els } = fakeDoc();
+    const warn = ExportWarning.install({ doc });
+    const placed = [];
+    const anchor = (name) => ({ after(card) { placed.push([name, card === els.exportWarning]); } });
+    const a = warn.guard("fog", () => {}, anchor("fog tab"))();
+    els.exportCancel.click();
+    const b = warn.guard("gpx", () => {}, anchor("plan tab"))();
+    els.exportCancel.click();
+    await Promise.all([a, b]);
+    assert.deepEqual(placed, [["fog tab", true], ["plan tab", true]]);
+  }
+
   // an unknown kind never runs its action
   {
     const { doc } = fakeDoc();
@@ -119,6 +133,8 @@ const settle = () => new Promise((r) => setImmediate(r));
   const at = (f) => html.indexOf('src="src/' + f + '"');
   for (const f of ["exportWarning.js", "fowExport.js"]) assert.ok(at(f) > 0 && at(f) < at("main.js"), f + " loads before main.js");
   assert.ok(at("fowExport.js") > at("fogWriter.js"), "fowExport.js loads after fogWriter.js");
+  const fogPane = html.slice(html.indexOf('id="fogPane"'), html.indexOf('id="planPane"'));
+  assert.ok(fogPane.includes('id="exportFow"'), "the Fog of World export button is in the Show your fog tab");
   for (const id of ["exportWarning", "exportWarningText", "exportContinue", "exportCancel", "exportFow"]) {
     assert.ok(html.includes('id="' + id + '"'), "index.html has #" + id);
   }

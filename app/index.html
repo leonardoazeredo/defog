@@ -238,6 +238,10 @@
             <button id="backupBtn" class="ghost" type="button">Back up…</button>
             <button id="restoreBtn" class="ghost" type="button">Restore…</button>
           </div>
+          <div class="row" id="exportFowRow">
+            <button id="exportFow" class="ghost grow" type="button" disabled style="display:none">Export for Fog of World</button>
+            <span id="exportFowStatus" class="muted" role="status" aria-live="polite"></span>
+          </div>
           <details>
             <summary>Where's my Sync folder?</summary>
             <p>Fog of World keeps a folder named <b>Sync</b> full of small files. Point the folder picker at it.</p>
@@ -412,10 +416,6 @@
             <button id="exportGpx" class="ghost grow" disabled>GPX</button>
             <button id="exportKml" class="ghost grow" disabled>KML</button>
             <button id="openGmaps" class="ghost grow" disabled>Maps ↗</button>
-          </div>
-          <div class="row">
-            <button id="exportFow" class="ghost grow" type="button" disabled style="display:none">Export for Fog of World</button>
-            <span id="exportFowStatus" class="muted" role="status" aria-live="polite"></span>
           </div>
           <div id="exportWarning" role="alertdialog" aria-labelledby="exportWarningText" hidden>
             <p id="exportWarningText"></p>

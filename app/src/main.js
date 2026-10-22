@@ -711,10 +711,10 @@
   reverseBtn.addEventListener("click", () => route.reverse());
   // Every plaintext export sits behind its warning; Cancel runs nothing.
   const warn = ExportWarning.install({ doc: document });
-  exportGpxBtn.addEventListener("click", warn.guard("gpx", () => route.downloadGPX()));
-  exportKmlBtn.addEventListener("click", warn.guard("kml", () => route.downloadKML()));
-  fowBtn.addEventListener("click", warn.guard("fog", () => showFowResult(FowExport.run({ fogMap, phone: window.crossfog, newId: RouteTool.newUuid }))));
-  gmapsBtn.addEventListener("click", warn.guard("maps", () => { const u = route.googleMapsUrl(); if (u) window.open(u, "_blank", "noopener"); }));
+  exportGpxBtn.addEventListener("click", warn.guard("gpx", () => route.downloadGPX(), exportGpxBtn.parentNode));
+  exportKmlBtn.addEventListener("click", warn.guard("kml", () => route.downloadKML(), exportGpxBtn.parentNode));
+  fowBtn.addEventListener("click", warn.guard("fog", () => showFowResult(FowExport.run({ fogMap, phone: window.crossfog, newId: RouteTool.newUuid })), fowBtn.parentNode));
+  gmapsBtn.addEventListener("click", warn.guard("maps", () => { const u = route.googleMapsUrl(); if (u) window.open(u, "_blank", "noopener"); }, exportGpxBtn.parentNode));
 
   // The phone app's page adapter adds and removes cells revealed by activities, then calls fogChanged() so
   // the fog and its panels update now and the street fractions are recomputed on next use. The suggestion planners need no reset: they
