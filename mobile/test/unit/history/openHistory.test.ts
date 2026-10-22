@@ -4,6 +4,7 @@ import { type OpenHistoryDeps, openHistory } from "../../../src/db/openHistory.j
 
 const driver = (): SqlDriver => ({
   exec: vi.fn(),
+  exportTo: vi.fn(),
   run: vi.fn(),
   all: vi.fn(),
   transaction: vi.fn(),

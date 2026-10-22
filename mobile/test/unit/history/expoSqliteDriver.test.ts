@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createExpoSqliteDriver, type ExpoDb } from "../../../src/platform/expoSqliteDriver.js";
+import { NotADatabaseError } from "../../../src/db/driver.js";
+import {
+  createExpoSqliteDriver,
+  createOpenBackup,
+  type ExpoDb,
+} from "../../../src/platform/expoSqliteDriver.js";
 
 const KEY = "ab".repeat(32);
 const PRAGMA = `PRAGMA key = "x'${KEY}'"`;
@@ -152,5 +157,98 @@ describe("expo sqlite driver", () => {
       createExpoSqliteDriver({ name: "x.db", keyHex: KEY, open: wrongKey }),
     ).rejects.toThrow("file is not a database");
     expect(log[0]?.at(-1)).toBe("close");
+  });
+});
+
+describe("expo sqlite driver export", () => {
+  // Records statements with their bound parameters on one connection.
+  function exportDb(opts: { failExport?: boolean } = {}) {
+    const calls: { sql: string; params?: unknown[] }[] = [];
+    const db = fakeDb([]);
+    const wrapped: ExpoDb = {
+      ...db,
+      async execAsync(sql) {
+        calls.push({ sql });
+      },
+      async runAsync(sql, params) {
+        calls.push({ sql, params });
+        return { changes: 0 };
+      },
+      async getAllAsync<T>(sql: string, params: unknown[]) {
+        calls.push({ sql, params });
+        if (sql.startsWith("SELECT sqlcipher_export") && opts.failExport) throw new Error("boom");
+        return (sql.includes("user_version") ? [{ user_version: 1 }] : [{}]) as T[];
+      },
+    };
+    return { calls, wrapped };
+  }
+
+  it("binds the path and the passphrase, so a quote in it cannot reach the statement", async () => {
+    const { calls, wrapped } = exportDb();
+    const driver = await createExpoSqliteDriver({
+      name: "x.db",
+      keyHex: KEY,
+      open: async () => wrapped,
+    });
+    calls.length = 0;
+    await driver.exportTo("/cache/b.db", "pa'ss");
+    const attach = calls.find((c) => c.sql.startsWith("ATTACH"));
+    expect(attach).toEqual({
+      sql: "ATTACH DATABASE ? AS backup KEY ?",
+      params: ["/cache/b.db", "pa'ss"],
+    });
+    expect(calls.map((c) => c.sql).join("\n")).not.toContain("pa'ss");
+    expect(calls.map((c) => c.sql)).toContain("PRAGMA backup.user_version = 1");
+  });
+
+  it("writes an unencrypted copy with an empty key", async () => {
+    const { calls, wrapped } = exportDb();
+    const driver = await createExpoSqliteDriver({
+      name: "x.db",
+      keyHex: KEY,
+      open: async () => wrapped,
+    });
+    calls.length = 0;
+    await driver.exportTo("/cache/b.db", null);
+    expect(calls.find((c) => c.sql.startsWith("ATTACH"))?.params).toEqual(["/cache/b.db", ""]);
+  });
+
+  it("detaches even when the export fails", async () => {
+    const { calls, wrapped } = exportDb({ failExport: true });
+    const driver = await createExpoSqliteDriver({
+      name: "x.db",
+      keyHex: KEY,
+      open: async () => wrapped,
+    });
+    await expect(driver.exportTo("/cache/b.db", "k")).rejects.toThrow("boom");
+    expect(calls.at(-1)?.sql).toBe("DETACH DATABASE backup");
+  });
+
+  it("maps SQLite's 'not a database' to NotADatabaseError and closes the connection", async () => {
+    const closed: string[] = [];
+    const open = createOpenBackup(async () => ({
+      ...fakeDb([]),
+      async runAsync() {
+        return { changes: 0 };
+      },
+      async getAllAsync() {
+        throw new Error("Error code 26: file is not a database");
+      },
+      async closeAsync() {
+        closed.push("close");
+      },
+    }));
+    await expect(open("/cache/b.db", "wrong")).rejects.toBeInstanceOf(NotADatabaseError);
+    expect(closed).toEqual(["close"]);
+  });
+
+  it("lets any other failure through unchanged", async () => {
+    const open = createOpenBackup(async () => ({
+      ...fakeDb([]),
+      async runAsync() {
+        throw new Error("disk I/O error");
+      },
+    }));
+    await expect(open("/cache/b.db", null)).rejects.toThrow("disk I/O error");
   });
 });

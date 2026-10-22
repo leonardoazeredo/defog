@@ -1,11 +1,16 @@
 package codes.madera.crossfog.watchlink
 
 import android.util.Log
+import android.net.Uri
+import expo.modules.kotlin.activityresult.AppContextActivityResultLauncher
 import expo.modules.kotlin.exception.CodedException
+import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
 import java.io.IOException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class WatchLinkModule : Module() {
   private val context by lazy {
@@ -22,6 +27,9 @@ class WatchLinkModule : Module() {
     StagingStore(File(context.noBackupFilesDir, "outbox"), keys.stagingKey(), ::fsyncDirectory)
   }
 
+  private val saveAs by lazy { SaveAs(context.contentResolver, context.cacheDir) }
+  private lateinit var createLauncher: AppContextActivityResultLauncher<CreateInput, Uri?>
+
   override fun definition() = ModuleDefinition {
     Name("WatchLink")
 
@@ -32,6 +40,38 @@ class WatchLinkModule : Module() {
         keys.databaseKey().toHex()
       } catch (e: KeyLostException) {
         throw CodedException(KEY_LOST, e.message, e)
+      }
+    }
+
+    // Only for a restore from the lost state, where the old database cannot be read by any key.
+    AsyncFunction("resetLostDatabaseKey") {
+      try {
+        keys.replaceLostDatabaseKey().toHex()
+      } catch (e: IllegalStateException) {
+        throw CodedException(INVALID_STATE, e.message, e)
+      }
+    }
+
+    RegisterActivityContracts {
+      createLauncher = registerForActivityResult(CreateDocumentContract())
+    }
+
+    AsyncFunction("createDocument") Coroutine { name: String, mime: String ->
+      createLauncher.launch(CreateInput(name, mime))?.toString()
+    }
+
+    AsyncFunction("copyToUri") Coroutine { sourcePath: String, uri: String ->
+      withContext(Dispatchers.IO) { saveAs.copyToUri(sourcePath, Uri.parse(uri)).toDouble() }
+    }
+
+    AsyncFunction("displayNameOf") Coroutine { uri: String ->
+      withContext(Dispatchers.IO) { saveAs.displayName(Uri.parse(uri)) }
+    }
+
+    AsyncFunction("copyFromUri") Coroutine { uri: String, destPath: String ->
+      withContext(Dispatchers.IO) {
+        val r = saveAs.copyFromUri(Uri.parse(uri), destPath)
+        mapOf("size" to r.size.toDouble(), "head" to r.head.toHex())
       }
     }
 
@@ -72,7 +112,7 @@ class WatchLinkModule : Module() {
 
   private fun summaryOf(id: String): Map<String, Any?>? {
     // An item that cannot be read, parsed or matched to its file name is skipped so it does not hide
-    // the others. A failure of the key itself is not per-item and still propagates or reads as unreadable.
+    // the others. A key failure is not caught here, so it propagates to the caller.
     val offer = try {
       staging.read(id)?.let { Frames.parseActivityOffer(it) }?.takeIf { it.activityId == id }
     } catch (e: FrameException) {
@@ -101,6 +141,7 @@ class WatchLinkModule : Module() {
     const val NOT_FOUND = "ERR_NOT_FOUND"
     const val INVALID_FRAME = "ERR_INVALID_FRAME"
     const val INVALID_ID = "ERR_INVALID_ID"
+    const val INVALID_STATE = "ERR_INVALID_STATE"
   }
 }
 

@@ -59,6 +59,13 @@ connection's address, the same class of information the basemap tile servers get
 read on your device. Those tiles are kept in your browser's storage too (IndexedDB, plain data, never
 uploaded, left out of backups). As with any web map, basemap tiles are fetched from their providers
 (OpenStreetMap / CyclOSM), which reveals the map area you're viewing to them.
+In the phone app, **Back up…** writes one file to a place you choose and makes no network call. The backup
+holds your activities (every track with its times), your routes, the Fog of World import you last loaded and
+the page's saved settings, and nothing from the caches (street map, elevation tiles, derived fog). It is
+encrypted with a passphrase you type into the app, never into the page (SQLCipher), unless you tick
+"No encryption" after a warning: an unencrypted backup shows where you were and when. If you lose the
+passphrase nobody can open that backup, and if you lose the phone without a backup your history is gone.
+**Restore…** replaces everything on the phone with a backup, after you confirm.
 The site also counts visits with [GoatCounter](https://www.goatcounter.com/), a
 privacy-friendly, cookie-less counter (page views only; no personal data, no tracking
 across sites).

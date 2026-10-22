@@ -448,6 +448,8 @@
     onShown: () => sidebar.classList.remove("open") // mobile: the sheet would cover the drawn track
   });
 
+  BackupButtons.install({ doc: document, win: window });
+
   const route = new RouteTool(map, {
     profile,
     routeWaypoints: RouteLocal.create({ streets, plannerFor: (p) => suggest.plannerFor(p), elevation, estimates: Estimates, streetKind: SuggestTool.streetKind }),

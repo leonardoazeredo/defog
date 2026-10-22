@@ -51,6 +51,8 @@ export function createController(deps: ControllerDeps): Controller {
   let activeAbort: AbortController | null = null;
 
   let lastBackAt: number | null = null;
+  // The restore stages and promotes the saved fog itself; an import or a clear meanwhile would overwrite it.
+  let restoring = false;
 
   function sendMsg(msg: NativeToWeb): void {
     if (pageReady) deps.send(msg);
@@ -187,10 +189,18 @@ export function createController(deps: ControllerDeps): Controller {
           await handleLoaded(msg);
           break;
         case "pickBackup":
+          if (restoring) {
+            deps.notify(COPY.restoreRunning);
+            return;
+          }
           await importFlow.pick();
           break;
         case "clearSavedFog":
           if (importFlow.active()) return;
+          if (restoring) {
+            deps.notify(COPY.restoreRunning);
+            return;
+          }
           if (await deps.confirmClear()) {
             await store.clear();
             await guard.reset();
@@ -232,7 +242,25 @@ export function createController(deps: ControllerDeps): Controller {
           await deps.flows.backup();
           break;
         case "restore":
-          await deps.flows.restore();
+          if (importFlow.active()) {
+            deps.notify(COPY.restoreBusy);
+            return;
+          }
+          restoring = true;
+          try {
+            if (await deps.flows.restore()) {
+              await guard.reset();
+              await doRemount();
+            }
+          } finally {
+            restoring = false;
+          }
+          break;
+        case "settings":
+          await deps.flows.settings(msg.json);
+          break;
+        case "settingsApplied":
+          await deps.flows.settingsApplied();
           break;
         case "devAddActivity":
           if (__DEV__) await deps.devAddActivity?.();
@@ -254,6 +282,10 @@ export function createController(deps: ControllerDeps): Controller {
 
     async onIncoming(file: SourceFile) {
       await started;
+      if (restoring) {
+        deps.notify(COPY.restoreRunning);
+        return;
+      }
       await importFlow.incoming(file);
     },
 

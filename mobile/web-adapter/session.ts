@@ -4,6 +4,7 @@ import type { FogCache } from "./fogCache.js";
 import type { LoadOutcome } from "./loader.js";
 import type { PageApi } from "./pageApi.js";
 import { createReceiver } from "./receive.js";
+import type { PageSettings } from "./settings.js";
 import type { Status, StatusActions } from "./status.js";
 
 export type { StatusActions };
@@ -16,6 +17,7 @@ export interface SessionDeps {
   sha256Hex(bytes: Uint8Array): Promise<string>;
   handleBack(): boolean;
   pageApi: PageApi;
+  settings: PageSettings;
 }
 
 export function createStatusActions(send: Send): StatusActions {
@@ -28,7 +30,7 @@ export function createStatusActions(send: Send): StatusActions {
 }
 
 export function createSession(deps: SessionDeps): { onMessage(msg: NativeToWeb): Promise<void> } {
-  const { send, cache, status, load, sha256Hex, handleBack, pageApi } = deps;
+  const { send, cache, status, load, sha256Hex, handleBack, pageApi, settings } = deps;
 
   type ActiveCopy = {
     fingerprint: string;
@@ -142,6 +144,15 @@ export function createSession(deps: SessionDeps): { onMessage(msg: NativeToWeb):
 
         case "back":
           send({ v: 1, type: "back:result", handled: handleBack() });
+          break;
+
+        case "needSettings":
+          send({ v: 1, type: "settings", json: settings.collect() });
+          break;
+
+        case "applySettings":
+          // The phone waits for this answer before it reloads the page, so the saved choices are in place when the page starts again.
+          if (settings.apply(msg.json)) send({ v: 1, type: "settingsApplied" });
           break;
 
         case "routeStatus":

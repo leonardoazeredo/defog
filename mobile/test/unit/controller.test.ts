@@ -91,6 +91,8 @@ function createHarness(opts: { devHandler?: boolean } = {}): Harness {
     exportBinary: vi.fn(noop.exportBinary),
     backup: vi.fn(noop.backup),
     restore: vi.fn(noop.restore),
+    settings: vi.fn(noop.settings),
+    settingsApplied: vi.fn(noop.settingsApplied),
   };
 
   const c = createController({
@@ -679,6 +681,8 @@ it.each<[string, WebToNative, keyof Flows, unknown[]]>([
   ["exportBinary", { v: 1, type: "exportBinary", ...chunk }, "exportBinary", [chunk]],
   ["backup", { v: 1, type: "backup" }, "backup", []],
   ["restore", { v: 1, type: "restore" }, "restore", []],
+  ["settings", { v: 1, type: "settings", json: "{}" }, "settings", ["{}"]],
+  ["settingsApplied", { v: 1, type: "settingsApplied" }, "settingsApplied", []],
 ])("routes %s to its flow once and to no other", async (_, msg, flow, args) => {
   const h = createHarness();
   await h.c.start();
@@ -688,6 +692,52 @@ it.each<[string, WebToNative, keyof Flows, unknown[]]>([
     if (name !== flow) expect(fn).not.toHaveBeenCalled();
   }
   expect(h.sent).toEqual([]);
+});
+
+it("reloads the page after a restore that replaced the data", async () => {
+  const h = createHarness();
+  await h.c.start();
+  h.flows.restore.mockResolvedValueOnce(true);
+  await h.c.onWebMessage({ v: 1, type: "restore" });
+  expect(h.remounts.count).toBe(1);
+});
+
+it("leaves the page alone after a restore that changed nothing", async () => {
+  const h = createHarness();
+  await h.c.start();
+  await h.c.onWebMessage({ v: 1, type: "restore" });
+  expect(h.remounts.count).toBe(0);
+});
+
+it("refuses a restore while an import is running and says why", async () => {
+  const h = createHarness();
+  await h.c.start();
+  const pick = deferred<SourceFile | null>();
+  h.pickFile.mockReturnValueOnce(pick.promise);
+  void h.c.onWebMessage(pickBackup);
+  await h.c.onWebMessage({ v: 1, type: "restore" });
+  expect(h.flows.restore).not.toHaveBeenCalled();
+  expect(h.notified).toContain(COPY.restoreBusy);
+  pick.resolve(null);
+});
+
+it("refuses an import, a clear and a shared file while a restore runs", async () => {
+  const h = createHarness();
+  await h.c.start();
+  const restoring = deferred<boolean>();
+  h.flows.restore.mockReturnValueOnce(restoring.promise);
+  const running = h.c.onWebMessage({ v: 1, type: "restore" });
+  await Promise.resolve();
+  await h.c.onWebMessage(pickBackup);
+  await h.c.onWebMessage({ v: 1, type: "clearSavedFog" });
+  await h.c.onIncoming({ uri: bSrc, name: "b.zip" });
+  expect(h.pickFile).not.toHaveBeenCalled();
+  expect(h.confirmClear).not.toHaveBeenCalled();
+  expect(h.notified.filter((t) => t === COPY.restoreRunning)).toHaveLength(3);
+  restoring.resolve(false);
+  await running;
+  await h.c.onWebMessage(pickBackup);
+  expect(h.pickFile).toHaveBeenCalledOnce();
 });
 
 it("waits for the flow before the next page message is handled", async () => {

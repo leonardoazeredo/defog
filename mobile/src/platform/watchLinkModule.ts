@@ -19,9 +19,49 @@ export async function getDatabaseKeyHex(): Promise<string> {
     }
     throw e;
   }
-  // The value goes straight into PRAGMA key; anything but 32 bytes of hex would key the database wrongly.
+  return checkedKeyHex(hex);
+}
+
+function checkedKeyHex(hex: string): string {
+  // The key is spliced into PRAGMA key with no bound parameter, so anything but 64 lowercase hex digits is refused rather than reaching SQL.
   if (!/^[0-9a-f]{64}$/.test(hex)) throw new Error("watch link returned a malformed database key");
   return hex;
+}
+
+/** A new database key after the old one was lost; the native side refuses it while a key still works. */
+export async function resetLostDatabaseKeyHex(): Promise<string> {
+  return checkedKeyHex(await WatchLink.resetLostDatabaseKey());
+}
+
+/** The system save-as picker; null when the user backs out. */
+export function createDocument(name: string, mime: string): Promise<string | null> {
+  return WatchLink.createDocument(name, mime);
+}
+
+/** The name the provider gave a document, or null when it will not say. */
+export function displayNameOf(uri: string): Promise<string | null> {
+  return WatchLink.displayNameOf(uri);
+}
+
+/** Streams a cache file into a document; returns the bytes written. */
+export function copyToUri(sourcePath: string, uri: string): Promise<number> {
+  return WatchLink.copyToUri(sourcePath, uri);
+}
+
+/** Streams a document into a cache file; `head` is its first 16 bytes (fewer for a shorter file) as hex. */
+export async function copyFromUri(
+  uri: string,
+  destPath: string,
+): Promise<{ size: number; head: string }> {
+  const r = await WatchLink.copyFromUri(uri, destPath);
+  if (
+    typeof r?.size !== "number" ||
+    typeof r.head !== "string" ||
+    !/^[0-9a-f]{0,32}$/.test(r.head)
+  ) {
+    throw new Error("watch link returned a malformed copy result");
+  }
+  return { size: r.size, head: r.head };
 }
 
 export async function keyState(): Promise<KeyState> {

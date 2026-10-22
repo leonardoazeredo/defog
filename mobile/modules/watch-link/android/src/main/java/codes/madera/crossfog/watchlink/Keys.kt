@@ -46,6 +46,21 @@ class Keys(context: Context) {
     }
   }
 
+  /**
+   * A new database key for a key that is lost. Refuses any other state: replacing a key that still
+   * works would make the database it protects unreadable.
+   */
+  fun replaceLostDatabaseKey(): ByteArray = synchronized(LOCK) {
+    check(keyState() == KeyState.LOST) { "the database key is not lost" }
+    try {
+      keyStore.deleteEntry(KEK_ALIAS)
+    } catch (e: Exception) {
+      // A failed delete is tolerated: createDatabaseKey generates under the same alias next and fails loudly if that cannot work.
+    }
+    databaseKeyFile.delete()
+    createDatabaseKey()
+  }
+
   fun stagingKey(): SecretKey =
     synchronized(LOCK) { existingKey(STAGING_ALIAS) ?: generateKey(STAGING_ALIAS) }
 

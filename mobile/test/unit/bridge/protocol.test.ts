@@ -138,6 +138,8 @@ const webSamples = [
   },
   { v: 1 as const, type: "backup" as const },
   { v: 1 as const, type: "restore" as const },
+  { v: 1 as const, type: "settings" as const, json: '{"f2m_units":"metric"}' },
+  { v: 1 as const, type: "settingsApplied" as const },
   { v: 1 as const, type: "devAddActivity" as const },
 ];
 
@@ -184,6 +186,8 @@ const nativeSamples = [
   },
   { v: 1 as const, type: "notice" as const, text: "hello" },
   { v: 1 as const, type: "back" as const },
+  { v: 1 as const, type: "needSettings" as const },
+  { v: 1 as const, type: "applySettings" as const, json: "{}" },
   { v: 1 as const, type: "routeStatus" as const, routeId, state: "waiting" as const },
   { v: 1 as const, type: "routeStatus" as const, routeId, state: "onWatch" as const },
   {
@@ -251,6 +255,11 @@ describe("protocol", () => {
   it("round-trips every message", () => {
     for (const m of webSamples) expect(parseWebToNative(encode(m))).toEqual(m);
     for (const m of nativeSamples) expect(parseNativeToWeb(encode(m))).toEqual(m);
+  });
+
+  it("refuses a settings message larger than the cap", () => {
+    const big = JSON.stringify({ v: 1, type: "settings", json: "x".repeat(16_385) });
+    expect(parseWebToNative(big)).toBeNull();
   });
 
   it.each([
