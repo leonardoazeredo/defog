@@ -1,7 +1,11 @@
 appId: codes.madera.crossfog
 ---
+# Needs mobile/test/fixtures/glancemap-walk.gpx pushed to the device's Downloads (adb push), the fog
+# that import.yaml saves, and a debug build made with CROSSFOG_E2E=1: the Release e2e build shows the
+# button, but there the handler is not wired (the message is accepted and ignored) and the native
+# stageForTest exists only in the debug source set.
 # Relaunch so the flow does not depend on the screen the previous flow left; no clearState, because
-# import.yaml's saved fog must survive.
+# the saved fog must survive.
 - stopApp
 - launchApp
 - extendedWaitUntil:
@@ -11,25 +15,15 @@ appId: codes.madera.crossfog
 - extendedWaitUntil:
     visible: "2 tiles loaded ✓"
     timeout: 30000
-# Needs mobile/test/fixtures/glancemap-walk.gpx pushed to the device's Downloads (adb push) and a
-# debug build made with CROSSFOG_E2E=1: the Release e2e build shows the button, but there the
-# handler is not wired (the message is accepted and ignored) and the native stageForTest exists only
-# in the debug source set. It also needs import.yaml's saved fog.
 # The dev buttons sit at the foot of the page, below the fold; Maestro reports off-screen web view
 # text as visible, so scroll a fixed distance instead of guarding the swipe. The first swipes scroll
 # the panel to its end; only then does the page move, so an extra swipe is harmless.
-- swipe:
-    start: "50%, 90%"
-    end: "50%, 30%"
-- swipe:
-    start: "50%, 90%"
-    end: "50%, 30%"
-- swipe:
-    start: "50%, 90%"
-    end: "50%, 30%"
-- swipe:
-    start: "50%, 90%"
-    end: "50%, 30%"
+- repeat:
+    times: 4
+    commands:
+      - swipe:
+          start: "50%, 90%"
+          end: "50%, 30%"
 - waitForAnimationToEnd:
     timeout: 5000
 - tapOn: "Dev: add activity from GPX"
@@ -42,9 +36,11 @@ appId: codes.madera.crossfog
     visible: ".*47 steps.*"
     timeout: 15000
 - tapOn: ".*47 steps.*"
-# "Show on map" is visible while the track still loads, so wait for the loading text to clear instead.
+# "Show on map" is on screen while the track still loads but stays disabled until it arrives.
 - extendedWaitUntil:
-    notVisible: "Loading the track…"
+    visible:
+      text: "Show on map"
+      enabled: true
     timeout: 15000
 # The first tap only arms the delete; there is no dialog to confirm.
 - tapOn: "Delete"

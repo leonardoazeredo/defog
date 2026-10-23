@@ -1,5 +1,5 @@
 # history.yaml runs on its own: it needs the debug build (Metro JS, native stageForTest), whose
-# launches are too slow for these flows' clearState-then-tap. The Release e2e build ignores its message.
+# launches are too slow for these flows' clearState-then-tap. The Release e2e build ignores the dev button's message.
 flows:
   - import.yaml
   - restart.yaml
