@@ -1,0 +1,72 @@
+appId: codes.madera.crossfog
+---
+# Native-to-page messages that answer a page request must arrive with no other input (#139). The
+# debug build can hide a held message, so this runs on the Release e2e build. Needs
+# mobile/test/fixtures/history-walk-backup.db pushed to the device's Downloads (adb push): an
+# unencrypted backup holding the fog of standard.zip (the file import.yaml picks) and the
+# glancemap walk. It replaces everything, so it runs after the flows that rely on the imported fog.
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "Expand or collapse panel"
+    timeout: 60000
+- tapOn: "Expand or collapse panel"
+- tapOn: "Restore…"
+- runFlow:
+    when:
+      notVisible: "history-walk-backup.db"
+    commands:
+      - tapOn: "Show roots"
+      - tapOn: "Downloads"
+- tapOn: "history-walk-backup.db"
+# Android Alert buttons render ALL CAPS
+- extendedWaitUntil:
+    visible: "REPLACE"
+    timeout: 15000
+- tapOn: "REPLACE"
+- waitForAnimationToEnd:
+    timeout: 30000
+# A cold start. The taps before the card only open the panel and the History tab; after the card
+# tap, the track must arrive with no page post or tap.
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible: "Expand or collapse panel"
+    timeout: 60000
+- repeat:
+    while:
+      notVisible: "2 tiles loaded ✓"
+    times: 4
+    commands:
+      - tapOn: "Expand or collapse panel"
+      - waitForAnimationToEnd:
+          timeout: 3000
+- assertVisible: "2 tiles loaded ✓"
+- tapOn: "History"
+- extendedWaitUntil:
+    visible: ".*47 steps.*"
+    timeout: 15000
+- tapOn: ".*47 steps.*"
+# Enabled only once the track arrives; no other tap may come before it.
+- extendedWaitUntil:
+    visible:
+      text: "Show on map"
+      enabled: true
+    timeout: 15000
+# The defog percentage is computed over the visible map. Show on map zooms to the walk, so its cells
+# make the figure non-zero.
+- tapOn: "Show on map"
+- extendedWaitUntil:
+    visible: "(0\\.0*[1-9]|[1-9])[0-9.]*%"
+    timeout: 15000
+- tapOn: "Expand or collapse panel"
+- tapOn: "Delete"
+# The first tap on Delete only arms it; Confirm delete is the second tap, not a native dialog.
+- tapOn: "Confirm delete"
+- extendedWaitUntil:
+    visible: "No activities yet.*"
+    timeout: 15000
+# Same view, walk deleted: the fog was rebuilt without it.
+- extendedWaitUntil:
+    visible: "0%"
+    timeout: 15000
