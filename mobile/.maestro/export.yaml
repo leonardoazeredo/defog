@@ -28,6 +28,11 @@ appId: codes.madera.crossfog
 - waitForAnimationToEnd:
     timeout: 30000
 - tapOn: "GPX"
+# GPX is plaintext, so the app shows a warning card before the share sheet; Continue opens it.
+- extendedWaitUntil:
+    visible: "This file is unencrypted.*"
+    timeout: 10000
+- tapOn: "Continue"
 # iOS hides the file extension in the share sheet
 - assertVisible: 'fogtomaps-route(\.gpx)?'
 # Dismiss the share sheet so about.yaml starts on the main screen
