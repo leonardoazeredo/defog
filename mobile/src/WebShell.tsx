@@ -11,13 +11,8 @@ import { createBackupFlow } from "./backup/backup.js";
 import { createRestoreFlow } from "./backup/restore.js";
 import { createSettingsChannel } from "./backup/settings.js";
 import { decideNavigation, shouldOpenWindowExternally } from "./bridge/navigationPolicy.js";
-import {
-  encode,
-  isTrustedSource,
-  type NativeToWeb,
-  ORIGIN,
-  parseWebToNative,
-} from "./bridge/protocol.js";
+import { isTrustedSource, ORIGIN, parseWebToNative } from "./bridge/protocol.js";
+import { createSend, scheduleTask } from "./bridge/send.js";
 import { type Controller, createController } from "./controller.js";
 import { COPY } from "./copy.js";
 import { pickE2eFixture } from "./e2e/fixturePicker.js";
@@ -105,7 +100,10 @@ function buildController(
     inbox: `${Paths.document.uri}Inbox/`,
   });
   // A message sent while the page is not loaded is lost; the page asks again through `ready`.
-  const send = (msg: NativeToWeb) => webViewRef.current?.postMessage(encode(msg));
+  const send = createSend({
+    post: (raw) => webViewRef.current?.postMessage(raw),
+    schedule: scheduleTask,
+  });
   const settings = createSettingsChannel({ send, timeoutMs: 5000 });
   const scratch = createScratch();
   scratch.clear();
