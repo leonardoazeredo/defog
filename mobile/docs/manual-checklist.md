@@ -68,6 +68,8 @@ _A2–A6 were checked on Android._
 
 Build a Release app (embedded JS bundle, no Metro): `CROSSFOG_E2E=1 pnpm generate`, then `CROSSFOG_E2E=1 npx expo run:android --variant release --device <avd>` (clear the Gradle release bundle first, as `mobile/CLAUDE.md` describes), then `pnpm e2e`. The flows share app state, so `.maestro/config.yaml` pins their order.
 
+`history.yaml` is not in `config.yaml`. It needs the developer-only add-activity action, which exists only in a debug build. Build that with `CROSSFOG_E2E=1 pnpm android -- --device <avd>` (Metro serves the JS, so `adb reverse tcp:8081 tcp:8081`), `adb push mobile/test/fixtures/glancemap-walk.gpx /sdcard/Download/`, import the standard backup, then run `maestro test .maestro/history.yaml`. The debug build's launches are too slow for the other flows.
+
 _Tested on: Android emulator API 36 (AVD `chase-cashew-test`): 7/7 passed in 1m 59s. iOS simulator (iPhone 17, iOS 27.0): 7/7 passed in 2m 35s; an earlier iOS run failed once in `export`, which passed on the next run._
 
 _On iOS the share sheet hides the `.gpx` extension and has no Back key, so `export` accepts either filename and dismisses the sheet by tapping outside it. `not-a-backup` retries opening the panel because a tap during the second remount can be lost._
@@ -80,6 +82,7 @@ _`help-links` expands the "Where's my Sync folder?" disclosure, swipes a fixed d
 | restart | "2 tiles loaded ✓" on cold start | ✓ |
 | eviction | "2 tiles loaded ✓" after dropping the cache and restarting | ✓ |
 | not-a-backup | "That file isn't a Fog of World backup. Your saved fog is unchanged." stays visible | ✓ |
-| export | "fogtomaps-route.gpx" visible in the share sheet | ✓ |
+| export | The plaintext warning shows, Continue, then "fogtomaps-route.gpx" visible in the share sheet | ✓ |
 | about | "Version 0.1.0" visible on the About screen; on Android, Back closes it | ✓ |
 | help-links | Tapping each help link leaves the app, and the app is back afterwards | ✓ |
+| history (debug build, run alone) | Dev add of the fixture walk shows the "47 steps" card, its track loads, and delete leaves "No activities yet" | ✓ |
