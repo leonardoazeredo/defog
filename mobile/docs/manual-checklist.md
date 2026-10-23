@@ -66,7 +66,9 @@ _A2–A6 were checked on Android._
 
 ## Maestro e2e flows
 
-Build a Release app (embedded JS bundle, no Metro): `CROSSFOG_E2E=1 pnpm generate`, then `CROSSFOG_E2E=1 npx expo run:android --variant release --device <avd>` (clear the Gradle release bundle first, as `mobile/CLAUDE.md` describes), then `pnpm e2e`. The flows share app state, so `.maestro/config.yaml` pins their order.
+Build a Release app (embedded JS bundle, no Metro): `CROSSFOG_E2E=1 pnpm generate`, then `CROSSFOG_E2E=1 npx expo run:android --variant release --device <avd>` (clear the Gradle release bundle first, as `mobile/CLAUDE.md` describes), then `pnpm e2e`. The flows share app state, so `.maestro/config.yaml` pins their order. Before the run, `adb push mobile/test/fixtures/history-walk-backup.db /sdcard/Download/` for `history-release`, which comes last because its restore replaces everything.
+
+`history-release` is the regression check for #139 and must run on this Release build, because a debug build can hide a held native-to-page message. It restores the fixture backup, cold starts, opens the walk's card, and waits for "Show on map" to become enabled with no other tap. It then shows the walk on the map (the defog figure for that view is non-zero), deletes the walk, and expects "No activities yet" and "0%" for the same view. On a build without the fix it fails at the "Show on map" step.
 
 `history.yaml` is not in `config.yaml`. It needs the developer-only add-activity action, which exists only in a debug build. Build that with `CROSSFOG_E2E=1 pnpm android -- --device <avd>` (Metro serves the JS, so `adb reverse tcp:8081 tcp:8081`), `adb push mobile/test/fixtures/glancemap-walk.gpx /sdcard/Download/`, import `standard.zip`, then run `maestro test .maestro/history.yaml`. The debug build's launches are too slow for the other flows, and a tag that splits one config cannot be used: Maestro 2.11 refuses tag filters together with `flowsOrder`.
 
@@ -87,4 +89,5 @@ _`help-links` expands the "Where's my Sync folder?" disclosure, swipes a fixed d
 | export | The plaintext warning shows, Continue, then "fogtomaps-route.gpx" visible in the share sheet | ✓ |
 | about | "Version 0.1.0" visible on the About screen; on Android, Back closes it | ✓ |
 | help-links | Tapping each help link leaves the app, and the app is back afterwards | ✓ |
+| history-release | After restoring the fixture backup and a cold start, the walk's track loads with no other input; delete leaves "No activities yet" and the defog figure at 0% for the same view | ✓ (Android, Release e2e build; fails at "Show on map" enabled without the fix) |
 | history (debug build, run alone) | Dev add of the fixture activity shows the "47 steps" card, its track loads, and delete leaves "No activities yet" | ✓ |
