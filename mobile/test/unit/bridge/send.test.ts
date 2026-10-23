@@ -17,19 +17,21 @@ describe("createSend", () => {
   });
 
   it("schedules a turn of the event loop after each message, after its post", () => {
-    const post = vi.fn();
-    const schedule = vi.fn();
-    const send = createSend({ post, schedule });
+    const calls: string[] = [];
+    const send = createSend({
+      post: (raw) => calls.push(raw),
+      schedule: () => calls.push("schedule"),
+    });
 
     send({ v: 1, type: "back" });
     send({ v: 1, type: "needSettings" });
 
-    expect(schedule).toHaveBeenCalledTimes(2);
-    const [post1, post2] = post.mock.invocationCallOrder;
-    const [schedule1, schedule2] = schedule.mock.invocationCallOrder;
-    expect([post1, schedule1, post2, schedule2]).toEqual(
-      [post1, schedule1, post2, schedule2].toSorted((a = 0, b = 0) => a - b),
-    );
+    expect(calls).toEqual([
+      encode({ v: 1, type: "back" }),
+      "schedule",
+      encode({ v: 1, type: "needSettings" }),
+      "schedule",
+    ]);
   });
 
   it("keeps the order of messages", () => {

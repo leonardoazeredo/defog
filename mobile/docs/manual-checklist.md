@@ -70,6 +70,8 @@ Build a Release app (embedded JS bundle, no Metro): `CROSSFOG_E2E=1 pnpm generat
 
 `history-release` is the regression check for #139 and must run on this Release build, because a debug build can hide a held native-to-page message. It restores the fixture backup, cold starts, opens the walk's card, and waits for "Show on map" to become enabled with no other tap. It then shows the walk on the map (the defog figure for that view is non-zero), deletes the walk, and expects "No activities yet" and "0%" for the same view. On a build without the fix it fails at the "Show on map" step.
 
+To remake `history-walk-backup.db` (for example after a schema change), use a debug e2e build. Import `standard.zip`, add `glancemap-walk.gpx` with "Dev: add activity from GPX", then "Back up…" without a passphrase after the plaintext warning. Check the result with `sqlite3`: the `import` blob must hash to `test/fixtures/out/standard.zip`, there must be exactly one activity, and `page_settings` must hold no map position.
+
 `history.yaml` is not in `config.yaml`. It needs the developer-only add-activity action, which exists only in a debug build. Build that with `CROSSFOG_E2E=1 pnpm android -- --device <avd>` (Metro serves the JS, so `adb reverse tcp:8081 tcp:8081`), `adb push mobile/test/fixtures/glancemap-walk.gpx /sdcard/Download/`, import `standard.zip`, then run `maestro test .maestro/history.yaml`. The debug build's launches are too slow for the other flows, and a tag that splits one config cannot be used: Maestro 2.11 refuses tag filters together with `flowsOrder`.
 
 _history.yaml tested on: Android emulator API 36 (AVD `chase-cashew-test`), debug e2e build with Metro: passed._
