@@ -10,21 +10,33 @@ const { StreetsInFogLayer, StreetIndex, StreetMessages } = global;
 
 const tilesOf = (r) => StreetIndex.tilesCovering(r).map(StreetIndex.tileBounds);
 const TWO = { s: 51.0, w: 13.7, n: 51.025, e: 13.75 }; // two tiles of the 0.025° grid
+const BIG = { s: 50.0, w: 13.0, n: 51.0, e: 14.0 };      // past MAX_TILES
+const INTERNAL = "Something went wrong while showing the street map. Reload the page and try again.";
+const tick = () => new Promise((r) => setImmediate(r));
 
-// A layer over a real StreetIndex; `say` records [text, action label or null].
+// A layer over a real StreetIndex; `say` records [text, action label or null], and the last action.
 function fakeLayer(fetchStreets, view = TWO) {
   const layer = Object.create(StreetsInFogLayer.prototype);
-  const state = { said: [], drawn: 0 };
+  const state = { said: [], drawn: 0, action: null };
   const streets = new StreetIndex({ newFrac: () => 1, fetchStreets });
+  const line = () => ({ setLatLngs: () => {}, addTo: () => {}, setStyle: () => {} });
   Object.assign(layer, {
-    enabled: true, _busy: false, _dirty: false, _fetching: false, _failure: null, _missingRects: [], _tooBig: false, _view: 0,
+    enabled: true, look: "light", color: "#4fd6e6", opacity: 1, _busy: false, _dirty: false, _fetching: false, _failure: null, _missingRects: [], _tooBig: false, _view: 0, _pass: 0,
     _visibleTiles: () => tilesOf(view),
-    _say: (text, action) => state.said.push([text, action ? action.label : null]),
+    _say: (text, action) => { state.said.push([text, action ? action.label : null]); state.action = action || null; },
     _classifyNew: async () => {}, _draw: () => { state.drawn++; },
-    dim: { setLatLngs: () => {} }, halo: { setLatLngs: () => {} }, core: { setLatLngs: () => {} },
+    dim: line(), halo: line(), core: line(), badge: { addTo: () => {} },
+    map: { on: () => {}, off: () => {}, removeLayer: () => {}, removeControl: () => {}, getZoom: () => 14 },
     streets
   });
   return { layer, state, streets };
+}
+// Counts the normal (not cache-only) ensureRects runs, the downloads.
+function countRuns(streets) {
+  const runs = { n: 0 };
+  const ensure = streets.ensureRects.bind(streets);
+  streets.ensureRects = (rects, kind, opts) => { if (!(opts && opts.cacheOnly)) runs.n++; return ensure(rects, kind, opts); };
+  return runs;
 }
 
 // A street source holding the given tiles ("x:y"), and fetching anything over the "network" when not cache-only.
@@ -133,17 +145,17 @@ function source(held, net) {
     assert.equal(layer._failure, null);
     assert.deepEqual(state.said.pop(), ["Street map known for 0 of 2 pieces here.", "Download this area"]);
   }
-  { // a bug while reading the cache is not a download: the generic text, its class logged
+  { // a bug while reading the cache is not a download: the internal text, its class logged
     const logged = [], orig = console.error;
     console.error = (...a) => logged.push(a);
     const { layer, state, streets } = fakeLayer(source(new Set(), async () => {}).fn);
     streets.ensureRects = async () => { throw new TypeError("cannot read tile 273:1020"); };
     await layer._update();
     console.error = orig;
-    assert.deepEqual(state.said.pop(), [StreetMessages.describe({}), null]);
-    assert.deepEqual(logged, [["[streets layer] reading streets threw", "TypeError"]]);
+    assert.deepEqual(state.said.pop(), [INTERNAL, null]);
+    assert.deepEqual(logged, [["[streets layer] showing streets threw", "TypeError"]]);
   }
-  { // a bug during the download: its class logged, the generic text
+  { // a bug during the download: its class logged, the internal text
     const logged = [], orig = console.error;
     const { layer, state, streets } = fakeLayer(source(new Set(), async () => {}).fn);
     await layer._update();
@@ -153,7 +165,147 @@ function source(held, net) {
     await layer._download();
     console.error = orig;
     assert.deepEqual(logged, [["[streets layer] downloading streets threw", "TypeError"]]);
-    assert.deepEqual(state.said.pop(), [StreetMessages.describe({}), "Try again"]);
+    assert.deepEqual(state.said.pop(), [INTERNAL, "Try again"]);
+  }
+  { // a failed download logs its reason alone; one that ends after a move is dropped unlogged
+    const warned = [], orig = console.warn;
+    console.warn = (...a) => warned.push(a);
+    try {
+      const busy = () => Object.assign(new Error("overpass HTTP 429 at tile 273:1020"), { reason: "busy" });
+      const a = fakeLayer(source(new Set(), async () => { throw busy(); }).fn);
+      await a.layer._update();
+      await a.layer._download();
+      let fail;
+      const gate = new Promise((r, j) => { fail = j; });
+      gate.catch(() => {});
+      const b = fakeLayer(source(new Set(), () => gate).fn);
+      await b.layer._update();
+      const run = b.layer._download();
+      b.layer._moved();
+      await tick();
+      fail(busy());
+      await run;
+    } finally { console.warn = orig; }
+    assert.deepEqual(warned, [["[streets layer] streets unavailable", "busy"]]);
+  }
+  { // a failure, the look switched off, the map moved unseen, the look on again: the failure is gone
+    const src = source(new Set(), async () => { throw Object.assign(new Error("overpass HTTP 429"), { reason: "busy" }); });
+    const { layer, state } = fakeLayer(src.fn);
+    await layer._update();
+    await layer._download();
+    assert.equal(state.said[state.said.length - 1][1], "Try again");
+    layer.setEnabled(false);
+    layer.setEnabled(true);
+    await tick();
+    assert.deepEqual(state.said.pop(), ["Street map known for 0 of 2 pieces here.", "Download this area"]);
+  }
+  { // a download tapped, the look switched off and the map moved, then the download fails: the failure
+    // belongs to a view no longer shown
+    let fail;
+    const gate = new Promise((r, j) => { fail = j; });
+    gate.catch(() => {});
+    const { layer, state } = fakeLayer(source(new Set(), () => gate).fn);
+    await layer._update();
+    const run = layer._download();
+    await tick();
+    layer.setEnabled(false);
+    fail(Object.assign(new Error("overpass HTTP 429"), { reason: "busy" }));
+    await run;
+    assert.equal(layer._failure, null);
+    layer.setEnabled(true);
+    await tick();
+    assert.deepEqual(state.said.pop(), ["Street map known for 0 of 2 pieces here.", "Download this area"]);
+  }
+  { // a pan's pass still reading when the map zooms out: it neither paints nor words the zoomed-out view,
+    // and the button does nothing there
+    const view = { b: TWO };
+    const { layer, state, streets } = fakeLayer(source(new Set(), async () => {}).fn);
+    layer._visibleTiles = () => tilesOf(view.b);
+    await layer._update();
+    const drawn = state.drawn;
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const ensure = streets.ensureRects.bind(streets);
+    streets.ensureRects = async (r, k, o) => { await gate; return ensure(r, k, o); };
+    const pass = layer._update();
+    view.b = BIG;
+    layer._moved();
+    assert.match(state.said[state.said.length - 1][0], /Zoom in/);
+    release();
+    await pass;
+    assert.match(state.said[state.said.length - 1][0], /Zoom in/, "the late pass does not replace the zoom-in text");
+    assert.equal(state.drawn, drawn, "nor paints over the cleared lines");
+    const runs = countRuns(streets);
+    await layer._download();
+    assert.equal(runs.n, 0, "no download for a view past MAX_TILES");
+  }
+  { // a bug classifying a later slice (run from the message channel): the internal text, and the next
+    // move works again
+    const logged = [], orig = console.error;
+    const { layer, state, streets } = fakeLayer(source(new Set(), async () => {}).fn);
+    delete layer._classifyNew;
+    layer.runs = []; layer.doneRuns = []; layer._cursor = 0;
+    streets.ways = [{ id: 1 }, { id: 2 }];
+    layer._classifyWay = (w) => {
+      if (w.id === 2) throw new TypeError("bad way");
+      const t0 = performance.now();
+      while (performance.now() - t0 < 20); // past one slice, so way 2 runs in the next
+    };
+    console.error = (...a) => logged.push(a);
+    await layer._update();
+    console.error = orig;
+    assert.deepEqual(state.said.pop(), [INTERNAL, null]);
+    assert.deepEqual(logged, [["[streets layer] showing streets threw", "TypeError"]]);
+    assert.equal(layer._busy, false);
+    layer._moved();
+    await tick(); await tick();
+    assert.deepEqual(state.said.pop(), ["Street map known for 0 of 2 pieces here.", "Download this area"]);
+  }
+  { // a bug in the recount after a download: logged by class, worded as internal, never an unhandled rejection
+    const logged = [], orig = console.error;
+    const { layer, state } = fakeLayer(source(new Set(), async () => {}).fn);
+    await layer._update();
+    layer._visibleTiles = () => { throw new TypeError("bounds"); };
+    console.error = (...a) => logged.push(a);
+    await layer._download();
+    console.error = orig;
+    assert.deepEqual(logged, [["[streets layer] showing streets threw", "TypeError"]]);
+    assert.deepEqual(state.said.pop(), [INTERNAL, null]);
+  }
+  { // the badge's buttons: "Download this area" and "Try again" each start one download
+    const src = source(new Set(), async () => { throw Object.assign(new Error("overpass HTTP 429"), { reason: "busy" }); });
+    const { layer, state, streets } = fakeLayer(src.fn);
+    const runs = countRuns(streets);
+    await layer._update();
+    assert.equal(state.action.label, "Download this area");
+    await state.action.run();
+    assert.equal(runs.n, 1);
+    assert.equal(state.action.label, "Try again");
+    await state.action.run();
+    assert.equal(runs.n, 2);
+  }
+  { // the real badge: its text and one button that downloads
+    const { DomUtil, DomEvent } = global.L;
+    const el = { kids: [], style: {}, _text: "" };
+    Object.defineProperty(el, "textContent", { get() { return this._text; }, set(v) { this._text = v; this.kids = []; } });
+    global.L.DomUtil = { create: (tag, cls, parent) => { const b = { tag, cls }; parent.kids.push(b); return b; } };
+    global.L.DomEvent = { on: (b, ev, fn) => { b.on = { ev, fn }; } };
+    try {
+      const { layer, streets } = fakeLayer(source(new Set(), async () => {}).fn);
+      delete layer._say;
+      layer.badge.getContainer = () => el;
+      const runs = countRuns(streets);
+      await layer._update();
+      assert.equal(el.textContent, "Street map known for 0 of 2 pieces here.");
+      assert.equal(el.style.display, "");
+      assert.equal(el.kids.length, 1);
+      const [b] = el.kids;
+      assert.deepEqual([b.tag, b.cls, b.type, b.textContent, b.on.ev], ["button", "streetsBadgeBtn", "button", "Download this area", "click"]);
+      await b.on.fn();
+      assert.equal(runs.n, 1);
+      assert.equal(el.kids.length, 0, "a whole download clears the badge");
+      assert.equal(el.style.display, "none");
+    } finally { global.L.DomUtil = DomUtil; global.L.DomEvent = DomEvent; }
   }
   { // zoomed out while the download runs: progress does not overwrite the zoom-in text
     let release;
@@ -163,7 +315,7 @@ function source(held, net) {
     layer._visibleTiles = () => tilesOf(view.b);
     await layer._update();
     const run = layer._download();
-    view.b = { s: 50.0, w: 13.0, n: 51.0, e: 14.0 };
+    view.b = BIG;
     await layer._update();
     assert.match(state.said[state.said.length - 1][0], /Zoom in/);
     const at = state.said.length;

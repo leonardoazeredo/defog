@@ -162,6 +162,7 @@
   // "streets-partial" shortfall (StreetIndex.isDownloadError). Resolves with {done, total, missing}.
   // opts.cacheOnly reads only what the street source already holds and resolves with the tiles
   // still missing (nearest first) instead of rejecting: what the Streets in fog look draws from.
+  // A source that throws on such a read rejects as itself: no download ran, so it is a bug.
   StreetIndex.prototype.ensureRects = async function (rects, kind, opts) {
     opts = opts || {};
     const cacheOnly = !!opts.cacheOnly;
@@ -191,6 +192,7 @@
       }, { cacheOnly });
     } catch (e) {
       if (broke) throw broke;
+      if (cacheOnly) throw e;
       throw StreetIndex.downloadError(read.size, todo.length, e);
     }
     if (cacheOnly) {

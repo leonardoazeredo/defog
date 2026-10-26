@@ -41,10 +41,10 @@ for that feature (not your fog data). No routing service is involved: **drawing 
 (and editing a pin of a suggested route, switching its mode or reversing it) and **route
 suggestions** are routed entirely on your device and send nothing but the bounding box of the
 **street map around your pins** (a kilometre beyond them; a hand-drawn route also asks for its
-heights, see **Route elevation** below), and the
-**Streets in fog** look, which is drawn from the streets already on your device and fetches the
-street map of the **area on screen** only when you tap its **Download this area** button, both from a public
-Overpass API server (OpenStreetMap): the main instance [overpass-api.de](https://overpass-api.de)
+heights, see **Route elevation** below). The **Streets in fog** look is drawn from the streets
+already on your device and fetches the street map of the **area on screen** only when you tap its
+**Download this area** button. Both get the street map from a public Overpass API server
+(OpenStreetMap): the main instance [overpass-api.de](https://overpass-api.de)
 first, then [private.coffee](https://overpass.private.coffee/) (its terms and privacy policy are on
 that page) if the main one fails, has not started answering within 15 seconds or has not finished
 within 30 seconds; the order is a setting. The street map comes in tiles of 0.025° (about 3 km

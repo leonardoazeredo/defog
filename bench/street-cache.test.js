@@ -246,6 +246,20 @@ const T = (x, y) => ({ x, y });
     } finally { console.warn = warn; }
     assert.deepEqual(warned, [["[streets] cache write failed", "QuotaExceededError"]]);
   }
+  { // a failed store read is logged once per cache, by the error's name alone (no write is tried after it)
+    const { network } = fakeNetwork();
+    const store = TileStore.memory({ maxEntries: 10 });
+    store.get = async () => { throw new DOMException("idb dead", "InvalidStateError"); };
+    const warned = [];
+    const warn = console.warn;
+    console.warn = (...a) => warned.push(a);
+    try {
+      const c = StreetCache.create({ store, network, now: () => 0 });
+      await c.fetchStreets([T(1, 1)], "run");
+      await c.fetchStreets([T(2, 1)], "run", null, { cacheOnly: true });
+    } finally { console.warn = warn; }
+    assert.deepEqual(warned, [["[streets] cache read failed", "InvalidStateError"]]);
+  }
   { // the run deadline passes while the request fails and every tile has an expired copy: the run still
     // gets every tile, since expired copies cost no request
     let t = 0;

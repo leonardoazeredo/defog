@@ -346,6 +346,12 @@ function slowSource(clock, stepMs) {
     assert.deepEqual(reads.map((x) => x.cacheOnly), [true, false], "a normal run asks for the expired tile");
     assert.equal(s.tiles.size, 1);
   }
+  { // cache only: a source that throws is a bug, not a download, so it rejects as itself
+    const bug = new TypeError("bug");
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async () => { throw bug; } });
+    const err = await s.ensureRects([{ s: 51.0, w: 13.7, n: 51.025, e: 13.75 }], "run", { cacheOnly: true }).then(() => null, (e) => e);
+    assert.equal(err, bug);
+  }
   { // what a caller passes on from a failed download: the reasons, counts and retry time, no text
     const cause = Object.assign(new Error("overpass: Query timed out at line 3"), { reason: "stalled", retryAt: 9 });
     assert.deepEqual(StreetIndex.downloadFacts(StreetIndex.downloadError(0, 4, cause)),
