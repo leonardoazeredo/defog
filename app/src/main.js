@@ -443,10 +443,11 @@
   const elevationReady = Elevation.open();
   const elevation = { elevationAt: (points) => elevationReady.then((e) => e.elevationAt(points)) };
 
-  // What a failed local route says; the reasons are LocalRouter.explain's.
+  // What a failed local route says; the reasons are LocalRouter.explain's, and RouteLocal's for the street download.
   function routeErrorHint(why) {
     const reason = why && why.reason, tail = " This is a straight line for now.";
-    return reason === "no-street-data" ? "Couldn't get the street map around here." + tail
+    return reason === "streets-fetch" ? StreetMessages.describe(why.download, Date.now()) + tail
+      : reason === "no-street-data" ? "Couldn't get the street map around here." + tail
       : reason === "off-network" ? `Pin ${why.point + 1} is more than ${fmtDist(0.6)} from any street this mode can use. Move it closer to a street.` + tail
       : reason === "one-way" ? "One-way streets block every way between two of the pins for this mode." + tail
       : reason === "too-far" ? "Two pins are more than " + fmtDist(30) + " apart: the street map between them is too big to download. Place pins closer together." + tail
@@ -475,7 +476,10 @@
     onChange: (s) => {
       sendControl.update();
       if (!s) { clearRouteInfo(IDLE); setExports(false); return; }
-      if (s.loading) { routeHint.textContent = `Routing ${s.points} waypoints…`; routeHint.style.display = ""; return; }
+      if (s.loading) {
+        routeHint.textContent = s.done < s.total ? StreetMessages.progress(s.done, s.total) : `Routing ${s.points} waypoints…`;
+        routeHint.style.display = ""; return;
+      }
       if (s.error) { clearRouteInfo(routeErrorHint(s.why)); setExports(route.routeCoords.length >= 2); return; }
       if (s.km == null) { clearRouteInfo(`${s.points} waypoint${s.points > 1 ? "s" : ""}. Add one more to get a route.`); setExports(false); return; }
       lastStats = s; lastGain = computeGain(route.routeCoords);
@@ -540,7 +544,7 @@
     if (s.loading) {
       sugResults.innerHTML = `<div class="muted" style="margin-top:10px">${
         s.phase === "baseline" ? "Finding the fastest route…" :
-        s.phase === "streets" ? "Reading the street map…" :
+        s.phase === "streets" ? (s.done < s.total ? StreetMessages.progress(s.done, s.total) : "Reading the street map…") :
         s.phase === "loops" ? `Routing loops… ${s.done}/${s.total}` :
         s.phase === "shapes" ? `Trying more loops… ${s.done}/${s.total}` :
         `Exploring detours… ${s.done}/${s.total}`}</div>`;
@@ -550,7 +554,7 @@
       console.debug("[suggest]", s.reason);
       const w = s.why || {};
       const pin = (i) => (suggest.mode === "loop" ? "The start" : i ? "B" : "A");
-      const msg = s.reason === "streets-fetch" ? `Couldn't download the street map (${String(w).replace(/[<&]/g, " ")}). Try again in a minute.`
+      const msg = s.reason === "streets-fetch" ? StreetMessages.describe(s.download, Date.now())
         : s.reason === "no-street-data" ? "No streets were found around here."
         : s.reason === "off-network" ? `${pin(w.point)} is more than ${fmtDist(0.6)} from any street junction or end this mode can use. Move the pin closer to a street.`
         : s.reason === "one-way" ? "A and B are on the same street network, but one-way streets block every way between them for this mode."

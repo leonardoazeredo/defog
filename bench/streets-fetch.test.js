@@ -63,7 +63,9 @@ function slowSource(clock, stepMs) {
   { // an Overpass answer that ran out of time or memory is a failed fetch, not an empty area
     replyWith({ elements: [way(1)], remark: "runtime error: Query timed out in \"query\" at line 3 after 61 seconds." });
     const s = new StreetIndex({ newFrac: () => 1 });
-    await assert.rejects(() => s.ensureRects(rect, "run"), /timed out/);
+    const err = await s.ensureRects(rect, "run").then(() => null, (e) => e);
+    assert.match(err.message, /timed out/);
+    assert.equal(err.reason, "server", "a remark is the server's failure, so the page can word it");
     assert.equal(s.tiles.size, 0, "the area is not recorded as fetched");
   }
   { // the box is scanned once; every list is filtered from that result (rescanning per list timed out Overpass)
@@ -165,7 +167,9 @@ function slowSource(clock, stepMs) {
   }
   { // a source that leaves a requested tile out is an error, and nothing is recorded as fetched
     const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async () => new Map() });
-    await assert.rejects(() => s.ensureRects(rect, "run"), /no answer/);
+    const err = await s.ensureRects(rect, "run").then(() => null, (e) => e);
+    assert.match(err.message, /no answer/);
+    assert.equal(err.reason, "server", "a tile left out is the source's failure, so the page can word it");
     assert.equal(s.tiles.size, 0);
     assert.equal(s.version, 0);
   }
@@ -280,6 +284,15 @@ function slowSource(clock, stepMs) {
     const s = new StreetIndex({ newFrac: () => 1, fetchStreets: slowSource(clock, 30000).fetchStreets, now: () => clock.t });
     await s.ensureRects([{ s: 51.0, w: 13.7, n: 51.025, e: 13.75 }], "run", { deadlineMs: 45000 });
     assert.equal(s.tiles.size, 2);
+  }
+  { // what a caller passes on from a failed download: the reasons, counts and retry time, no text
+    const cause = Object.assign(new Error("overpass: Query timed out at line 3"), { reason: "stalled", retryAt: 9 });
+    assert.deepEqual(StreetIndex.downloadFacts(StreetIndex.downloadError(0, 4, cause)),
+      { reason: "stalled", done: 0, total: 4, retryAt: 9, cause: { reason: "stalled" } });
+    assert.deepEqual(StreetIndex.downloadFacts(new TypeError("x is undefined")),
+      { reason: undefined, done: undefined, total: undefined, retryAt: undefined, cause: undefined });
+    assert.deepEqual(StreetIndex.downloadFacts(undefined),
+      { reason: undefined, done: undefined, total: undefined, retryAt: undefined, cause: undefined });
   }
   console.log("streets-fetch.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });

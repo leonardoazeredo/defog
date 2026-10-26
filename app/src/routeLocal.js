@@ -27,18 +27,19 @@
   // streets: StreetIndex (ensureRects); plannerFor(travelMode) -> GraphPlanner|null; elevation:
   // {elevationAt}; estimates: Estimates; streetKind(travelMode) -> "run"|"bike"|"car".
   function create({ streets, plannerFor, elevation, estimates, streetKind }) {
-    // points: [{lat, lng}] (at least two), travelMode as the mode buttons name it.
+    // points: [{lat, lng}] (at least two), travelMode as the mode buttons name it;
+    // onProgress({done, total}) hears the street download, if one is needed.
     // -> {coords, stats: {km, seconds, ascent, descent}} or {error: true, why}
-    return async function routeWaypoints(points, travelMode) {
+    return async function routeWaypoints(points, travelMode, onProgress) {
       const rects = [];
       for (let i = 1; i < points.length; i++) {
         if (legM(points[i - 1], points[i]) > MAX_LEG_M) return TOO_FAR;
         rects.push(legRect(points[i - 1], points[i]));
       }
       // log the cause's class and the reason only: the messages name the tiles that were missing
-      try { await streets.ensureRects(rects, streetKind(travelMode)); } catch (e) {
+      try { await streets.ensureRects(rects, streetKind(travelMode), { onProgress }); } catch (e) {
         console.warn("[route] streets unavailable", e && (e.cause ? e.cause.name : e.name), e && e.reason);
-        return NO_STREETS;
+        return { error: true, why: { reason: "streets-fetch", download: global.StreetIndex.downloadFacts(e) } };
       }
       const planner = plannerFor(travelMode);
       if (!planner) return NO_STREETS;

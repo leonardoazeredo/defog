@@ -7,7 +7,8 @@
 "use strict";
 const assert = require("node:assert/strict");
 require("./lib/load.js");
-const { Overpass } = global;
+require("../app/src/streetMessages.js");
+const { Overpass, StreetIndex, StreetMessages } = global;
 const C = Overpass.ENDPOINTS.coffee, M = Overpass.ENDPOINTS.main;
 const REASONS = ["blocked", "busy", "stalled", "offline", "server"];
 
@@ -364,5 +365,24 @@ process.on("exit", (code) => {
     assert.equal(e.retryAt, start + 30_000, "coffee is asked again after its 30 s");
   }
   finished = true;
+  { // a 406 on main, then coffee silent: blocked wins, and the error is main's 406, not coffee's silence
+    reset();
+    global.fetch = routed({ [M]: status(406), [C]: silent });
+    const e = await rejection(played(Overpass.post("data=x")));
+    assert.deepEqual(calls, [M, C]);
+    assert.equal(e.reason, "blocked");
+    assert.equal(e.message, "overpass HTTP 406", "the message names the failure the reason is about");
+    assert.ok(e.retryAt > start, "both endpoints are held, so the error says until when");
+  }
+  { // the same sequence under a street download ends in the blocked-for-today text, with no "no answer" wording
+    reset();
+    global.fetch = routed({ [M]: status(406), [C]: silent });
+    const streets = new StreetIndex({ newFrac: () => 1 });
+    const e = await played(streets.ensureRects([{ s: 51, w: 13.7, n: 51.01, e: 13.71 }], "run").then(() => assert.fail("expected a rejection"), (x) => x));
+    assert.deepEqual([e.reason, e.done, typeof e.retryAt], ["blocked", 0, "number"]);
+    const text = StreetMessages.describe(StreetIndex.downloadFacts(e), t);
+    assert.equal(text, "The street server has blocked this network for today: it caps each network's daily use. Try another network, or try again tomorrow.");
+    assert.ok(!/no answer|15 s/.test(text + e.message) && !/406/.test(text), text + " / " + e.message);
+  }
   console.log("overpass-endpoints.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });

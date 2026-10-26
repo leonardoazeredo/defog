@@ -195,7 +195,7 @@
     // a source may hand tiles over in its Map alone
     for (const t of todo) take(t, answers && answers.get(t.x + ":" + t.y));
     const lost = todo.find((t) => !read.has(t.x + ":" + t.y));
-    if (lost) throw StreetIndex.downloadError(read.size, todo.length, new Error(`street source: no answer for tile ${lost.x}:${lost.y} (${kind})`));
+    if (lost) throw StreetIndex.downloadError(read.size, todo.length, Object.assign(new Error(`street source: no answer for tile ${lost.x}:${lost.y} (${kind})`), { reason: "server" }));
   };
 
   // One tile's answer into the index; the version bump tells graphs built before it to rebuild.
@@ -323,6 +323,15 @@
     return err;
   };
 
+  // What a caller may pass on from a failed download, for StreetMessages to word: the reasons, counts and
+  // retry time, never the message, which can hold a server remark or a tile number.
+  StreetIndex.downloadFacts = function (e) {
+    return {
+      reason: e && e.reason, done: e && e.done, total: e && e.total, retryAt: e && e.retryAt,
+      cause: e && e.cause ? { reason: e.cause.reason } : undefined,
+    };
+  };
+
   // Sorts tiles in place by distance from the centre of the rects' bounding box, longitude scaled to
   // ground distance at that latitude; equal distances keep their order.
   StreetIndex.nearestFirst = function (tiles, rects) {
@@ -336,7 +345,7 @@
   // Reads an Overpass answer to a rectQuery and hands each requested tile its share.
   StreetIndex.splitAnswer = function (gj, tiles) {
     // a timeout or out-of-memory still answers 200, with whatever it had by then
-    if (gj.remark) throw new Error("overpass: " + gj.remark);
+    if (gj.remark) throw Object.assign(new Error("overpass: " + gj.remark), { reason: "server" });
     const ways = [], groups = {};
     for (const name of GROUP_ORDER) groups[name] = [];
     let group = -1; // -1 = the geometry, then one list (see GROUP_ORDER) per count marker

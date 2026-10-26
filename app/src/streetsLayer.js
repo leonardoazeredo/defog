@@ -183,10 +183,10 @@
     if (this._now() < this._retryAt) return; // a download just failed; retry on a later move
     this._busy = true;
     try {
-      if (this.streets.needsFetch(tiles, "run")) this._say("Reading the street map…");
+      const onProgress = ({ done, total }) => { if (this.enabled) this._say(global.StreetMessages.progress(done, total)); };
       let ok = false, err = null;
       for (let attempt = 0; attempt < 2 && !ok; attempt++) {
-        try { await this.streets.ensureRects(tiles, "run"); ok = true; }
+        try { await this.streets.ensureRects(tiles, "run", { onProgress }); ok = true; }
         catch (e) {
           err = e;
           // every endpoint is blocked until retryAt and nothing is sent before then: no quiet retry
@@ -198,7 +198,7 @@
       if (!this.enabled) return;
       if (!ok) {
         this._retryAt = Math.max(this._now() + RETRY_MS, (err && err.retryAt) || 0);
-        this._say("Couldn't load the street map. Move the map to try again in a moment.");
+        this._say(global.StreetMessages.describe(err, this._now()));
         return;
       }
       await this._classifyNew();

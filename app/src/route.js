@@ -34,7 +34,7 @@
     this.map = map;
     this.profile = opts.profile || "trekking";
     this.onChange = opts.onChange || null;       // stats
-    this.routeWaypoints = opts.routeWaypoints || null; // (pins [{lat,lng}], travelMode) -> Promise<{coords, stats} | {error, why}>
+    this.routeWaypoints = opts.routeWaypoints || null; // (pins [{lat,lng}], travelMode, onProgress) -> Promise<{coords, stats} | {error, why}>
     this.onWaypoints = opts.onWaypoints || null; // waypoint list changed
     this.isNew = opts.isNew || null;         // (lon,lat) -> true if the point is new ground
     this.fogReady = opts.fogReady || null;   // () -> is fog data loaded?
@@ -310,8 +310,9 @@
     this._emit({ points: this.wps.length, loading: true });
     const pins = this.wps.map((w) => ({ lat: w.latlng.lat, lng: w.latlng.lng }));
     const t0 = performance.now();
+    const onProgress = ({ done, total }) => { if (reqId === this._reqId) this._emit({ points: this.wps.length, loading: true, done, total }); };
     let res;
-    try { res = this.routeWaypoints ? await this.routeWaypoints(pins, this.profile) : INTERNAL; }
+    try { res = this.routeWaypoints ? await this.routeWaypoints(pins, this.profile, onProgress) : INTERNAL; }
     catch (e) {
       // the class only: an error message can carry tile numbers, which locate the route
       console.error("[route] routeWaypoints threw", e && e.name);

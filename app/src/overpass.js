@@ -88,6 +88,7 @@
     const now = Overpass._now();
     let lastError = null;
     const said = []; // one reason per endpoint, a held one contributing its hold's
+    const errorFor = {}; // the first error seen per reason, so the one thrown matches its reason
     let anyStatus = false;
     for (const key of order) {
       const url = ENDPOINTS[key];
@@ -106,19 +107,21 @@
       else why = BUSY_STATUS[r.status] ? "busy" : "server";
       if (holdMs) { s.until = Overpass._now() + holdMs; s.why = why; }
       said.push(why);
+      if (!errorFor[why]) errorFor[why] = r.error;
     }
-    const err = lastError || new Error("overpass: every endpoint is on hold");
     // a failed fetch means offline only when nothing answered at all: a status proves the network up
     const reasons = said.map((why) => why === "offline" && anyStatus ? "server" : why);
     if (typeof navigator !== "undefined" && navigator.onLine === false) reasons.push("offline");
-    err.reason = REASONS.find((r) => reasons.includes(r)) || "server";
+    const reason = REASONS.find((r) => reasons.includes(r)) || "server";
+    const err = errorFor[reason] || lastError || new Error("overpass: every endpoint is on hold");
+    err.reason = reason;
     const later = order.map((k) => stateOf(ENDPOINTS[k]).until).filter((at) => at > Overpass._now());
     if (later.length === order.length) err.retryAt = Math.min(...later);
     throw err;
   }
 
   // Resolves with the JSON of the first endpoint, in order, whose body parses. Rejects with the
-  // last error, carrying `reason` and `retryAt`. When the endpoints disagree the first reason in
+  // first error of the winning reason (else the last error), carrying `reason` and `retryAt`. When the endpoints disagree the first reason in
   // this list wins, most actionable first. The reasons: blocked, a 406 was seen or an
   // endpoint is held after one; busy, 429, 502 or 504; stalled, no answer or a body that stopped;
   // offline, the browser says so, or every fetch failed and no status was seen; server, anything

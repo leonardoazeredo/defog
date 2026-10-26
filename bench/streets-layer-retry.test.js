@@ -4,8 +4,9 @@
 const assert = require("node:assert/strict");
 require("./lib/load.js");
 global.L.Control = global.L.Control || { extend: () => function () {} };
+require("../app/src/streetMessages.js");
 require("../app/src/streetsLayer.js");
-const { StreetsInFogLayer, StreetIndex } = global;
+const { StreetsInFogLayer, StreetIndex, StreetMessages } = global;
 
 // A layer on a fake clock: waiting moves the clock and is recorded, so no test waits on real time.
 function fakeLayer(fail) {
@@ -27,16 +28,18 @@ function fakeLayer(fail) {
 (async () => {
   { // every endpoint rate-limited: no quiet retry, and nothing is asked before retryAt
     const retryAt = 60_000;
-    const { layer, state } = fakeLayer(() => Object.assign(new Error("overpass HTTP 429"), { retryAt }));
+    const { layer, state } = fakeLayer(() => Object.assign(new Error("overpass HTTP 429"), { reason: "busy", retryAt }));
     await layer._update();
     assert.equal(state.calls, 1, "a rate-limited Overpass gets no quiet retry");
     assert.ok(layer._retryAt >= retryAt, "the layer waits at least until the error's retryAt");
     await layer._update();
     assert.equal(state.calls, 1, "a map move before retryAt sends nothing");
+    assert.equal(state.said.pop(), "The street servers are busy. Try again in about 60 s.", "the badge words the failure as the page does");
   }
   { // a plain failure gets one quiet retry 3 s later, then the 10 s cooldown
     const { layer, state } = fakeLayer(() => new Error("overpass HTTP 504"));
     await layer._update();
+    assert.equal(state.said.pop(), StreetMessages.describe({}, 0), "no reason: the generic text, never the error's");
     assert.equal(state.calls, 2, "one quiet retry after a plain failure");
     assert.deepEqual(state.slept, [3000]);
     assert.equal(layer._retryAt, 3000 + 10_000);
@@ -70,6 +73,8 @@ function fakeLayer(fail) {
     assert.equal(asked.length, 2);
     assert.deepEqual(asked[1], asked[0].slice(1), "the retry asks only for the missing tile");
     assert.deepEqual([state.drawn, layer._retryAt], [1, 0]);
+    assert.deepEqual(state.said, ["Downloading the street map, 0 of 2…", "Downloading the street map, 1 of 2…",
+      "Downloading the street map, 0 of 1…", "Downloading the street map, 1 of 1…", ""], "the badge counts the tiles, then clears");
   }
   { // a 48-tile view on the 0.025° grid is still fetched; a larger one asks to zoom in
     assert.equal(StreetsInFogLayer.MAX_TILES, 48);

@@ -27,14 +27,38 @@ async function run(streets, a, b, profile = "hiking-mountain") {
 const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]]];
 
 (async () => {
-  { // Overpass failing is not reported as a connectivity problem
+  { // a failed download passes on its reason, counts and retry time, and none of its text
     const s = streetsWith(street);
     s.tiles.clear();
-    s.ensureRects = async () => { throw new Error("overpass HTTP 502"); };
+    const remark = "runtime error: Query timed out in \"query\" at line 3 after 61 seconds.";
+    const cause = Object.assign(new Error("overpass: " + remark), { reason: "busy", retryAt: 12345 });
+    s.ensureRects = async () => { throw StreetIndex.downloadError(2, 5, cause); };
+    const logged = [], orig = console.warn;
+    console.warn = (...a) => logged.push(a);
     const r = await run(s, [0, 0], [1000, 0]);
+    console.warn = orig;
+    assert.deepEqual(logged, [["[suggest] streets unavailable", "Error", "streets-partial"]], "the log holds the class and reason only");
     assert.equal(r.error, true);
     assert.equal(r.reason, "streets-fetch");
-    assert.match(r.why, /502/);
+    assert.deepEqual(r.download, { reason: "streets-partial", done: 2, total: 5, retryAt: 12345, cause: { reason: "busy" } });
+    assert.ok(!JSON.stringify(r).includes("timed out"), "no server text in the result");
+  }
+  { // the download's progress is emitted while the tiles come in, and stops when they are in
+    const states = [];
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async (tiles, kind, onTile) => {
+      for (const t of tiles) onTile(t, { ways: [], groups: {} });
+      return new Map();
+    } });
+    const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => null, streets: s });
+    tool.mode = "p2p"; tool.a = pin(0, 0); tool.b = pin(1000, 0);
+    tool.onResults = (st) => states.push(st);
+    await tool.suggest("hiking-mountain", { buffer: 0.15 });
+    const dl = states.filter((st) => st && st.phase === "streets");
+    assert.ok(dl.length >= 2);
+    const total = dl[0].total;
+    assert.deepEqual(dl.map((st) => st.done), Array.from({ length: total + 1 }, (_, i) => i), "0 of N up to N of N");
+    assert.ok(dl.every((st) => st.loading && st.total === total));
+    assert.equal(states[states.length - 1].reason, "no-street-data", "an area with no streets still ends in its own state");
   }
   { // fetched, but nothing usable in the area
     const r = await run(streetsWith([]), [0, 0], [1000, 0]);
