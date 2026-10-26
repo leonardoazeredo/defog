@@ -11,22 +11,20 @@ const { StreetsInFogLayer, StreetIndex, StreetMessages } = global;
 const tilesOf = (r) => StreetIndex.tilesCovering(r).map(StreetIndex.tileBounds);
 const TWO = { s: 51.0, w: 13.7, n: 51.025, e: 13.75 }; // two tiles of the 0.025° grid
 
-// A layer on a fake clock over a real StreetIndex; `say` records [text, action label or null].
+// A layer over a real StreetIndex; `say` records [text, action label or null].
 function fakeLayer(fetchStreets, view = TWO) {
   const layer = Object.create(StreetsInFogLayer.prototype);
-  const clock = { t: 0 };
   const state = { said: [], drawn: 0 };
   const streets = new StreetIndex({ newFrac: () => 1, fetchStreets });
   Object.assign(layer, {
-    enabled: true, _busy: false, _dirty: false, _fetching: false, _failure: null, _offer: [], _tooBig: false,
-    _now: () => clock.t,
+    enabled: true, _busy: false, _dirty: false, _fetching: false, _failure: null, _missingRects: [], _tooBig: false, _view: 0,
     _visibleTiles: () => tilesOf(view),
     _say: (text, action) => state.said.push([text, action ? action.label : null]),
     _classifyNew: async () => {}, _draw: () => { state.drawn++; },
     dim: { setLatLngs: () => {} }, halo: { setLatLngs: () => {} }, core: { setLatLngs: () => {} },
     streets
   });
-  return { layer, state, clock, streets };
+  return { layer, state, streets };
 }
 
 // A street source holding the given tiles ("x:y"), and fetching anything over the "network" when not cache-only.
@@ -103,19 +101,36 @@ function source(held, net) {
     await layer._download();
     assert.equal(layer._fetching, false, "nothing offered, nothing fetched");
   }
-  { // a failed download: the page's wording and a Try again button, never a quiet retry; a pan clears it
+  { // a failed download: the page's wording without a countdown that would freeze, a Try again button,
+    // never a quiet retry; a pan clears it
     const retryAt = 60_000;
     const src = source(new Set(), async () => { throw Object.assign(new Error("overpass HTTP 429"), { reason: "busy", retryAt }); });
     const { layer, state } = fakeLayer(src.fn);
     await layer._update();
     await layer._download();
-    assert.deepEqual(state.said.pop(), ["The street servers are busy. Try again in about 60 s.", "Try again"]);
+    assert.deepEqual(state.said.pop(), ["The street servers are busy. Try again in a minute.", "Try again"],
+      "no seconds left to count down: nothing redraws the badge once retryAt passes");
     assert.equal(src.calls.filter((c) => !c.cacheOnly).length, 1, "no quiet retry");
     await layer._update();
     assert.equal(src.calls.filter((c) => !c.cacheOnly).length, 1, "a pan does not retry either");
     assert.equal(state.said.pop()[1], "Try again", "the failure stays until the user moves the map");
     layer._moved();
     await new Promise((r) => setImmediate(r));
+    assert.deepEqual(state.said.pop(), ["Street map known for 0 of 2 pieces here.", "Download this area"]);
+  }
+  { // a download that fails after the map moved does not word the new view, nor offer its Try again there
+    let fail;
+    const gate = new Promise((r, j) => { fail = j; });
+    gate.catch(() => {});
+    const src = source(new Set(), () => gate);
+    const { layer, state } = fakeLayer(src.fn);
+    await layer._update();
+    const run = layer._download();
+    layer._moved();
+    await new Promise((r) => setImmediate(r));
+    fail(Object.assign(new Error("overpass HTTP 429"), { reason: "busy" }));
+    await run;
+    assert.equal(layer._failure, null);
     assert.deepEqual(state.said.pop(), ["Street map known for 0 of 2 pieces here.", "Download this area"]);
   }
   { // a bug while reading the cache is not a download: the generic text, its class logged
@@ -125,7 +140,7 @@ function source(held, net) {
     streets.ensureRects = async () => { throw new TypeError("cannot read tile 273:1020"); };
     await layer._update();
     console.error = orig;
-    assert.deepEqual(state.said.pop(), [StreetMessages.describe({}, 0), null]);
+    assert.deepEqual(state.said.pop(), [StreetMessages.describe({}), null]);
     assert.deepEqual(logged, [["[streets layer] reading streets threw", "TypeError"]]);
   }
   { // a bug during the download: its class logged, the generic text
@@ -138,7 +153,7 @@ function source(held, net) {
     await layer._download();
     console.error = orig;
     assert.deepEqual(logged, [["[streets layer] downloading streets threw", "TypeError"]]);
-    assert.deepEqual(state.said.pop(), [StreetMessages.describe({}, 0), "Try again"]);
+    assert.deepEqual(state.said.pop(), [StreetMessages.describe({}), "Try again"]);
   }
   { // zoomed out while the download runs: progress does not overwrite the zoom-in text
     let release;
@@ -156,20 +171,20 @@ function source(held, net) {
     await run;
     assert.ok(state.said.slice(at).every(([t]) => /Zoom in/.test(t)), "no progress over the zoom-in text");
   }
-  { // painting is capped by work, not by quota: a 128-tile view paints from the cache, a larger one asks to zoom in
-    assert.equal(StreetsInFogLayer.MAX_TILES, 128);
+  { // painting is capped by the index's memory: a 48-tile view paints from the cache, a larger one asks to zoom in
+    assert.equal(StreetsInFogLayer.MAX_TILES, 48);
     const view = (b) => ({ getBounds: () => ({ getSouth: () => b.s, getWest: () => b.w, getNorth: () => b.n, getEast: () => b.e }) });
     const ok = fakeLayer(source(new Set(), async () => {}).fn);
     delete ok.layer._visibleTiles;
-    ok.layer.map = view({ s: 51.0, w: 13.7, n: 51.2, e: 14.1 });
+    ok.layer.map = view({ s: 51.0, w: 13.7, n: 51.15, e: 13.9 });
     let asked = 0;
     const ensure = ok.streets.ensureRects.bind(ok.streets);
     ok.streets.ensureRects = (t, k, o) => { asked = t.length; return ensure(t, k, o); };
     await ok.layer._update();
-    assert.equal(asked, 128);
+    assert.equal(asked, 48);
     const big = fakeLayer(source(new Set(), async () => {}).fn);
     delete big.layer._visibleTiles;
-    big.layer.map = view({ s: 51.0, w: 13.7, n: 51.21, e: 14.1 });
+    big.layer.map = view({ s: 51.0, w: 13.7, n: 51.16, e: 13.9 });
     await big.layer._update();
     assert.match(big.state.said.pop()[0], /Zoom in/);
   }

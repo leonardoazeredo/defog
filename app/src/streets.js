@@ -54,7 +54,7 @@
     this.now = opts.now || Date.now; // the clock the run deadline is measured on
     this.segs = new Map();       // "gx,gy" -> [{x,y,lon,lat,lenM,frac}]
     this.tiles = new Set();      // fetched coverage, StreetIndex.tileKey(kind, x, y)
-    this.staleTiles = new Set(); // expired cached tiles a cache-only read drew from: not coverage, a download still refreshes them
+    this.staleTiles = new Set(); // expired cached tiles a cache-only read drew from: not coverage, so a normal run fetches them again (their ways already held are kept as they were)
     this.wayIds = new Set();     // dedupe across overlapping fetches
     this.classIds = { bike: new Set(), road: new Set(), car: new Set() };
     this.classified = new Set(); // ways we know the travel classes of (blank = assume usable)
@@ -104,6 +104,7 @@
   // least the streets asked for now: the walking set is a superset of the bike
   // set, so a "run" fetch satisfies a later "bike" request but not vice versa. A car
   // fetch holds motorways, which nothing else does, so only a car fetch covers cars.
+  // withStale also counts the expired tiles already drawn from, so a cache-only read skips them.
   StreetIndex.prototype._uncovered = function (rects, kind, withStale) {
     const seen = new Set();
     const has = (set, t) => set.has(StreetIndex.tileKey(kind, t.x, t.y)) ||
@@ -187,14 +188,14 @@
         try { take(t, answer); } catch (e) { broke = e; throw e; }
         if (!cacheOnly && read.size < todo.length && this.now() - started >= deadlineMs)
           throw Object.assign(new Error("streets: run deadline passed"), { reason: "stalled" });
-      }, cacheOnly ? { cacheOnly } : undefined);
+      }, { cacheOnly });
     } catch (e) {
       if (broke) throw broke;
       throw StreetIndex.downloadError(read.size, todo.length, e);
     }
     if (cacheOnly) {
-      // an answer in the Map alone is an expired copy: drawn from, but left uncovered so suggestions
-      // and the Download button still fetch it fresh
+      // an answer in the Map alone is an expired copy: drawn from, but left uncovered so a
+      // suggestion's run still asks for it
       for (const t of todo) {
         const id = t.x + ":" + t.y, answer = answers && answers.get(id);
         if (read.has(id) || !answer) continue;
