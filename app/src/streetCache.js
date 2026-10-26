@@ -15,7 +15,11 @@
   function create(opts) {
     const { store, network, now } = opts;
     const maxAgeMs = opts.maxAgeMs == null ? 90 * DAY_MS : opts.maxAgeMs;
-    let warned = false; // a full or broken store fails every write: one line says so
+    let warned = false; // a full or broken store fails every call: one line says so
+    const storeFailed = (state, what, e) => {
+      state.storeDown = true;
+      if (!warned) { warned = true; console.warn("[streets] cache " + what + " failed", e && e.name); }
+    };
 
     // The stored answer for a tile: {answer, stale}, or null. A store that throws counts as
     // empty for the rest of the call, so one dead database costs one failure, not one per tile.
@@ -25,7 +29,7 @@
         if (state.storeDown) return stale;
         let entry;
         try { entry = await store.get(keyOf(k, tile)); }
-        catch (e) { state.storeDown = true; return stale; }
+        catch (e) { storeFailed(state, "read", e); return stale; }
         // only the top-level shape StreetIndex reads (ways, groups); a stored answer without them would otherwise fail every run in the area
         const a = entry && entry.answer;
         if (!a || !Array.isArray(a.ways) || !a.groups || typeof entry.fetchedAt !== "number") continue;
@@ -38,10 +42,13 @@
     }
 
     // The street source contract of StreetIndex: onTile hears each tile as it arrives, cached tiles
-    // first, and each network tile is stored the moment it arrives, so a failed run keeps it. The one
-    // exception is an expired copy served after a network failure (below), which comes back in the
-    // returned Map alone. A failure rethrows the network's error as it is; ensureRects counts tiles.
-    async function fetchStreets(tiles, kind, onTile) {
+    // first, and each network tile is stored the moment it arrives, so a failed run keeps it. An
+    // expired copy never goes through onTile: served after a network failure (below), or read with
+    // opts.cacheOnly, it comes back in the returned Map alone. A failure rethrows the network's error
+    // as it is; ensureRects counts tiles. opts.cacheOnly: what the store holds and nothing else, never
+    // the network, so the Streets in fog look can draw on every pan without spending the server's
+    // daily share.
+    async function fetchStreets(tiles, kind, onTile, opts) {
       const state = { storeDown: false };
       const out = new Map();
       const missing = [];
@@ -60,15 +67,16 @@
           if (hit) expired.set(t.x + ":" + t.y, hit.answer);
         }
       }
+      if (opts && opts.cacheOnly) {
+        for (const [k, answer] of expired) out.set(k, answer);
+        return out;
+      }
       if (!missing.length) return out;
 
       const puts = [];
       const keep = (t, answer) => {
         if (!answer || out.has(t.x + ":" + t.y)) return;
-        if (!state.storeDown) puts.push(store.put(keyOf(kind, t), { answer, fetchedAt: now() }).catch((e) => {
-          state.storeDown = true;
-          if (!warned) { warned = true; console.warn("[streets] cache write failed", e && e.name); }
-        }));
+        if (!state.storeDown) puts.push(store.put(keyOf(kind, t), { answer, fetchedAt: now() }).catch((e) => storeFailed(state, "write", e)));
         deliver(t, answer);
       };
       let fresh;

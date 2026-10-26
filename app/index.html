@@ -159,10 +159,12 @@
     @media (pointer: coarse) { .wp { font-size: 13px; } }
 
     .leaflet-bar { border-radius: 9px !important; overflow: hidden; border: 1px solid var(--line2) !important; }
-    /* small on-map note for the Streets in fog look ("zoom in", "reading the street map") */
+    /* small on-map note for the Streets in fog look ("zoom in", how much of the view is on the device) */
     .streetsBadge { background: var(--card); color: var(--ink); font-family: var(--mono); font-size: 12px;
       padding: 6px 10px; border-radius: 9px; border: 1px solid var(--line2); box-shadow: 0 1px 4px #0000000f;
       max-width: 240px; line-height: 1.4; }
+    .streetsBadgeBtn { display: block; margin-top: 6px; padding: 8px 10px; width: 100%;
+      border: 1px solid var(--accent); background: none; color: var(--accent); font-weight: 700; }
     .leaflet-bar a { font-family: var(--mono); }
 
     /* grab-handle for the mobile bottom sheet (hidden on desktop) */

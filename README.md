@@ -41,9 +41,10 @@ for that feature (not your fog data). No routing service is involved: **drawing 
 (and editing a pin of a suggested route, switching its mode or reversing it) and **route
 suggestions** are routed entirely on your device and send nothing but the bounding box of the
 **street map around your pins** (a kilometre beyond them; a hand-drawn route also asks for its
-heights, see **Route elevation** below), and the
-**Streets in fog** look fetches the street map of the **area on screen**, both from a public
-Overpass API server (OpenStreetMap): the main instance [overpass-api.de](https://overpass-api.de)
+heights, see **Route elevation** below). The **Streets in fog** look is drawn from the streets
+already on your device and fetches the street map of the **area on screen** only when you tap its
+**Download this area** button. Both get the street map from a public Overpass API server
+(OpenStreetMap): the main instance [overpass-api.de](https://overpass-api.de)
 first, then [private.coffee](https://overpass.private.coffee/) (its terms and privacy policy are on
 that page) if the main one fails, has not started answering within 15 seconds or has not finished
 within 30 seconds; the order is a setting. The street map comes in tiles of 0.025° (about 3 km
@@ -55,9 +56,10 @@ the app then leaves that server alone for an hour, longer if the server says so.
 bounding boxes, the same class of information the basemap tile servers already get, and the
 streets are compared against your fog entirely on your device; and **"Maps ↗"** opens
 your waypoints in Google Maps. The street map it fetches is kept as a street cache in your
-browser's storage (IndexedDB, as plain data, never uploaded and left out of backups) and fetched again
-after 90 days (an older copy is used only while there is no connection), so planning in an area you
-have planned in before needs no connection. **Route elevation** (ascent, descent, the profile) comes
+browser's storage (IndexedDB, as plain data, never uploaded and left out of backups), so planning in
+an area you have planned in before needs no connection. After 90 days a copy is out of date:
+**Streets in fog** still draws it, and a suggestion in that area fetches it fresh,
+using the old copy only while there is no connection. **Route elevation** (ascent, descent, the profile) comes
 from the [AWS Open Data terrain tiles](https://registry.opendata.aws/terrain-tiles/), public elevation
 data such as SRTM, fetched from the bucket's own host (`elevation-tiles-prod.s3.amazonaws.com`) one
 zoom-12 map tile at a time (about 50 KB each); the server sees only the tile numbers and your

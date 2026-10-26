@@ -54,6 +54,7 @@
     this.now = opts.now || Date.now; // the clock the run deadline is measured on
     this.segs = new Map();       // "gx,gy" -> [{x,y,lon,lat,lenM,frac}]
     this.tiles = new Set();      // fetched coverage, StreetIndex.tileKey(kind, x, y)
+    this.staleTiles = new Set(); // expired cached tiles a cache-only read drew from: not coverage, so a normal run fetches them again (their ways already held are kept as they were)
     this.wayIds = new Set();     // dedupe across overlapping fetches
     this.classIds = { bike: new Set(), road: new Set(), car: new Set() };
     this.classified = new Set(); // ways we know the travel classes of (blank = assume usable)
@@ -103,14 +104,16 @@
   // least the streets asked for now: the walking set is a superset of the bike
   // set, so a "run" fetch satisfies a later "bike" request but not vice versa. A car
   // fetch holds motorways, which nothing else does, so only a car fetch covers cars.
-  StreetIndex.prototype._uncovered = function (rects, kind) {
+  // withStale also counts the expired tiles already drawn from, so a cache-only read skips them.
+  StreetIndex.prototype._uncovered = function (rects, kind, withStale) {
     const seen = new Set();
+    const has = (set, t) => set.has(StreetIndex.tileKey(kind, t.x, t.y)) ||
+      (kind !== "car" && set.has(StreetIndex.tileKey("run", t.x, t.y)));
     return rects.flatMap((r) => StreetIndex.tilesCovering(r)).filter((t) => {
       const k = t.x + ":" + t.y;
       if (seen.has(k)) return false;
       seen.add(k);
-      return !(this.tiles.has(StreetIndex.tileKey(kind, t.x, t.y)) ||
-        (kind !== "car" && this.tiles.has(StreetIndex.tileKey("run", t.x, t.y))));
+      return !(has(this.tiles, t) || (withStale && has(this.staleTiles, t)));
     });
   };
 
@@ -156,11 +159,15 @@
   // once passed. Rejects, with StreetIndex.downloadError, whenever a tile is missing: suggestions
   // end in their error state rather than plan on part of the area. A bug thrown while reading a
   // tile rejects as itself, not wrapped in a download error, so callers tell a bug from a
-  // "streets-partial" shortfall (StreetIndex.isDownloadError).
+  // "streets-partial" shortfall (StreetIndex.isDownloadError). Resolves with {done, total, missing}.
+  // opts.cacheOnly reads only what the street source already holds and resolves with the tiles
+  // still missing (nearest first) instead of rejecting: what the Streets in fog look draws from.
+  // A source that throws on such a read rejects as itself: no download ran, so it is a bug.
   StreetIndex.prototype.ensureRects = async function (rects, kind, opts) {
     opts = opts || {};
-    const todo = this._uncovered(rects, kind);
-    if (!todo.length) return;
+    const cacheOnly = !!opts.cacheOnly;
+    const todo = this._uncovered(rects, kind, cacheOnly);
+    if (!todo.length) return { done: 0, total: 0, missing: [] };
     this._anchor(rects[0].s);
     StreetIndex.nearestFirst(todo, rects);
     const deadlineMs = opts.deadlineMs == null ? RUN_DEADLINE_MS : opts.deadlineMs;
@@ -180,18 +187,33 @@
     try {
       answers = await this.fetchStreets(todo, kind, (t, answer) => {
         try { take(t, answer); } catch (e) { broke = e; throw e; }
-        if (read.size < todo.length && this.now() - started >= deadlineMs)
+        if (!cacheOnly && read.size < todo.length && this.now() - started >= deadlineMs)
           throw Object.assign(new Error("streets: run deadline passed"), { reason: "stalled" });
-      });
+      }, { cacheOnly });
     } catch (e) {
       if (broke) throw broke;
+      if (cacheOnly) throw e;
       throw StreetIndex.downloadError(read.size, todo.length, e);
+    }
+    if (cacheOnly) {
+      // an answer in the Map alone is an expired copy: drawn from, but left uncovered so a
+      // suggestion's run still asks for it
+      for (const t of todo) {
+        const id = t.x + ":" + t.y, answer = answers && answers.get(id);
+        if (read.has(id) || !answer) continue;
+        this._read(answer);
+        this.staleTiles.add(StreetIndex.tileKey(kind, t.x, t.y));
+        read.add(id);
+        progress();
+      }
+      return { done: read.size, total: todo.length, missing: todo.filter((t) => !read.has(t.x + ":" + t.y)) };
     }
     // a source may hand tiles over in its Map alone
     for (const t of todo) take(t, answers && answers.get(t.x + ":" + t.y));
     const lost = todo.find((t) => !read.has(t.x + ":" + t.y));
     // the source answered but left a tile out: a server's fault, not the network's, worded generically
     if (lost) throw StreetIndex.downloadError(read.size, todo.length, Object.assign(new Error(`street source: no answer for tile ${lost.x}:${lost.y} (${kind})`), { reason: "server" }));
+    return { done: read.size, total: todo.length, missing: [] };
   };
 
   // One tile's answer into the index; the version bump tells graphs built before it to rebuild.
@@ -288,9 +310,10 @@
   // The default street source: one Overpass request per TILES_PER_REQUEST tiles, in the order given,
   // each tile handed to onTile once its whole answer is in. Stops at the first failed request. A
   // throw from onTile (the caller's stop, or a bug) passes through unchanged: it is not a download
-  // failure.
-  StreetIndex.overpassFetch = async function (tiles, kind, onTile) {
+  // failure. Holds nothing, so a cache-only read (opts.cacheOnly) gets no tile from it.
+  StreetIndex.overpassFetch = async function (tiles, kind, onTile, opts) {
     const out = new Map();
+    if (opts && opts.cacheOnly) return out;
     for (let i = 0; i < tiles.length; i += TILES_PER_REQUEST) {
       const batch = tiles.slice(i, i + TILES_PER_REQUEST);
       const q = StreetIndex.rectQuery(batch.map(StreetIndex.tileBounds), kind);

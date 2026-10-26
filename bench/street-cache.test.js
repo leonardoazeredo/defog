@@ -246,6 +246,20 @@ const T = (x, y) => ({ x, y });
     } finally { console.warn = warn; }
     assert.deepEqual(warned, [["[streets] cache write failed", "QuotaExceededError"]]);
   }
+  { // a failed store read is logged once per cache, by the error's name alone (no write is tried after it)
+    const { network } = fakeNetwork();
+    const store = TileStore.memory({ maxEntries: 10 });
+    store.get = async () => { throw new DOMException("idb dead", "InvalidStateError"); };
+    const warned = [];
+    const warn = console.warn;
+    console.warn = (...a) => warned.push(a);
+    try {
+      const c = StreetCache.create({ store, network, now: () => 0 });
+      await c.fetchStreets([T(1, 1)], "run");
+      await c.fetchStreets([T(2, 1)], "run", null, { cacheOnly: true });
+    } finally { console.warn = warn; }
+    assert.deepEqual(warned, [["[streets] cache read failed", "InvalidStateError"]]);
+  }
   { // the run deadline passes while the request fails and every tile has an expired copy: the run still
     // gets every tile, since expired copies cost no request
     let t = 0;
@@ -263,6 +277,23 @@ const T = (x, y) => ({ x, y });
     await s.ensureRects([rect], "run", { onProgress: (p) => progress.push(p.done) });
     assert.equal(s.tiles.size, 3);
     assert.deepEqual(progress, [0, 1, 2, 3]);
+  }
+  { // cache only: fresh tiles through onTile, an expired one in the Map alone, a missing one left out, no network
+    const { network, calls } = fakeNetwork();
+    let t = 0;
+    const store = TileStore.memory({ maxEntries: 10 });
+    const c = StreetCache.create({ store, network, now: () => t, maxAgeMs: 90 * DAY });
+    await c.fetchStreets([T(1, 1)], "run");
+    t = 200 * DAY;
+    await c.fetchStreets([T(2, 1)], "run");
+    const heard = [];
+    const got = await c.fetchStreets([T(1, 1), T(2, 1), T(3, 1)], "run", (tile) => heard.push(tile.x), { cacheOnly: true });
+    assert.equal(calls.length, 2, "a cache-only read never calls the network, not even for the expired tile");
+    assert.deepEqual(heard, [2], "only the fresh tile is heard as it arrives");
+    assert.deepEqual([...got.keys()].sort(), ["1:1", "2:1"], "the expired copy comes back, the missing tile does not");
+    assert.deepEqual(got.get("1:1"), answerFor(T(1, 1), "run"));
+    const bike = await c.fetchStreets([T(2, 1)], "bike", null, { cacheOnly: true });
+    assert.deepEqual(bike.get("2:1"), answerFor(T(2, 1), "run"), "a run tile still stands in for bike");
   }
   console.log("street-cache.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });
