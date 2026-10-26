@@ -285,6 +285,17 @@ function slowSource(clock, stepMs) {
     await s.ensureRects([{ s: 51.0, w: 13.7, n: 51.025, e: 13.75 }], "run", { deadlineMs: 45000 });
     assert.equal(s.tiles.size, 2);
   }
+  { // a second run over ground the first one covered asks nothing and reports no progress
+    const clock = { t: 0 };
+    const src = slowSource(clock, 1000);
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: src.fetchStreets, now: () => clock.t });
+    const r = [{ s: 51.0, w: 13.7, n: 51.025, e: 13.75 }];
+    const first = [], second = [];
+    await s.ensureRects(r, "run", { onProgress: (p) => first.push(p) });
+    await s.ensureRects(r, "run", { onProgress: (p) => second.push(p) });
+    assert.deepEqual(first, [0, 1, 2].map((done) => ({ done, total: 2 })));
+    assert.deepEqual([second, src.asked.length], [[], 2], "a covered area is not shown as a download");
+  }
   { // what a caller passes on from a failed download: the reasons, counts and retry time, no text
     const cause = Object.assign(new Error("overpass: Query timed out at line 3"), { reason: "stalled", retryAt: 9 });
     assert.deepEqual(StreetIndex.downloadFacts(StreetIndex.downloadError(0, 4, cause)),
@@ -293,6 +304,8 @@ function slowSource(clock, stepMs) {
       { reason: undefined, done: undefined, total: undefined, retryAt: undefined, cause: undefined });
     assert.deepEqual(StreetIndex.downloadFacts(undefined),
       { reason: undefined, done: undefined, total: undefined, retryAt: undefined, cause: undefined });
+    assert.deepEqual([StreetIndex.downloadError(0, 4, cause), new TypeError("x"), undefined].map(StreetIndex.isDownloadError),
+      [true, false, false], "only a download error is worded as one");
   }
   console.log("streets-fetch.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });

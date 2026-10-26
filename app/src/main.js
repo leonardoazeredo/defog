@@ -445,7 +445,9 @@
 
   // What a failed local route says. too-far and streets-fetch are RouteLocal's (pins too far apart
   // to download, the download failed); no-street-data is RouteLocal's when the map has no ways at all
-  // and LocalRouter.explain's when none suits the mode, so it is worded for both; the rest are explain's.
+  // and LocalRouter.explain's when none suits the mode, so it is worded for both; internal is a bug, not
+  // the ground: route.js's when routeWaypoints throws, RouteLocal's when reading streets threw; the
+  // rest are explain's.
   function routeErrorHint(why) {
     const reason = why && why.reason, tail = " This is a straight line for now.";
     return reason === "streets-fetch" ? StreetMessages.describe(why.download, Date.now()) + tail
@@ -561,6 +563,7 @@
         : s.reason === "off-network" ? `${pin(w.point)} is more than ${fmtDist(0.6)} from any street junction or end this mode can use. Move the pin closer to a street.`
         : s.reason === "one-way" ? "A and B are on the same street network, but one-way streets block every way between them for this mode."
         : s.reason === "no-path" ? `A and B sit on separate pieces of the street map for this mode${w.gap ? ` (about ${fmtDist(w.gap.m / 1000)} apart)` : ""}. Try another mode or move a pin.`
+        : s.reason === "internal" ? "Something went wrong while planning. Reload the page and try again."
         : "Couldn't find a route. Try again in a moment.";
       sugResults.innerHTML = `<div class="muted" style="margin-top:10px">${msg}</div>`;
       return;

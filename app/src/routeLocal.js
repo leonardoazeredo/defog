@@ -6,6 +6,7 @@
   const KY = 110540;         // metres per degree of latitude, as the planner uses
   const MAX_LEG_M = 30000;   // as Suggest's A-to-B cap: farther apart needs a street download past what we allow
   const NO_STREETS = { error: true, why: { reason: "no-street-data" } };
+  const INTERNAL = { error: true, why: { reason: "internal" } };
   const TOO_FAR = { error: true, why: { reason: "too-far" } };
   let warnedHeights = false;
 
@@ -36,9 +37,13 @@
         if (legM(points[i - 1], points[i]) > MAX_LEG_M) return TOO_FAR;
         rects.push(legRect(points[i - 1], points[i]));
       }
-      // log the cause's class and the reason only: the messages name the tiles that were missing
+      // a failed download logs its reason, a bug its class, never a message: messages name tiles
       try { await streets.ensureRects(rects, streetKind(travelMode), { onProgress }); } catch (e) {
-        console.warn("[route] streets unavailable", e && e.reason);
+        if (!global.StreetIndex.isDownloadError(e)) {
+          console.error("[route] reading streets threw", e && e.name);
+          return INTERNAL;
+        }
+        console.warn("[route] streets unavailable", e.reason);
         return { error: true, why: { reason: "streets-fetch", download: global.StreetIndex.downloadFacts(e) } };
       }
       const planner = plannerFor(travelMode);

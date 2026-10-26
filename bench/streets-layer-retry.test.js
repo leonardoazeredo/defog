@@ -28,7 +28,7 @@ function fakeLayer(fail) {
 (async () => {
   { // every endpoint rate-limited: no quiet retry, and nothing is asked before retryAt
     const retryAt = 60_000;
-    const { layer, state } = fakeLayer(() => Object.assign(new Error("overpass HTTP 429"), { reason: "busy", retryAt }));
+    const { layer, state } = fakeLayer(() => StreetIndex.downloadError(0, 1, Object.assign(new Error("overpass HTTP 429"), { reason: "busy", retryAt })));
     await layer._update();
     assert.equal(state.calls, 1, "a rate-limited Overpass gets no quiet retry");
     assert.ok(layer._retryAt >= retryAt, "the layer waits at least until the error's retryAt");
@@ -37,12 +37,22 @@ function fakeLayer(fail) {
     assert.equal(state.said.pop(), "The street servers are busy. Try again in about 60 s.", "the badge words the failure as the page does");
   }
   { // a plain failure gets one quiet retry 3 s later, then the 10 s cooldown
-    const { layer, state } = fakeLayer(() => new Error("overpass HTTP 504"));
+    const { layer, state } = fakeLayer(() => StreetIndex.downloadError(0, 1, new Error("overpass HTTP 504")));
     await layer._update();
     assert.equal(state.said.pop(), StreetMessages.describe({}, 0), "no reason: the generic text, never the error's");
     assert.equal(state.calls, 2, "one quiet retry after a plain failure");
     assert.deepEqual(state.slept, [3000]);
     assert.equal(layer._retryAt, 3000 + 10_000);
+  }
+  { // a bug while reading streets is not a download: the generic text, no quiet retry, its class logged
+    const logged = [], orig = console.error;
+    console.error = (...a) => logged.push(a);
+    const { layer, state } = fakeLayer(() => new TypeError("cannot read tile 273:1020"));
+    await layer._update();
+    console.error = orig;
+    assert.equal(state.said.pop(), StreetMessages.describe({}, 0));
+    assert.deepEqual([state.calls, state.slept], [1, []], "a retry would only throw it again");
+    assert.deepEqual(logged, [["[streets layer] reading streets threw", "TypeError"]]);
   }
   { // a partial failure gets the quiet retry too, and the retry asks only for the tiles that did not come
     const asked = [];

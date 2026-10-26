@@ -264,7 +264,13 @@
     // ground stays silent
     const onProgress = ({ done, total }) => emit({ loading: true, phase: "streets", done, total });
     try { await this.streets.ensureRects(rects, kind, { onProgress }); } catch (e) {
-      console.warn("[suggest] streets unavailable", e && e.reason);
+      // a bug is not a failed download: the class only, as a message can name tiles
+      if (!global.StreetIndex.isDownloadError(e)) {
+        console.error("[suggest] reading streets threw", e && e.name);
+        emit({ error: true, reason: "internal" });
+        return false;
+      }
+      console.warn("[suggest] streets unavailable", e.reason);
       emit({ error: true, reason: "streets-fetch", download: global.StreetIndex.downloadFacts(e) });
       return false;
     }

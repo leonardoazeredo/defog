@@ -43,6 +43,17 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]]]
     assert.deepEqual(r.download, { reason: "streets-partial", done: 2, total: 5, retryAt: 12345, cause: { reason: "busy" } });
     assert.ok(!JSON.stringify(r).includes("timed out"), "no server text in the result");
   }
+  { // a bug while reading streets is not a failed download: the internal state, its class logged
+    const s = streetsWith(street);
+    s.tiles.clear();
+    s.ensureRects = async () => { throw new TypeError("cannot read tile 273:1020"); };
+    const logged = [], orig = console.error;
+    console.error = (...a) => logged.push(a);
+    const r = await run(s, [0, 0], [1000, 0]);
+    console.error = orig;
+    assert.deepEqual(logged, [["[suggest] reading streets threw", "TypeError"]]);
+    assert.deepEqual(r, { error: true, reason: "internal" });
+  }
   { // the download's progress is emitted while the tiles come in, and stops when they are in
     const states = [];
     const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async (tiles, kind, onTile) => {

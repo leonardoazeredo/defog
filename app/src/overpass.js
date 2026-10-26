@@ -87,7 +87,7 @@
   async function tryEndpoints(body) {
     const now = Overpass._now();
     // one {why, error} per endpoint, a held one contributing its hold's: the error thrown is always
-    // the one that earned the reason, never another endpoint's
+    // the one that earned the reason, never another endpoint's, or a synthetic one (offline, no endpoint)
     const failures = [];
     let anyStatus = false;
     for (const key of order) {
@@ -116,8 +116,8 @@
     err.reason = reason;
     // a held endpoint's error is thrown again by later posts, so a retry time from an earlier one must go
     const held = order.map((k) => stateOf(ENDPOINTS[k])).filter((s) => s.until > Overpass._now());
-    // a block is the day's share used up: the other endpoint's 30 s would only invite a retry that is
-    // turned away again, so the blocked endpoint's own hold is the retry time
+    // a blocked person is told to try tomorrow, and the streets layer sends nothing before retryAt: so
+    // a blocked retryAt is the block's own end, even when another endpoint's hold ends sooner
     const until = held.filter((s) => reason !== "blocked" || s.why === "blocked").map((s) => s.until);
     if (held.length === order.length) err.retryAt = Math.min(...until);
     else delete err.retryAt;
@@ -130,7 +130,8 @@
   // endpoint is held after one; busy, 429, 502 or 504; stalled, no answer or a body that stopped;
   // offline, the browser says so, or every fetch failed and no status was seen; server, anything
   // else. `retryAt` (on the Overpass._now clock) is set only when every endpoint is on hold: the end of
-  // the first hold, before which nothing is sent, or of the first block when the reason is blocked.
+  // the first hold, before which no post goes out; when the reason is blocked, the end of the first
+  // block instead, which can come after another endpoint's hold ends: a post in between still goes out.
   function post(body) {
     const run = queue.then(() => tryEndpoints(body));
     queue = run.catch(() => {});

@@ -68,12 +68,13 @@ function setup(over) {
     assert.equal(r.why.point, 1, "the pin that is off the streets");
   }
   { // a rejected street fetch is streets-fetch with the download's facts and none of its text; no planner (no ways at all) is no-street-data
-    const failing = setup({ streets: { ensureRects: async () => { throw Object.assign(new Error("overpass HTTP 502"), { reason: "busy", retryAt: 7 }); } } });
+    const cause = Object.assign(new Error("overpass HTTP 502"), { reason: "busy", retryAt: 7 });
+    const failing = setup({ streets: { ensureRects: async () => { throw global.StreetIndex.downloadError(0, 2, cause); } } });
     const orig = console.warn;
     console.warn = () => {};
     const r = await failing.route([pt(0, 0), pt(1000, 0)], "trekking");
     console.warn = orig;
-    assert.deepEqual(r, { error: true, why: { reason: "streets-fetch", download: { reason: "busy", done: undefined, total: undefined, retryAt: 7, cause: undefined } } });
+    assert.deepEqual(r, { error: true, why: { reason: "streets-fetch", download: { reason: "busy", done: 0, total: 2, retryAt: 7, cause: { reason: "busy" } } } });
     const empty = setup({ plannerFor: () => null });
     assert.deepEqual(await empty.route([pt(0, 0), pt(1000, 0)], "trekking"), { error: true, why: { reason: "no-street-data" } });
   }
@@ -101,7 +102,16 @@ function setup(over) {
     assert.ok(!r.error);
     assert.ok(Math.abs(r.stats.km - 0.9) < 0.02, `km ${r.stats.km}`);
   }
-  { // a street source that fails is logged by its cause's class and the reason only
+  { // a bug while reading streets is not a failed download: the internal state route.js words, its class logged
+    const logged = [], orig = console.error;
+    console.error = (...a) => logged.push(a);
+    const { route } = setup({ streets: { ensureRects: async () => { throw new TypeError("cannot read tile 273:1020"); } } });
+    const r = await route([pt(0, 0), pt(1000, 0)], "trekking");
+    console.error = orig;
+    assert.deepEqual(r, { error: true, why: { reason: "internal" } });
+    assert.deepEqual(logged, [["[route] reading streets threw", "TypeError"]]);
+  }
+  { // a street source that fails is logged by the reason only
     const logged = [];
     const orig = console.warn;
     console.warn = (...a) => logged.push(a);

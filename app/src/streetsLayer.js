@@ -190,8 +190,10 @@
         try { await this.streets.ensureRects(tiles, "run", { onProgress }); ok = true; }
         catch (e) {
           err = e;
+          // a bug, not a download: a retry would only throw it again (the class only, messages name tiles)
+          if (!global.StreetIndex.isDownloadError(e)) { console.error("[streets layer] reading streets threw", e && e.name); break; }
           // every endpoint is on hold, so a quiet retry would only be turned away: wait for retryAt
-          if (e && e.retryAt) break;
+          if (e.retryAt) break;
           if (attempt === 0) await this._sleep(SECOND_TRY_MS);
         }
         if (!this.enabled) return;

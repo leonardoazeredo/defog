@@ -155,8 +155,8 @@
   // and every tile; opts.deadlineMs (default RUN_DEADLINE_MS) stops the run before its next tile
   // once passed. Rejects, with StreetIndex.downloadError, whenever a tile is missing: suggestions
   // end in their error state rather than plan on part of the area. A bug thrown while reading a
-  // tile rejects as itself, not wrapped in a download error, so callers see its real class and
-  // message rather than a "streets-partial" shortfall.
+  // tile rejects as itself, not wrapped in a download error, so callers tell a bug from a
+  // "streets-partial" shortfall (StreetIndex.isDownloadError).
   StreetIndex.prototype.ensureRects = async function (rects, kind, opts) {
     opts = opts || {};
     const todo = this._uncovered(rects, kind);
@@ -317,6 +317,12 @@
     err.reason = done > 0 ? "streets-partial" : first && first.reason;
     if (first && first.retryAt) err.retryAt = first.retryAt;
     return err;
+  };
+
+  // Whether a street download fell short (a downloadError), rather than a bug ensureRects rethrows
+  // as itself while reading a tile: only the first is worded as a download failure.
+  StreetIndex.isDownloadError = function (e) {
+    return !!e && typeof e.total === "number" && typeof e.done === "number";
   };
 
   // What a caller may pass on from a failed download, for StreetMessages to word: the reasons, counts and
