@@ -42,7 +42,8 @@ for that feature (not your fog data). No routing service is involved: **drawing 
 suggestions** are routed entirely on your device and send nothing but the bounding box of the
 **street map around your pins** (a kilometre beyond them; a hand-drawn route also asks for its
 heights, see **Route elevation** below), and the
-**Streets in fog** look fetches the street map of the **area on screen**, both from a public
+**Streets in fog** look, which is drawn from the streets already on your device and fetches the
+street map of the **area on screen** only when you tap its **Download this area** button, both from a public
 Overpass API server (OpenStreetMap): the main instance [overpass-api.de](https://overpass-api.de)
 first, then [private.coffee](https://overpass.private.coffee/) (its terms and privacy policy are on
 that page) if the main one fails, has not started answering within 15 seconds or has not finished

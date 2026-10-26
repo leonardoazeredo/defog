@@ -296,6 +296,56 @@ function slowSource(clock, stepMs) {
     assert.deepEqual(first, [0, 1, 2].map((done) => ({ done, total: 2 })));
     assert.deepEqual([second, src.asked.length], [[], 2], "a covered area is not shown as a download");
   }
+  { // cache only: what the source holds is merged, the rest is listed as missing instead of rejected
+    const asked = [], askedTiles = [];
+    let held = null; // the source holds the first tile it is ever asked for, nothing else
+    const fetchStreets = async (tiles, kind, onTile, opts) => {
+      asked.push(opts);
+      askedTiles.push(tiles);
+      held = held || tiles[0];
+      for (const t of tiles) if (t.x === held.x && t.y === held.y) onTile(t, { ways: [way(1)], groups: {} });
+      return new Map();
+    };
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets });
+    const r = [{ s: 51.0, w: 13.7, n: 51.025, e: 13.75 }];
+    const got = await s.ensureRects(r, "run", { cacheOnly: true });
+    assert.deepEqual(asked, [{ cacheOnly: true }], "the source is told not to use the network");
+    assert.deepEqual([got.done, got.total, got.missing.length], [1, 2, 1]);
+    assert.equal(s.tiles.size, 1, "only the tile that came is covered");
+    assert.equal(s.ways.length, 1);
+    const again = await s.ensureRects(r, "run", { cacheOnly: true });
+    assert.deepEqual(askedTiles[1], got.missing, "the covered tile is not asked again");
+    assert.deepEqual([again.done, again.total, again.missing], [0, 1, got.missing]);
+  }
+  { // cache only on the default source: no request at all, every tile missing
+    let posts = 0;
+    global.fetch = async () => { posts++; throw new Error("no network in a cache-only read"); };
+    const s = new StreetIndex({ newFrac: () => 1 });
+    const got = await s.ensureRects([{ s: 51.0, w: 13.7, n: 51.025, e: 13.75 }], "run", { cacheOnly: true });
+    assert.deepEqual([posts, got.done, got.total, got.missing.length], [0, 0, 2, 2]);
+  }
+  { // cache only: an expired copy (in the Map alone) is drawn from but not covered, so a download refreshes it
+    const reads = [];
+    const fetchStreets = async (tiles, kind, onTile, opts) => {
+      reads.push({ n: tiles.length, cacheOnly: !!(opts && opts.cacheOnly) });
+      const out = new Map();
+      for (const t of tiles) {
+        const answer = { ways: [way(t.x * 1000 + t.y)], groups: {} };
+        if (opts && opts.cacheOnly) out.set(t.x + ":" + t.y, answer); else onTile(t, answer);
+      }
+      return out;
+    };
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets });
+    const r = [{ s: 51.0, w: 13.7, n: 51.025, e: 13.725 }];
+    const got = await s.ensureRects(r, "run", { cacheOnly: true });
+    assert.deepEqual([got.done, got.total, got.missing, s.ways.length, s.tiles.size], [1, 1, [], 1, 0]);
+    const v = s.version;
+    const again = await s.ensureRects(r, "run", { cacheOnly: true });
+    assert.deepEqual([again.total, s.version], [0, v], "an expired copy already drawn from is not read again");
+    await s.ensureRects(r, "run");
+    assert.deepEqual(reads.map((x) => x.cacheOnly), [true, false], "a normal run asks for the expired tile");
+    assert.equal(s.tiles.size, 1);
+  }
   { // what a caller passes on from a failed download: the reasons, counts and retry time, no text
     const cause = Object.assign(new Error("overpass: Query timed out at line 3"), { reason: "stalled", retryAt: 9 });
     assert.deepEqual(StreetIndex.downloadFacts(StreetIndex.downloadError(0, 4, cause)),

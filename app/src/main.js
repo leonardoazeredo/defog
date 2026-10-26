@@ -83,6 +83,8 @@
   // reads through the street cache (StreetIndex looks its source up at call time).
   TileStore.open("crossfog-streets", "tiles", { maxEntries: 1024 }).then((store) => {
     streets.fetchStreets = StreetCache.create({ store, network: StreetIndex.overpassFetch, now: Date.now }).fetchStreets;
+    // a look switched on before the store opened read nothing (overpassFetch holds no streets)
+    streetsLayer.refresh();
   });
   streetsLayer = new StreetsInFogLayer(map, { streets, isNew: cellIsNew, onStats: () => updateStreetsStat() });
   streetsLayer.setLook(BASEMAPS[$("basemap").value].dark ? "dark" : "light");

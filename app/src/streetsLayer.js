@@ -1,7 +1,9 @@
 // "Streets in fog": lights up the streets and paths still covered by fog.
 //
-// Street geometry for the area on screen comes from the shared StreetIndex
-// (Overpass, fetched in fixed tiles so panning reuses what's already cached).
+// Street geometry for the area on screen comes from the shared StreetIndex, read
+// from the streets already on the device: a pan never downloads. Pieces of the
+// view not on the device are counted in the badge, and its "Download this area"
+// button is the one thing that fetches them (Overpass meters each app per day).
 // Each way is judged in ~20 m pieces against the fog: a piece is still "left"
 // when no defogged cell lies within DONE_WITHIN_M of it, the same idea the
 // route editor uses to split a drawn path into new and already-done ground.
@@ -15,13 +17,12 @@
 // can't take are drawn faintly rather than dropped, so a walk-only alley still
 // shows while you're planning a bike ride.
 (function (global) {
-  const MAX_TILES = 48;      // bigger views would download too much: ask to zoom in
+  const MAX_TILES = 128;     // bigger views hold more ways than the index keeps (MAX_SEGS) in a dense city: ask to zoom in
+  const FETCH_MAX_TILES = 16; // the most missing pieces one tap downloads (one request each, ~75 km²)
   const PIECE_M = 20;        // ways are judged in pieces this long
   const DONE_WITHIN_M = 20;  // a piece is done if a defogged cell lies this close (forgives GPS wobble)
   const MIN_RUN_M = 25;      // shorter leftover stretches aren't drawn (confetti at crossings)
   const SLICE_MS = 12;       // classify in slices this long so big cities don't freeze the page
-  const RETRY_MS = 10000;    // after a failed download, wait at least this long before retrying
-  const SECOND_TRY_MS = 3000; // Overpass answers 504 when momentarily busy: one quiet retry first
   // One colour serves both maps: as-is on the dark map, deepened a little on the
   // light one so it still reads against pale ground while staying bright.
   const DEFAULT_COLOR = "#4fd6e6";
@@ -67,7 +68,11 @@
     this.runs = [];                // stretches still to do: [{ll: [[lat, lng], ...], m, s, w, n, e}]
     this.doneRuns = [];            // stretches already defogged (kept for the "% of streets in fog" readout)
     this._cursor = 0;              // how many of streets.ways have been classified
-    this._busy = false; this._dirty = false; this._retryAt = 0;
+    this._busy = false; this._dirty = false;
+    this._offer = [];              // rects of the view's pieces not on the device, what the button downloads
+    this._fetching = false;        // the button's download is running
+    this._failure = null;          // its failure's wording, kept until the map moves
+    this._tooBig = false;          // the view is past MAX_TILES
     if (!map.getPane("streets")) {
       map.createPane("streets");
       map.getPane("streets").style.zIndex = 360; // above the fog (350), below routes (400)
@@ -78,8 +83,14 @@
     this.halo = L.polyline([], { renderer, pane: "streets", interactive: false, lineCap: "round", lineJoin: "round" });
     this.core = L.polyline([], { renderer, pane: "streets", interactive: false, lineCap: "round", lineJoin: "round" });
     this.badge = new Badge({ position: "topright" });
-    this._onMove = () => this._update();
+    this._onMove = () => this._moved();
   }
+
+  // a failure's text and its Try again button belong to the view they happened in
+  StreetsInFogLayer.prototype._moved = function () {
+    this._failure = null;
+    this._update();
+  };
 
   StreetsInFogLayer.prototype.setEnabled = function (on) {
     if (on === this.enabled) return;
@@ -122,6 +133,11 @@
     this._restyle();
   };
 
+  // The street source changed (the cache opened): recount what is on the device.
+  StreetsInFogLayer.prototype.refresh = function () {
+    if (this.enabled) this._update();
+  };
+
   // The fog changed (more tiles loaded): every way needs judging again.
   StreetsInFogLayer.prototype.invalidateFog = function () {
     this.runs = []; this.doneRuns = []; this._cursor = 0;
@@ -157,10 +173,17 @@
     return { leftM: sum(this.runs), doneM: sum(this.doneRuns) };
   };
 
-  StreetsInFogLayer.prototype._say = function (text) {
+  // action: {label, run} for the badge's one button, or nothing
+  StreetsInFogLayer.prototype._say = function (text, action) {
     const el = this.badge.getContainer();
     if (!el) return;
     el.textContent = text || "";
+    if (text && action) {
+      const b = L.DomUtil.create("button", "streetsBadgeBtn", el);
+      b.type = "button";
+      b.textContent = action.label;
+      L.DomEvent.on(b, "click", action.run);
+    }
     el.style.display = text ? "" : "none";
   };
 
@@ -174,49 +197,68 @@
   StreetsInFogLayer.prototype._update = async function () {
     if (!this.enabled) return;
     const tiles = this._visibleTiles();
-    if (tiles.length > MAX_TILES) {
+    this._tooBig = tiles.length > MAX_TILES;
+    if (this._tooBig) {
       this._say("Zoom in to see the streets in fog (about a town at a time)");
       this.dim.setLatLngs([]); this.halo.setLatLngs([]); this.core.setLatLngs([]);
       return;
     }
     if (this._busy) { this._dirty = true; return; }
-    if (this._now() < this._retryAt) return; // a download just failed; retry on a later move
     this._busy = true;
     try {
-      // switched off mid-download: a late count must not bring the badge back
-      const onProgress = ({ done, total }) => { if (this.enabled) this._say(global.StreetMessages.progress(done, total)); };
-      let ok = false, err = null;
-      for (let attempt = 0; attempt < 2 && !ok; attempt++) {
-        try { await this.streets.ensureRects(tiles, "run", { onProgress }); ok = true; }
-        catch (e) {
-          err = e;
-          // a bug, not a download: a retry would only throw it again (the class only, messages name tiles)
-          if (!global.StreetIndex.isDownloadError(e)) { console.error("[streets layer] reading streets threw", e && e.name); break; }
-          // every endpoint is on hold, so a quiet retry would only be turned away: wait for retryAt
-          if (e.retryAt) break;
-          if (attempt === 0) await this._sleep(SECOND_TRY_MS);
-        }
-        if (!this.enabled) return;
-      }
-      if (!this.enabled) return;
-      if (!ok) {
-        this._retryAt = Math.max(this._now() + RETRY_MS, (err && err.retryAt) || 0);
-        this._say(global.StreetMessages.describe(err, this._now()));
+      let got;
+      try { got = await this.streets.ensureRects(tiles, "run", { cacheOnly: true }); }
+      catch (e) {
+        // a cache read cannot fail as a download, so this is a bug (the class only, messages name tiles)
+        console.error("[streets layer] reading streets threw", e && e.name);
+        if (this.enabled && !this._fetching) this._say(global.StreetMessages.describe({}, this._now()));
         return;
       }
+      if (!this.enabled) return;
+      this._offer = got.missing.map(global.StreetIndex.tileBounds);
       await this._classifyNew();
       if (!this.enabled) return;
-      this._say("");
       this._draw();
+      if (!this._fetching) this._sayKnown(tiles.length);
     } finally {
       this._busy = false;
       if (this._dirty) { this._dirty = false; this._update(); }
     }
   };
 
-  // The clock and the wait between tries, replaced by fakes in the tests.
+  // n is the whole view: ensureRects leaves already covered pieces out of its own total
+  StreetsInFogLayer.prototype._sayKnown = function (n) {
+    const missing = this._offer.length, known = "Street map known for " + (n - missing) + " of " + n + " pieces here.";
+    const retry = { label: "Try again", run: () => this._download() };
+    if (this._failure) this._say(this._failure, missing ? retry : null);
+    else if (!missing) this._say("");
+    else if (missing > FETCH_MAX_TILES) this._say(known + " Zoom in to download the rest.");
+    else this._say(known, { label: "Download this area", run: () => this._download() });
+  };
+
+  // The button: the normal download of the pieces the badge counted, never more than
+  // FETCH_MAX_TILES requests; a failure waits for the next tap, there is no quiet retry.
+  StreetsInFogLayer.prototype._download = async function () {
+    const rects = this._offer;
+    if (this._fetching || !this.enabled || !rects.length || rects.length > FETCH_MAX_TILES) return;
+    this._fetching = true;
+    this._failure = null;
+    // switched off or zoomed out mid-download: a late count must not replace that badge
+    const onProgress = ({ done, total }) => {
+      if (this.enabled && !this._tooBig) this._say(global.StreetMessages.progress(done, total));
+    };
+    try { await this.streets.ensureRects(rects, "run", { onProgress }); }
+    catch (e) {
+      if (!global.StreetIndex.isDownloadError(e)) console.error("[streets layer] downloading streets threw", e && e.name);
+      this._failure = global.StreetMessages.describe(e, this._now());
+    } finally {
+      this._fetching = false;
+    }
+    await this._update();
+  };
+
+  // The clock, replaced by a fake in the tests.
   StreetsInFogLayer.prototype._now = () => Date.now();
-  StreetsInFogLayer.prototype._sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // Judge the ways fetched since last time, in short time slices. Yields through a
   // message channel rather than a timer or animation frame: those are throttled
@@ -286,5 +328,6 @@
   };
 
   StreetsInFogLayer.MAX_TILES = MAX_TILES;
+  StreetsInFogLayer.FETCH_MAX_TILES = FETCH_MAX_TILES;
   global.StreetsInFogLayer = StreetsInFogLayer;
 })(window);
