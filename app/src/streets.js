@@ -38,12 +38,18 @@
   const GRID_M = 250;            // spatial bin size for radius queries
   const MAX_SEGS = 400000;       // memory guard (~40 MB worst case)
   const CORRIDOR_M = 30;         // full width Fog of World clears as you travel
-  const TILE_DEG = 0.05;         // fetch grid, ~5.5 x 3.5 km at 51°N: streets are fetched and remembered per tile
+  const TILE_DEG = 0.025;        // fetch grid, ~2.8 x 1.75 km at 51°N: streets are fetched and remembered per tile
   const TILE_EPS = 1e-9;         // in tiles: keeps a bound that sits on a tile edge from reaching into the neighbouring tile
+  // One Overpass request per tile keeps each query small enough to finish inside the server's
+  // timeout, and lets a failed run keep the tiles that came. Batching is this one number.
+  const TILES_PER_REQUEST = 1;
+  const RUN_DEADLINE_MS = 75000; // a run asks no further tile past this, so a slow server ends it with its progress
 
   function StreetIndex(opts) {
     this.newFrac = opts.newFrac; // (lon,lat) -> 0..1 share of the corridor stamp still fogged
-    this.fetchStreets = opts.fetchStreets || StreetIndex.overpassFetch; // the street source: (tiles, kind) -> Map "x:y" -> answer
+    // the street source: (tiles, kind, onTile) -> Map "x:y" -> answer, calling onTile(tile, answer) as each arrives
+    this.fetchStreets = opts.fetchStreets || StreetIndex.overpassFetch;
+    this.now = opts.now || Date.now; // the clock the run deadline is measured on
     this.segs = new Map();       // "gx,gy" -> [{x,y,lon,lat,lenM,frac}]
     this.tiles = new Set();      // fetched coverage, StreetIndex.tileKey(kind, x, y)
     this.wayIds = new Set();     // dedupe across overlapping fetches
@@ -145,28 +151,56 @@
     return L.latLng(Math.round(latlng.lat / g) * g, Math.round(latlng.lng / g) * g);
   };
 
-  // Fetch streets for the tiles under the given rects (skipping ones already covered),
-  // in one call to the street source. kind: "run" | "bike" | "car". Throws on failure;
-  // suggestions end in their error state, since routing needs the streets.
-  StreetIndex.prototype.ensureRects = async function (rects, kind) {
+  // Fetch streets for the tiles under the given rects (skipping ones already covered), in one
+  // call to the street source, nearest the centre of the rects first. kind: "run" | "bike" |
+  // "car". Each tile is read into the index as it arrives, so a failed run keeps what came and
+  // the next run asks only for the rest. opts.onProgress({done, total}) hears every tile;
+  // opts.deadlineMs (default RUN_DEADLINE_MS) stops the run before its next tile once passed.
+  // Rejects, with StreetIndex.downloadError, whenever a tile is missing: suggestions end in
+  // their error state rather than plan on part of the area.
+  StreetIndex.prototype.ensureRects = async function (rects, kind, opts) {
+    opts = opts || {};
     const todo = this._uncovered(rects, kind);
     if (!todo.length) return;
     this._anchor(rects[0].s);
-    const answers = await this.fetchStreets(todo, kind);
-    const got = todo.map((t) => {
-      const answer = answers.get(t.x + ":" + t.y);
-      if (!answer) throw new Error(`street source: no answer for tile ${t.x}:${t.y} (${kind})`);
-      return answer;
-    });
-    for (const answer of got) {
-      for (const w of answer.ways) { this._addWay(w); this.classified.add(w.id); }
-      for (const name of GROUP_ORDER) {
-        const into = this.classIds[name] || this[name];
-        for (const id of answer.groups[name] || []) into.add(id);
-      }
+    StreetIndex.nearestFirst(todo, rects);
+    const deadlineMs = opts.deadlineMs == null ? RUN_DEADLINE_MS : opts.deadlineMs;
+    const started = this.now();
+    const read = new Set();
+    const progress = () => { if (opts.onProgress) opts.onProgress({ done: read.size, total: todo.length }); };
+    const take = (t, answer) => {
+      const id = t.x + ":" + t.y;
+      if (!answer || read.has(id)) return;
+      this._read(answer);
+      this._cover([t], kind);
+      read.add(id);
+      progress();
+    };
+    progress();
+    let answers;
+    try {
+      answers = await this.fetchStreets(todo, kind, (t, answer) => {
+        take(t, answer);
+        if (read.size < todo.length && this.now() - started >= deadlineMs)
+          throw Object.assign(new Error("streets: run deadline passed"), { reason: "stalled" });
+      });
+    } catch (e) {
+      throw StreetIndex.downloadError(read.size, todo.length, e);
+    }
+    // a source may hand tiles over in its Map alone
+    for (const t of todo) take(t, answers && answers.get(t.x + ":" + t.y));
+    const lost = todo.find((t) => !read.has(t.x + ":" + t.y));
+    if (lost) throw StreetIndex.downloadError(read.size, todo.length, new Error(`street source: no answer for tile ${lost.x}:${lost.y} (${kind})`));
+  };
+
+  // One tile's answer into the index; the version bump tells graphs built before it to rebuild.
+  StreetIndex.prototype._read = function (answer) {
+    for (const w of answer.ways) { this._addWay(w); this.classified.add(w.id); }
+    for (const name of GROUP_ORDER) {
+      const into = this.classIds[name] || this[name];
+      for (const id of answer.groups[name] || []) into.add(id);
     }
     this.version++;
-    this._cover(todo, kind);
   };
 
   // Defoggable area (m²) reachable by travelling the ways within rM of the
@@ -250,10 +284,48 @@
     return q;
   };
 
-  // The default street source: one Overpass request for all the tiles, the answer split per tile.
-  StreetIndex.overpassFetch = async function (tiles, kind) {
-    const q = StreetIndex.rectQuery(tiles.map(StreetIndex.tileBounds), kind);
-    return StreetIndex.splitAnswer(await global.Overpass.post("data=" + encodeURIComponent(q)), tiles);
+  // The default street source: one Overpass request per TILES_PER_REQUEST tiles, in the order given,
+  // each tile handed to onTile once its whole answer is in. Stops at the first failed request.
+  StreetIndex.overpassFetch = async function (tiles, kind, onTile) {
+    const out = new Map();
+    try {
+      for (let i = 0; i < tiles.length; i += TILES_PER_REQUEST) {
+        const batch = tiles.slice(i, i + TILES_PER_REQUEST);
+        const q = StreetIndex.rectQuery(batch.map(StreetIndex.tileBounds), kind);
+        const answers = StreetIndex.splitAnswer(await global.Overpass.post("data=" + encodeURIComponent(q)), batch);
+        for (const t of batch) {
+          const answer = answers.get(t.x + ":" + t.y);
+          out.set(t.x + ":" + t.y, answer);
+          if (onTile) onTile(t, answer);
+        }
+      }
+    } catch (e) {
+      throw StreetIndex.downloadError(out.size, tiles.length, e);
+    }
+    return out;
+  };
+
+  // The error a street source or ensureRects rejects with when a tile is missing: how many of the
+  // tiles asked for arrived (done of total), the failure that stopped the run as `cause`, its
+  // retryAt, and reason "streets-partial" once any tile arrived (else the cause's own reason).
+  // A cause that is itself such an error is unwrapped, so `cause` is always the first failure.
+  StreetIndex.downloadError = function (done, total, cause) {
+    const first = cause && typeof cause.total === "number" && cause.cause ? cause.cause : cause;
+    const err = new Error(`streets: got ${done} of ${total} tiles` + (first && first.message ? ": " + first.message : ""));
+    err.done = done; err.total = total; err.cause = first;
+    err.reason = done > 0 ? "streets-partial" : first && first.reason;
+    if (first && first.retryAt) err.retryAt = first.retryAt;
+    return err;
+  };
+
+  // Sorts tiles in place by distance from the centre of the rects' bounding box, longitude scaled to
+  // ground distance at that latitude; equal distances keep their order.
+  StreetIndex.nearestFirst = function (tiles, rects) {
+    const s = Math.min(...rects.map((r) => r.s)), n = Math.max(...rects.map((r) => r.n));
+    const w = Math.min(...rects.map((r) => r.w)), e = Math.max(...rects.map((r) => r.e));
+    const lat = (s + n) / 2, lng = (w + e) / 2, kx = Math.cos(lat * Math.PI / 180);
+    const d = (t) => Math.hypot(((t.x + 0.5) * TILE_DEG - lng) * kx, (t.y + 0.5) * TILE_DEG - lat);
+    return tiles.sort((a, b) => d(a) - d(b));
   };
 
   // Reads an Overpass answer to a rectQuery and hands each requested tile its share.

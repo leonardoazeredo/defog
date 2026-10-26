@@ -37,5 +37,22 @@ function fakeLayer(fail) {
     assert.equal(state.calls, 2, "one quiet retry after a plain failure");
     assert.ok(layer._retryAt >= before + 10_000 && layer._retryAt < before + 60_000);
   }
+  { // a 48-tile view on the 0.025° grid is still fetched; a larger one asks to zoom in
+    assert.equal(StreetsInFogLayer.MAX_TILES, 48);
+    const view = (b) => ({ getBounds: () => ({ getSouth: () => b.s, getWest: () => b.w, getNorth: () => b.n, getEast: () => b.e }) });
+    const ok = fakeLayer(() => new Error("overpass HTTP 504"));
+    delete ok.layer._visibleTiles;
+    ok.layer.map = view({ s: 51.0, w: 13.7, n: 51.15, e: 13.9 });
+    ok.layer.streets.ensureRects = async (tiles) => { ok.state.calls++; ok.state.tiles = tiles.length; };
+    await ok.layer._update();
+    assert.deepEqual([ok.state.calls, ok.state.tiles], [1, 48]);
+    const big = fakeLayer(() => new Error("overpass HTTP 504"));
+    delete big.layer._visibleTiles;
+    big.layer.map = view({ s: 51.0, w: 13.7, n: 51.16, e: 13.9 });
+    big.layer.dim = big.layer.halo = big.layer.core = { setLatLngs: () => {} };
+    await big.layer._update();
+    assert.equal(big.state.calls, 0);
+    assert.match(big.state.said.pop(), /Zoom in/);
+  }
   console.log("streets-layer-retry.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });

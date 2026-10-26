@@ -15,7 +15,7 @@
 // can't take are drawn faintly rather than dropped, so a walk-only alley still
 // shows while you're planning a bike ride.
 (function (global) {
-  const MAX_TILES = 12;      // bigger views would download too much: ask to zoom in
+  const MAX_TILES = 48;      // bigger views would download too much: ask to zoom in
   const PIECE_M = 20;        // ways are judged in pieces this long
   const DONE_WITHIN_M = 20;  // a piece is done if a defogged cell lies this close (forgives GPS wobble)
   const MIN_RUN_M = 25;      // shorter leftover stretches aren't drawn (confetti at crossings)
@@ -278,5 +278,6 @@
     if (this.onStats) this.onStats();
   };
 
+  StreetsInFogLayer.MAX_TILES = MAX_TILES;
   global.StreetsInFogLayer = StreetsInFogLayer;
 })(window);
