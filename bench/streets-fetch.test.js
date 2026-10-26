@@ -13,6 +13,36 @@ function replyWith(body) {
   global.fetch = async (url, opts) => { sent = decodeURIComponent(opts.body); return { ok: true, status: 200, json: async () => body }; };
 }
 const rect = [{ s: 51, w: 13.7, n: 51.01, e: 13.71 }];
+// Answers each query with one way inside the bbox it asks for; fail(bbox) picks the queries that get a 502.
+let nextWay = 100;
+function tileServer(fail) {
+  const asked = [];
+  global.fetch = async (url, opts) => {
+    const bbox = decodeURIComponent(opts.body).match(/\(([\d.,]+)\);/)[1];
+    asked.push(bbox);
+    if (fail && fail(bbox)) return { ok: false, status: 502, json: async () => ({}) };
+    const [s, w] = bbox.split(",").map(Number), id = nextWay++;
+    return { ok: true, status: 200, json: async () => ({ elements: [{ type: "way", id, nodes: [id * 10, id * 10 + 1], geometry: [{ lat: s + 0.001, lon: w + 0.001 }, { lat: s + 0.002, lon: w + 0.001 }] }] }) };
+  };
+  return asked;
+}
+const box = (x, y) => { const b = StreetIndex.tileBounds({ x, y }); return [b.s, b.w, b.n, b.e].map((v) => v.toFixed(4)).join(","); };
+// A street source on a fake clock: every tile takes stepMs to arrive and is handed over through onTile.
+function slowSource(clock, stepMs) {
+  const asked = [];
+  const fetchStreets = async (tiles, kind, onTile) => {
+    const out = new Map();
+    for (const t of tiles) {
+      asked.push(t.x + ":" + t.y);
+      clock.t += stepMs;
+      const answer = { ways: [], groups: {} };
+      out.set(t.x + ":" + t.y, answer);
+      onTile(t, answer);
+    }
+    return out;
+  };
+  return { fetchStreets, asked };
+}
 
 (async () => {
   { // a wheeled (bike-kind) fetch asks for the travel classes too, so car and road profiles are filtered
@@ -78,26 +108,30 @@ const rect = [{ s: 51, w: 13.7, n: 51.01, e: 13.71 }];
     assert.equal(s.covered(51.09, 13.79), true);
     assert.equal(s.covered(51.11, 13.79), false, "the tile north of the fetch is not covered");
   }
-  { // a rect over two tiles asks for both in one call, a highway and a service clause with the tile's bbox for each
-    replyWith({ elements: [] });
+  { // a rect over two tiles asks for each in its own query, a highway and a service clause with the tile's bbox
+    const bodies = [];
+    global.fetch = async (url, opts) => { bodies.push(decodeURIComponent(opts.body)); return { ok: true, status: 200, json: async () => ({ elements: [] }) }; };
     const s = new StreetIndex({ newFrac: () => 1 });
     await s.ensureRects([{ s: 51.01, w: 13.74, n: 51.02, e: 13.76 }], "run");
-    assert.equal(sent.split("(51.0000,13.7000,51.0500,13.7500)").length - 1, 2, "tile 274 has a highway and a service clause");
-    assert.equal(sent.split("(51.0000,13.7500,51.0500,13.8000)").length - 1, 2, "tile 275 has a highway and a service clause");
-    assert.equal(sent.split("[out:json]").length - 1, 1, "one query");
+    assert.equal(bodies.length, 2, "one query per tile");
+    const tilesOf = bodies.map((b) => [...b.matchAll(/\(([\d.,]+)\);/g)].map((m) => m[1]));
+    for (const t of tilesOf) assert.equal(new Set(t).size, 1, "a query holds one tile's bbox");
+    assert.deepEqual(tilesOf.map((t) => [t.length, t[0]]).sort(), [[2, "51.0000,13.7250,51.0250,13.7500"], [2, "51.0000,13.7500,51.0250,13.7750"]]);
     assert.equal(s.covered(51.01, 13.76), true);
   }
-  { // tiles are the 0.05° grid; an east or north bound on a tile edge does not pull in the next tile, but a rect with no width there still finds its tile
-    assert.deepEqual(StreetIndex.tileOf(13.72, 51.03), { x: 274, y: 1020 });
-    assert.deepEqual(StreetIndex.tilesCovering({ s: 51.0, w: 13.7, n: 51.05, e: 13.75 }), [{ x: 274, y: 1020 }]);
-    assert.deepEqual(StreetIndex.tilesCovering({ s: 51.03, w: 13.75, n: 51.03, e: 13.75 }), [{ x: 275, y: 1020 }]);
-    assert.deepEqual(StreetIndex.tilesCovering({ s: 51.05, w: 13.72, n: 51.05, e: 13.73 }), [{ x: 274, y: 1021 }], "no height on a south edge");
-    assert.deepEqual(StreetIndex.tilesCovering({ s: -0.03, w: -0.05, n: -0.02, e: -0.05 }), [{ x: -1, y: -1 }], "negative coordinates, no width on a west edge");
-    assert.deepEqual(StreetIndex.tilesCovering({ s: 51.03, w: 13.7, n: 51.04, e: 13.8 }), [{ x: 274, y: 1020 }, { x: 275, y: 1020 }]);
-    for (const x of [1, 7, 274, 275, -3]) for (const y of [3, 6, 1020, -7]) {
+  { // tiles are the 0.025° grid; an east or north bound on a tile edge does not pull in the next tile, but a rect with no width there still finds its tile
+    assert.equal(StreetIndex.TILE_DEG, 0.025);
+    assert.deepEqual(StreetIndex.tileOf(13.72, 51.03), { x: 548, y: 2041 });
+    assert.equal(StreetIndex.tilesCovering({ s: 51.0, w: 13.7, n: 51.1, e: 13.8 }).length, 16, "a 0.1° square is 4 x 4 tiles");
+    assert.deepEqual(StreetIndex.tilesCovering({ s: 51.0, w: 13.7, n: 51.025, e: 13.725 }), [{ x: 548, y: 2040 }]);
+    assert.deepEqual(StreetIndex.tilesCovering({ s: 51.03, w: 13.725, n: 51.03, e: 13.725 }), [{ x: 549, y: 2041 }]);
+    assert.deepEqual(StreetIndex.tilesCovering({ s: 51.05, w: 13.71, n: 51.05, e: 13.72 }), [{ x: 548, y: 2042 }], "no height on a south edge");
+    assert.deepEqual(StreetIndex.tilesCovering({ s: -0.02, w: -0.05, n: -0.01, e: -0.05 }), [{ x: -2, y: -1 }], "negative coordinates, no width on a west edge");
+    assert.deepEqual(StreetIndex.tilesCovering({ s: 51.03, w: 13.7, n: 51.04, e: 13.75 }), [{ x: 548, y: 2041 }, { x: 549, y: 2041 }]);
+    for (const x of [1, 7, 548, 549, -3]) for (const y of [3, 6, 2040, -7]) {
       assert.deepEqual(StreetIndex.tilesCovering(StreetIndex.tileBounds({ x, y })), [{ x, y }], `tile ${x},${y} maps back to itself`);
     }
-    assert.equal(StreetIndex.tileKey("bike", 274, 1020), "bike:274:1020");
+    assert.equal(StreetIndex.tileKey("bike", 548, 2040), "bike:548:2040");
   }
   { // a bike request after a run fetch makes no call; a car request does
     let kinds = [];
@@ -115,13 +149,19 @@ const rect = [{ s: 51, w: 13.7, n: 51.01, e: 13.71 }];
     const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async (tiles) => { asked.push(tiles.map((t) => t.x + ":" + t.y)); return new Map(tiles.map((t) => [t.x + ":" + t.y, { ways: [], groups: {} }])); } });
     await s.ensureRects([{ s: 51.01, w: 13.71, n: 51.02, e: 13.72 }], "run");
     await s.ensureRects([{ s: 51.01, w: 13.71, n: 51.02, e: 13.78 }, { s: 51.01, w: 13.76, n: 51.02, e: 13.89 }], "run");
-    assert.deepEqual(asked, [["274:1020"], ["275:1020", "276:1020", "277:1020"]]);
+    assert.deepEqual(asked[0], ["548:2040"]);
+    assert.deepEqual(asked[1].slice().sort(), ["549:2040", "550:2040", "551:2040", "552:2040", "553:2040", "554:2040", "555:2040"]);
   }
-  { // a source that answers some tiles and leaves one out changes nothing: no ways, no version bump, no coverage
-    const full = { ways: [{ id: 1, nodes: [1, 2], geometry: [{ lat: 51.01, lon: 13.71 }, { lat: 51.011, lon: 13.71 }] }], groups: {} };
-    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async () => new Map([["274:1020", full]]) });
-    await assert.rejects(() => s.ensureRects([{ s: 51.01, w: 13.74, n: 51.02, e: 13.76 }], "run"), /no answer for tile 275:1020 \(run\)/);
-    assert.deepEqual([s.ways.length, s.wayIds.size, s.classified.size, s.tiles.size, s.version], [0, 0, 0, 0, 0]);
+  { // a source that answers some tiles and leaves one out: the answered tile is kept, the call says what is missing
+    const full = { ways: [{ id: 1, nodes: [1, 2], geometry: [{ lat: 51.01, lon: 13.74 }, { lat: 51.011, lon: 13.74 }] }], groups: {} };
+    const asked = [];
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async (tiles) => { asked.push(tiles.map((t) => t.x + ":" + t.y)); return new Map([["549:2040", full]]); } });
+    const err = await s.ensureRects([{ s: 51.01, w: 13.74, n: 51.02, e: 13.76 }], "run").then(() => null, (e) => e);
+    assert.match(err.message, /no answer for tile 550:2040 \(run\)/);
+    assert.deepEqual([err.done, err.total, err.reason], [1, 2, "streets-partial"]);
+    assert.deepEqual([s.ways.length, s.tiles.size, s.version], [1, 1, 1]);
+    await s.ensureRects([{ s: 51.01, w: 13.74, n: 51.02, e: 13.76 }], "run").catch(() => {});
+    assert.deepEqual(asked[1], ["550:2040"], "the retry asks only the missing tile");
   }
   { // a source that leaves a requested tile out is an error, and nothing is recorded as fetched
     const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async () => new Map() });
@@ -129,30 +169,29 @@ const rect = [{ s: 51, w: 13.7, n: 51.01, e: 13.71 }];
     assert.equal(s.tiles.size, 0);
     assert.equal(s.version, 0);
   }
-  { // the default source splits one answer per tile: a way over a tile edge lands in both tiles, ids filtered per tile
+  { // an answer over several tiles is split per tile: a way over a tile edge lands in both tiles, ids filtered per tile
     const wide = { type: "way", id: 7, nodes: [70, 71], geometry: [{ lat: 51.01, lon: 13.74 }, { lat: 51.01, lon: 13.76 }] };
-    const west = { type: "way", id: 8, nodes: [80, 81], geometry: [{ lat: 51.02, lon: 13.71 }, { lat: 51.02, lon: 13.72 }] };
+    const west = { type: "way", id: 8, nodes: [80, 81], geometry: [{ lat: 51.02, lon: 13.73 }, { lat: 51.02, lon: 13.735 }] };
     const lost = { type: "way", id: 9, nodes: [90, 91], geometry: [{ lat: 51.3, lon: 13.0 }, { lat: 51.3, lon: 13.01 }] };
     // geometry, then bike, road, car, oneWay, reverseWay, bikeBoth, motorway
-    replyWith({ elements: [wide, west, lost, count, ...ids(7, 8), count, ...ids(7), count, count, ...ids(8, 9), count, count, count] });
-    const tiles = [{ x: 274, y: 1020 }, { x: 275, y: 1020 }];
-    const out = await StreetIndex.overpassFetch(tiles, "bike");
-    assert.deepEqual([...out.keys()], ["274:1020", "275:1020"]);
-    assert.deepEqual(out.get("274:1020").ways.map((w) => w.id), [7, 8, 9], "7 straddles, 8 is inside, 9 matches no tile and goes to the first");
-    assert.deepEqual(out.get("275:1020").ways.map((w) => w.id), [7]);
-    assert.deepEqual(out.get("274:1020").groups.bike, [7, 8]);
-    assert.deepEqual(out.get("275:1020").groups.bike, [7]);
-    assert.deepEqual(out.get("274:1020").groups.road, [7]);
-    assert.deepEqual(out.get("275:1020").groups.road, [7], "the straddling way carries its ids into both tiles");
-    assert.deepEqual(out.get("274:1020").groups.oneWay, [8, 9]);
-    assert.deepEqual(out.get("275:1020").groups.oneWay, []);
-    assert.deepEqual(Object.keys(out.get("275:1020").groups), ["bike", "road", "car", "oneWay", "reverseWay", "bikeBoth", "motorway"]);
-    assert.equal(structuredClone(out.get("274:1020")).ways.length, 3, "an answer is structured-clone friendly");
+    const tiles = [{ x: 549, y: 2040 }, { x: 550, y: 2040 }];
+    const out = StreetIndex.splitAnswer({ elements: [wide, west, lost, count, ...ids(7, 8), count, ...ids(7), count, count, ...ids(8, 9), count, count, count] }, tiles);
+    assert.deepEqual([...out.keys()], ["549:2040", "550:2040"]);
+    assert.deepEqual(out.get("549:2040").ways.map((w) => w.id), [7, 8, 9], "7 straddles, 8 is inside, 9 matches no tile and goes to the first");
+    assert.deepEqual(out.get("550:2040").ways.map((w) => w.id), [7]);
+    assert.deepEqual(out.get("549:2040").groups.bike, [7, 8]);
+    assert.deepEqual(out.get("550:2040").groups.bike, [7]);
+    assert.deepEqual(out.get("549:2040").groups.road, [7]);
+    assert.deepEqual(out.get("550:2040").groups.road, [7], "the straddling way carries its ids into both tiles");
+    assert.deepEqual(out.get("549:2040").groups.oneWay, [8, 9]);
+    assert.deepEqual(out.get("550:2040").groups.oneWay, []);
+    assert.deepEqual(Object.keys(out.get("550:2040").groups), ["bike", "road", "car", "oneWay", "reverseWay", "bikeBoth", "motorway"]);
+    assert.equal(structuredClone(out.get("549:2040")).ways.length, 3, "an answer is structured-clone friendly");
     // the index takes the straddling way once
     const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async () => out });
-    await s.ensureRects([{ s: 51.0, w: 13.7, n: 51.05, e: 13.8 }], "bike");
-    assert.deepEqual(s.ways.map((w) => w.id), [7, 8, 9]);
-    assert.equal(s.version, 1, "one version bump per fetch");
+    await s.ensureRects([{ s: 51.0, w: 13.725, n: 51.025, e: 13.775 }], "bike");
+    assert.deepEqual(s.ways.map((w) => w.id).sort(), [7, 8, 9]);
+    assert.equal(s.version, 2, "one version bump per tile read");
   }
   { // pins the query text the bench cache is keyed on. The hash covers the timeout header too, but the
     // bench cache ignores it: a hash change from anything else means every saved answer misses
@@ -163,8 +202,84 @@ const rect = [{ s: 51, w: 13.7, n: 51.01, e: 13.71 }];
     assert.equal(sha("bike"), "e3620d77390907388c5540fba2593f2325f19077");
     assert.equal(sha("car"), "33f830337ebdd0c1c3afee063d36004a9aa1c03a");
     replyWith({ elements: [] });
-    await StreetIndex.overpassFetch([{ x: 274, y: 1020 }], "run");
-    assert.equal(sent, "data=" + StreetIndex.rectQuery([StreetIndex.tileBounds({ x: 274, y: 1020 })], "run"), "the default source asks for the tiles' bounds");
+    await StreetIndex.overpassFetch([{ x: 548, y: 2040 }], "run");
+    assert.equal(sent, "data=" + StreetIndex.rectQuery([StreetIndex.tileBounds({ x: 548, y: 2040 })], "run"), "the default source asks for the tile's bounds");
+  }
+  { // four uncovered tiles are four requests, the one nearest the centre of the rects first
+    // centre 51.03, 13.73 lies in tile 549:2041; west of it is nearer than south of it once longitude is scaled by cos(lat)
+    global.Overpass._reset();
+    const asked = tileServer();
+    const s = new StreetIndex({ newFrac: () => 1 });
+    await s.ensureRects([{ s: 51.02, w: 13.72, n: 51.04, e: 13.74 }], "run");
+    assert.deepEqual(asked, [box(549, 2041), box(548, 2041), box(549, 2040), box(548, 2040)]);
+    assert.equal(s.ways.length, 4);
+  }
+  { // the third of four requests fails: the first two tiles are kept, and the retry asks only the other two
+    global.Overpass._reset();
+    let failing = true;
+    const asked = tileServer((bbox) => failing && bbox === box(549, 2040));
+    const s = new StreetIndex({ newFrac: () => 1 });
+    const r = [{ s: 51.02, w: 13.72, n: 51.04, e: 13.74 }];
+    const err = await s.ensureRects(r, "run").then(() => null, (e) => e);
+    assert.ok(err, "a run with a tile missing rejects");
+    assert.deepEqual([err.done, err.total, err.reason], [2, 4, "streets-partial"]);
+    assert.equal(err.cause.reason, "busy", "the Overpass error is the cause");
+    assert.equal(asked.filter((b) => b === box(548, 2040)).length, 0, "the run stops at the failed request");
+    assert.deepEqual([s.covered(51.03, 13.73), s.covered(51.03, 13.72), s.covered(51.02, 13.73)], [true, true, false]);
+    failing = false;
+    asked.length = 0;
+    await s.ensureRects(r, "run");
+    assert.deepEqual(asked, [box(549, 2040), box(548, 2040)]);
+    assert.equal(s.ways.length, 4);
+  }
+  { // the default source stops at its first failed request; nothing arrived, so the error carries the cause's reason
+    global.Overpass._reset();
+    const asked = tileServer(() => true);
+    const err = await StreetIndex.overpassFetch([{ x: 548, y: 2040 }, { x: 549, y: 2040 }], "run").then(() => null, (e) => e);
+    assert.equal(asked.length, 2, "one request, tried on both endpoints");
+    assert.deepEqual([err.done, err.total, err.reason, err.cause.reason], [0, 2, "busy", "busy"]);
+  }
+  { // a throw from onTile that is not the caller's stop (a bug) comes out of the default source unchanged
+    global.Overpass._reset();
+    tileServer();
+    const bug = new TypeError("bug");
+    const err = await StreetIndex.overpassFetch([{ x: 548, y: 2040 }, { x: 549, y: 2040 }], "run", () => { throw bug; }).then(() => null, (e) => e);
+    assert.equal(err, bug);
+  }
+  { // a bug thrown while reading a tile comes out of ensureRects as itself, not as a download error
+    global.Overpass._reset();
+    tileServer();
+    const s = new StreetIndex({ newFrac: () => 1 });
+    s._read = () => { throw new TypeError("bug"); };
+    const err = await s.ensureRects(rect, "run").then(() => null, (e) => e);
+    assert.ok(err instanceof TypeError);
+    assert.equal(err.total, undefined);
+  }
+  { // the cause's retryAt is copied onto the error, and its reason when no tile arrived
+    const cause = Object.assign(new Error("overpass HTTP 429"), { reason: "busy", retryAt: 12345 });
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async () => { throw cause; } });
+    const err = await s.ensureRects(rect, "run").then(() => null, (e) => e);
+    assert.deepEqual([err.done, err.total, err.reason, err.retryAt, err.cause], [0, 1, "busy", 12345, cause]);
+  }
+  { // a run past its deadline stops before the next request, with its progress
+    const clock = { t: 0 };
+    const src = slowSource(clock, 30000);
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: src.fetchStreets, now: () => clock.t });
+    const progress = [];
+    const r = [{ s: 51.0, w: 13.7, n: 51.025, e: 13.825 }]; // five tiles in a row
+    const err = await s.ensureRects(r, "run", { onProgress: (p) => progress.push(p) }).then(() => null, (e) => e);
+    assert.equal(src.asked.length, 3, "past 75 s at the third tile (90 s): no fourth request");
+    assert.deepEqual([err.done, err.total, err.reason, err.cause.reason], [3, 5, "streets-partial", "stalled"]);
+    assert.deepEqual(progress, [0, 1, 2, 3].map((done) => ({ done, total: 5 })));
+    const t = new StreetIndex({ newFrac: () => 1, fetchStreets: slowSource(clock, 30000).fetchStreets, now: () => clock.t });
+    const err2 = await t.ensureRects(r, "run", { deadlineMs: 20000 }).then(() => null, (e) => e);
+    assert.deepEqual([err2.done, err2.total], [1, 5], "opts.deadlineMs sets the deadline");
+  }
+  { // the last tile is kept even when it lands past the deadline: the check runs only while tiles remain
+    const clock = { t: 0 };
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: slowSource(clock, 30000).fetchStreets, now: () => clock.t });
+    await s.ensureRects([{ s: 51.0, w: 13.7, n: 51.025, e: 13.75 }], "run", { deadlineMs: 45000 });
+    assert.equal(s.tiles.size, 2);
   }
   console.log("streets-fetch.test.js ok");
-})();
+})().catch((e) => { console.error(e); process.exit(1); });

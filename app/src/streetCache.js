@@ -4,9 +4,10 @@
 (function (global) {
   const DAY_MS = 24 * 3600 * 1000;
 
-  // Own key format, not StreetIndex.tileKey: these keys are persisted and must outlive any
-  // change to the in-memory one.
-  const keyOf = (kind, t) => kind + ":" + t.x + ":" + t.y;
+  // Own key format, not StreetIndex.tileKey, so persisted keys do not follow changes to the
+  // in-memory one. The leading version is the tile grid's: bump it whenever TILE_DEG in streets.js
+  // changes, or answers fetched for the old grid are read as tiles of the new one.
+  const keyOf = (kind, t) => "2:" + kind + ":" + t.x + ":" + t.y;
   // a run tile also stands in for bike, as in StreetIndex._uncovered: the run query drops foot=no
   // ways, so the answer can miss a few bike-only ways. Only a car fetch holds motorways.
   const kindsFor = (kind) => (kind === "bike" ? ["bike", "run"] : [kind]);
@@ -14,6 +15,7 @@
   function create(opts) {
     const { store, network, now } = opts;
     const maxAgeMs = opts.maxAgeMs == null ? 90 * DAY_MS : opts.maxAgeMs;
+    let warned = false; // a full or broken store fails every write: one line says so
 
     // The stored answer for a tile: {answer, stale}, or null. A store that throws counts as
     // empty for the rest of the call, so one dead database costs one failure, not one per tile.
@@ -35,14 +37,24 @@
       return stale;
     }
 
-    async function fetchStreets(tiles, kind) {
+    // The street source contract of StreetIndex: onTile hears each tile as it arrives, cached tiles
+    // first, and each network tile is stored the moment it arrives, so a failed run keeps it. The one
+    // exception is an expired copy served after a network failure (below), which comes back in the
+    // returned Map alone. A failure rethrows the network's error as it is; ensureRects counts tiles.
+    async function fetchStreets(tiles, kind, onTile) {
       const state = { storeDown: false };
       const out = new Map();
       const missing = [];
       const expired = new Map(); // "x:y" -> an out-of-date answer, the fallback if the network is down
+      let stopped = false; // the caller's onTile threw (its stop, or a bug): no more tiles, stale ones included
+      const deliver = (t, answer) => {
+        out.set(t.x + ":" + t.y, answer);
+        if (!onTile) return;
+        try { onTile(t, answer); } catch (e) { stopped = true; throw e; }
+      };
       for (const t of tiles) {
         const hit = await lookup(t, kind, state);
-        if (hit && !hit.stale) out.set(t.x + ":" + t.y, hit.answer);
+        if (hit && !hit.stale) deliver(t, hit.answer);
         else {
           missing.push(t);
           if (hit) expired.set(t.x + ":" + t.y, hit.answer);
@@ -50,24 +62,31 @@
       }
       if (!missing.length) return out;
 
+      const puts = [];
+      const keep = (t, answer) => {
+        if (!answer || out.has(t.x + ":" + t.y)) return;
+        if (!state.storeDown) puts.push(store.put(keyOf(kind, t), { answer, fetchedAt: now() }).catch((e) => {
+          state.storeDown = true;
+          if (!warned) { warned = true; console.warn("[streets] cache write failed", e && e.name); }
+        }));
+        deliver(t, answer);
+      };
       let fresh;
-      try { fresh = await network(missing, kind); }
-      catch (e) {
-        // old streets beat none when offline, but only if they cover everything asked for
-        if (!missing.every((t) => expired.has(t.x + ":" + t.y))) throw e;
-        for (const t of missing) out.set(t.x + ":" + t.y, expired.get(t.x + ":" + t.y));
+      try {
+        fresh = await network(missing, kind, keep);
+      } catch (e) {
+        await Promise.all(puts);
+        const left = missing.filter((t) => !out.has(t.x + ":" + t.y));
+        // old streets beat none when offline, but only if they cover everything still missing
+        if (stopped || !left.every((t) => expired.has(t.x + ":" + t.y))) throw e;
+        // in the Map alone, past onTile: they cost no request, so the caller's per-tile stop (the run
+        // deadline) must not cut them off
+        for (const t of left) out.set(t.x + ":" + t.y, expired.get(t.x + ":" + t.y));
         return out;
       }
-      const fetchedAt = now();
-      await Promise.all(missing.map(async (t) => {
-        const id = t.x + ":" + t.y;
-        const answer = fresh.get(id);
-        if (!answer) return;
-        out.set(id, answer);
-        if (state.storeDown) return;
-        try { await store.put(keyOf(kind, t), { answer, fetchedAt }); }
-        catch (e) { state.storeDown = true; }
-      }));
+      // a network source may hand tiles over in its Map alone
+      for (const t of missing) keep(t, fresh && fresh.get(t.x + ":" + t.y));
+      await Promise.all(puts);
       return out;
     }
 
