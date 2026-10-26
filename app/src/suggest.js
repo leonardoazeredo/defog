@@ -264,7 +264,7 @@
     // ground stays silent
     const onProgress = ({ done, total }) => emit({ loading: true, phase: "streets", done, total });
     try { await this.streets.ensureRects(rects, kind, { onProgress }); } catch (e) {
-      console.warn("[suggest] streets unavailable", e && (e.cause ? e.cause.name : e.name), e && e.reason);
+      console.warn("[suggest] streets unavailable", e && e.reason);
       emit({ error: true, reason: "streets-fetch", download: global.StreetIndex.downloadFacts(e) });
       return false;
     }

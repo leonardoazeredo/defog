@@ -109,7 +109,7 @@ function setup(over) {
     const { route } = setup({ streets: { ensureRects: async () => { throw global.StreetIndex.downloadError(1, 2, cause); } } });
     const r = await route([pt(0, 0), pt(1000, 0)], "trekking");
     console.warn = orig;
-    assert.deepEqual(logged, [["[route] streets unavailable", "TypeError", "streets-partial"]]);
+    assert.deepEqual(logged, [["[route] streets unavailable", "streets-partial"]]);
     assert.deepEqual(r.why.download, { reason: "streets-partial", done: 1, total: 2, retryAt: undefined, cause: { reason: "offline" } });
   }
   { // no heights at all: a flat 2D line, and ascent and descent unknown rather than zero

@@ -443,12 +443,13 @@
   const elevationReady = Elevation.open();
   const elevation = { elevationAt: (points) => elevationReady.then((e) => e.elevationAt(points)) };
 
-  // What a failed local route says. too-far, streets-fetch and no-street-data are RouteLocal's (pins too
-  // far apart to download, the download failed, no planner for the mode); the rest are LocalRouter.explain's.
+  // What a failed local route says. too-far and streets-fetch are RouteLocal's (pins too far apart
+  // to download, the download failed); no-street-data is RouteLocal's when the map has no ways at all
+  // and LocalRouter.explain's when none suits the mode, so it is worded for both; the rest are explain's.
   function routeErrorHint(why) {
     const reason = why && why.reason, tail = " This is a straight line for now.";
     return reason === "streets-fetch" ? StreetMessages.describe(why.download, Date.now()) + tail
-      : reason === "no-street-data" ? "Couldn't get the street map around here." + tail
+      : reason === "no-street-data" ? "No streets this travel mode can use were found around here." + tail
       : reason === "off-network" ? `Pin ${why.point + 1} is more than ${fmtDist(0.6)} from any street this mode can use. Move it closer to a street.` + tail
       : reason === "one-way" ? "One-way streets block every way between two of the pins for this mode." + tail
       : reason === "too-far" ? "Two pins are more than " + fmtDist(30) + " apart: the street map between them is too big to download. Place pins closer together." + tail

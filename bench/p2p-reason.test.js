@@ -37,7 +37,7 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]]]
     console.warn = (...a) => logged.push(a);
     const r = await run(s, [0, 0], [1000, 0]);
     console.warn = orig;
-    assert.deepEqual(logged, [["[suggest] streets unavailable", "Error", "streets-partial"]], "the log holds the class and reason only");
+    assert.deepEqual(logged, [["[suggest] streets unavailable", "streets-partial"]], "the log holds the reason only");
     assert.equal(r.error, true);
     assert.equal(r.reason, "streets-fetch");
     assert.deepEqual(r.download, { reason: "streets-partial", done: 2, total: 5, retryAt: 12345, cause: { reason: "busy" } });

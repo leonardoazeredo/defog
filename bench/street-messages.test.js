@@ -80,6 +80,25 @@ const err = (reason, more) => Object.assign(new Error("overpass HTTP 502"), { re
   assert.equal(fetchLines.length, 2, "the suggestion card and the route hint each word streets-fetch");
   for (const l of fetchLines) assert.match(l, /StreetMessages\.describe\(/, l.trim());
   assert.ok(main.some((l) => /StreetMessages\.progress\(s\.done, s\.total\)/.test(l) && l.includes('"streets"')), "the suggestion shows the download's progress");
+  assert.ok(main.some((l) => /routeHint\.textContent = .*StreetMessages\.progress\(s\.done, s\.total\)/.test(l)), "the route hint shows it the same way");
+  // A failure's `why` (s.why, the route hint's why and the card's w) reaches the text only through
+  // the fields LocalRouter and RouteLocal set for it, never whole: a template or a + of it could
+  // carry an error's text into the page.
+  const FIELDS = /^\.(reason|point|gap)\b/;
+  for (const [i, line] of main.entries()) {
+    const at = "main.js:" + (i + 1) + ": " + line.trim();
+    for (const m of line.matchAll(/(\.)?\b(why|w)\b/g)) {
+      const rest = line.slice(m.index + m[0].length);
+      if (m[1]) { // s.why: handed to routeErrorHint or named w, nothing else
+        assert.ok(/^\)/.test(rest) && /routeErrorHint\(s\.why\)/.test(line) || /const w = s\.why \|\| \{\};/.test(line), at);
+      } else if (/^\.download\b/.test(rest)) {
+        assert.ok(line.slice(0, m.index).endsWith("StreetMessages.describe("), "the download goes to StreetMessages alone: " + at);
+      } else {
+        const declared = /function routeErrorHint\(why\)|const w = s\.why|why && why\.reason/.test(line) && !FIELDS.test(rest);
+        assert.ok(FIELDS.test(rest) || declared, "a why reaches the text whole: " + at);
+      }
+    }
+  }
 }
 { // the page loads it before the layer and main.js that call it
   const html = fs.readFileSync(path.join(__dirname, "..", "app", "index.html"), "utf8");

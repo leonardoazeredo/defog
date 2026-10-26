@@ -38,7 +38,7 @@
       }
       // log the cause's class and the reason only: the messages name the tiles that were missing
       try { await streets.ensureRects(rects, streetKind(travelMode), { onProgress }); } catch (e) {
-        console.warn("[route] streets unavailable", e && (e.cause ? e.cause.name : e.name), e && e.reason);
+        console.warn("[route] streets unavailable", e && e.reason);
         return { error: true, why: { reason: "streets-fetch", download: global.StreetIndex.downloadFacts(e) } };
       }
       const planner = plannerFor(travelMode);

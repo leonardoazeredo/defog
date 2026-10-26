@@ -88,12 +88,12 @@
     const now = Overpass._now();
     // one {why, error} per endpoint, a held one contributing its hold's: the error thrown is always
     // the one that earned the reason, never another endpoint's
-    const said = [];
+    const failures = [];
     let anyStatus = false;
     for (const key of order) {
       const url = ENDPOINTS[key];
       const s = stateOf(url);
-      if (s.until > now) { said.push({ why: s.why, error: s.error }); continue; }
+      if (s.until > now) { failures.push({ why: s.why, error: s.error }); continue; }
       const r = await attempt(url, body);
       // a body stall carries its 200, but only an answer that ended proves the endpoint alive
       if (r.status !== undefined) { anyStatus = true; if (r.kind !== "stall") s.stalls = 0; }
@@ -105,14 +105,14 @@
       else if (r.status === 429) { why = "busy"; holdMs = Math.max(MIN_BACKOFF_MS, r.retryAfter); }
       else why = BUSY_STATUS[r.status] ? "busy" : "server";
       if (holdMs) { s.until = Overpass._now() + holdMs; s.why = why; s.error = r.error; }
-      said.push({ why, error: r.error });
+      failures.push({ why, error: r.error });
     }
     // a failed fetch means offline only when nothing answered at all: a status proves the network up
-    for (const x of said) if (x.why === "offline" && anyStatus) x.why = "server";
-    if (typeof navigator !== "undefined" && navigator.onLine === false) said.push({ why: "offline", error: new Error("overpass: the browser is offline") });
-    const reason = REASONS.find((r) => said.some((x) => x.why === r)) || "server";
-    const won = said.find((x) => x.why === reason);
-    const err = (won && won.error) || new Error("overpass: no endpoint to ask");
+    for (const f of failures) if (f.why === "offline" && anyStatus) f.why = "server";
+    if (typeof navigator !== "undefined" && navigator.onLine === false) failures.push({ why: "offline", error: new Error("overpass: the browser is offline") });
+    const reason = REASONS.find((r) => failures.some((f) => f.why === r)) || "server";
+    const winner = failures.find((f) => f.why === reason);
+    const err = (winner && winner.error) || new Error("overpass: no endpoint to ask");
     err.reason = reason;
     // a held endpoint's error is thrown again by later posts, so a retry time from an earlier one must go
     const held = order.map((k) => stateOf(ENDPOINTS[k])).filter((s) => s.until > Overpass._now());

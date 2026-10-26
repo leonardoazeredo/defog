@@ -3,7 +3,7 @@
 // server remark or a tile number, which locates the area.
 (function (global) {
   const GENERIC = "Couldn't download the street map. Try again in a minute.";
-  const BLOCKED = "Try another network, or try again tomorrow";
+  const BLOCKED_ADVICE = "Try another network, or try again tomorrow";
 
   // " in about 30 s" from retryAt, or null without a retry time or a clock. Rounded up to 10 s because
   // the text is read a while after it is set and an exact count would promise too early; a wait past
@@ -28,11 +28,11 @@
   function describe(err, now) {
     const reason = err && err.reason, retryAt = err && err.retryAt;
     if (reason === "busy") return "The street servers are busy. Try again" + (wait(retryAt, now) || " in a minute") + ".";
-    if (reason === "blocked") return "The street server has blocked this network for today: it caps each network's daily use. " + BLOCKED + ".";
+    if (reason === "blocked") return "The street server has blocked this network for today: it caps each network's daily use. " + BLOCKED_ADVICE + ".";
     if (reason === "stalled") return "The street server is slow to answer. Try again" + (wait(retryAt, now) || " in a few minutes") + ".";
     if (reason === "offline") return "You're offline. This area's street map is downloaded once and kept on the phone.";
     if (reason === "streets-partial" && Number.isInteger(err.done) && Number.isInteger(err.total)) {
-      const again = err.cause && err.cause.reason === "blocked" ? BLOCKED : "Try again" + (wait(retryAt, now) || "");
+      const again = err.cause && err.cause.reason === "blocked" ? BLOCKED_ADVICE : "Try again" + (wait(retryAt, now) || "");
       return `Got ${err.done} of ${err.total} pieces of the street map before ${stopped(err.cause)}. ${again}: only the rest is downloaded.`;
     }
     return GENERIC;
