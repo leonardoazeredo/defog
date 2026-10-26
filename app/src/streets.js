@@ -38,7 +38,7 @@
   const GRID_M = 250;            // spatial bin size for radius queries
   const MAX_SEGS = 400000;       // memory guard (~40 MB worst case)
   const CORRIDOR_M = 30;         // full width Fog of World clears as you travel
-  const TILE_DEG = 0.025;        // fetch grid, ~2.8 x 1.75 km at 51°N: streets are fetched and remembered per tile
+  const TILE_DEG = 0.025;        // fetch grid, ~2.8 x 1.75 km at 51°N: streets are fetched and remembered per tile; changing it means bumping the version in streetCache.js keys
   const TILE_EPS = 1e-9;         // in tiles: keeps a bound that sits on a tile edge from reaching into the neighbouring tile
   // One Overpass request per tile keeps each query small enough to finish inside the server's
   // timeout, and lets a failed run keep the tiles that came. Batching is this one number.
@@ -62,7 +62,7 @@
     this.ways = [];              // raw {id,nodes,geometry}: shared node ids give the
                                  // route planner its graph connectivity for free
     this.segCount = 0;
-    this.version = 0;            // bumped by every fetch that was read, so graphs built from this notice list changes
+    this.version = 0;            // bumped by every tile read into the index, so graphs built from this notice list changes
     this.kx = null; this.ky = 110540; // metre frame, anchored on first fetch
   }
 
