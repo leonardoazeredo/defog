@@ -87,7 +87,8 @@
   async function tryEndpoints(body) {
     const now = Overpass._now();
     // one {why, error} per endpoint, a held one contributing its hold's: the error thrown is always
-    // the one that earned the reason, never another endpoint's, or a synthetic one (offline, no endpoint)
+    // the one that earned the reason, never another endpoint's; only the reason offline can fall back
+    // to the synthetic browser-offline error
     const failures = [];
     let anyStatus = false;
     for (const key of order) {
@@ -116,8 +117,9 @@
     err.reason = reason;
     // a held endpoint's error is thrown again by later posts, so a retry time from an earlier one must go
     const held = order.map((k) => stateOf(ENDPOINTS[k])).filter((s) => s.until > Overpass._now());
-    // a blocked person is told to try tomorrow, and the streets layer sends nothing before retryAt: so
-    // a blocked retryAt is the block's own end, even when another endpoint's hold ends sooner
+    // a 406 is this network's daily cap and BLOCKED_ADVICE tells the person to try tomorrow, so a
+    // blocked retryAt is the block's own end, even when another endpoint's hold ends sooner; the
+    // streets layer waits for it
     const until = held.filter((s) => reason !== "blocked" || s.why === "blocked").map((s) => s.until);
     if (held.length === order.length) err.retryAt = Math.min(...until);
     else delete err.retryAt;
@@ -130,7 +132,7 @@
   // endpoint is held after one; busy, 429, 502 or 504; stalled, no answer or a body that stopped;
   // offline, the browser says so, or every fetch failed and no status was seen; server, anything
   // else. `retryAt` (on the Overpass._now clock) is set only when every endpoint is on hold: the end of
-  // the first hold, before which no post goes out; when the reason is blocked, the end of the first
+  // the first hold, before which no post goes out; when the reason is blocked, the end of the earliest
   // block instead, which can come after another endpoint's hold ends: a post in between still goes out.
   function post(body) {
     const run = queue.then(() => tryEndpoints(body));

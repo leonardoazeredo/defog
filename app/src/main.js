@@ -446,8 +446,8 @@
   // What a failed local route says. too-far and streets-fetch are RouteLocal's (pins too far apart
   // to download, the download failed); no-street-data is RouteLocal's when the map has no ways at all
   // and LocalRouter.explain's when none suits the mode, so it is worded for both; internal is a bug, not
-  // the ground: route.js's when routeWaypoints throws, RouteLocal's when reading streets threw; the
-  // rest are explain's.
+  // the ground: route.js's when routeWaypoints throws or is not wired, RouteLocal's when reading streets
+  // threw; the rest are explain's.
   function routeErrorHint(why) {
     const reason = why && why.reason, tail = " This is a straight line for now.";
     return reason === "streets-fetch" ? StreetMessages.describe(why.download, Date.now()) + tail
