@@ -13,11 +13,12 @@ let stats = { hits: 0, misses: 0 };
 let lastReal = 0;
 const realFetch = global.fetch;
 
-// The page's [timeout:N] header is read as [timeout:60], the value the bench cache was recorded
-// with, so a change to it never sends the bench live; raw or URL-encoded, as
-// StreetIndex.overpassFetch builds the body.
+// StreetIndex.rectQuery's [timeout:25] is keyed as [timeout:60], the timeout its saved answers
+// are keyed on. Raw and URL-encoded bodies both match; StreetIndex.overpassFetch sends the
+// encoded one. Only 25: bench/overpass.js asks [timeout:120] and its answers keep that key. A
+// new rectQuery timeout needs the 25 here changed too, or the bench goes live.
 function keyFor(url, body) {
-  const normalised = (body || "").replace(/(\[|%5B)timeout(:|%3A)\d+(\]|%5D)/i,
+  const normalised = (body || "").replace(/(\[|%5B)timeout(:|%3A)25(\]|%5D)/i,
     (_, open, colon, close) => open + "timeout" + colon + "60" + close);
   return crypto.createHash("sha1").update(url + "\n" + normalised).digest("hex");
 }

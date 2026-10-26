@@ -219,9 +219,10 @@
   StreetIndex.tileKey = (kind, x, y) => kind + ":" + x + ":" + y;
 
   // The Overpass query for the given boxes ([{s,w,n,e}]). The bench cache is keyed on this
-  // text with only the timeout header normalised, so any other change makes every saved answer
-  // miss. [timeout:25] caps the server's run, so a query the client has given up on at 15 s
-  // (FIRST_BYTE_MS in overpass.js) still ends by 25 s.
+  // text, with its [timeout:25] read as [timeout:60] (bench/lib/fetch-cache.js), so any edit
+  // but a return to [timeout:60] makes every saved rectQuery answer miss. [timeout:25]
+  // caps the server's run, so a query the client has given up on at 15 s (FIRST_BYTE_MS in
+  // overpass.js) still ends by 25 s.
   StreetIndex.rectQuery = function (boxes, kind) {
     const bb = (r) => [r.s, r.w, r.n, r.e].map((x) => x.toFixed(4)).join(",");
     // access filter: planned and routed trips must not cross ways the person can't
