@@ -91,14 +91,16 @@ function setup(over) {
     assert.ok(!r.error);
     assert.ok(Math.abs(r.stats.km - 0.9) < 0.02, `km ${r.stats.km}`);
   }
-  { // a street source that fails is logged by class only and gives no-street-data
+  { // a street source that fails is logged by its cause's class and the reason only, and gives no-street-data
     const logged = [];
     const orig = console.warn;
     console.warn = (...a) => logged.push(a);
-    const { route } = setup({ streets: { ensureRects: async () => { throw new Error("no answer for tile 273:1020"); } } });
-    await route([pt(0, 0), pt(1000, 0)], "trekking");
+    const cause = Object.assign(new TypeError("no answer for tile 273:1020"), { reason: "offline" });
+    const { route } = setup({ streets: { ensureRects: async () => { throw global.StreetIndex.downloadError(1, 2, cause); } } });
+    const r = await route([pt(0, 0), pt(1000, 0)], "trekking");
     console.warn = orig;
-    assert.deepEqual(logged, [["[route] streets unavailable", "Error"]]);
+    assert.deepEqual(logged, [["[route] streets unavailable", "TypeError", "streets-partial"]]);
+    assert.equal(r.why.reason, "no-street-data");
   }
   { // no heights at all: a flat 2D line, and ascent and descent unknown rather than zero
     const { route } = setup({ elevation: { elevationAt: async (pts) => pts.map(() => null) } });

@@ -15,6 +15,7 @@
   function create(opts) {
     const { store, network, now } = opts;
     const maxAgeMs = opts.maxAgeMs == null ? 90 * DAY_MS : opts.maxAgeMs;
+    let warned = false; // a full or broken store fails every write: one line says so
 
     // The stored answer for a tile: {answer, stale}, or null. A store that throws counts as
     // empty for the rest of the call, so one dead database costs one failure, not one per tile.
@@ -45,9 +46,11 @@
       const out = new Map();
       const missing = [];
       const expired = new Map(); // "x:y" -> an out-of-date answer, the fallback if the network is down
+      let stopped = false; // the caller's onTile threw (its stop, or a bug): no more tiles, stale ones included
       const deliver = (t, answer) => {
         out.set(t.x + ":" + t.y, answer);
-        if (onTile) onTile(t, answer);
+        if (!onTile) return;
+        try { onTile(t, answer); } catch (e) { stopped = true; throw e; }
       };
       for (const t of tiles) {
         const hit = await lookup(t, kind, state);
@@ -62,15 +65,15 @@
       const puts = [];
       const keep = (t, answer) => {
         if (!answer || out.has(t.x + ":" + t.y)) return;
-        if (!state.storeDown) puts.push(store.put(keyOf(kind, t), { answer, fetchedAt: now() }).catch(() => { state.storeDown = true; }));
+        if (!state.storeDown) puts.push(store.put(keyOf(kind, t), { answer, fetchedAt: now() }).catch((e) => {
+          state.storeDown = true;
+          if (!warned) { warned = true; console.warn("[streets] cache write failed", e && e.name); }
+        }));
         deliver(t, answer);
       };
-      let stopped = false; // the caller's onTile threw: it wants no more tiles, stale ones included
       let fresh;
       try {
-        fresh = await network(missing, kind, (t, answer) => {
-          try { keep(t, answer); } catch (e) { stopped = true; throw e; }
-        });
+        fresh = await network(missing, kind, keep);
       } catch (e) {
         await Promise.all(puts);
         const left = missing.filter((t) => !out.has(t.x + ":" + t.y));

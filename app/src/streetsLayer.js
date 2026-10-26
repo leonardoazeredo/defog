@@ -180,7 +180,7 @@
       return;
     }
     if (this._busy) { this._dirty = true; return; }
-    if (Date.now() < this._retryAt) return; // a download just failed; retry on a later move
+    if (this._now() < this._retryAt) return; // a download just failed; retry on a later move
     this._busy = true;
     try {
       if (this.streets.needsFetch(tiles, "run")) this._say("Reading the street map…");
@@ -191,13 +191,13 @@
           err = e;
           // every endpoint is blocked until retryAt and nothing is sent before then: no quiet retry
           if (e && e.retryAt) break;
-          if (attempt === 0) await new Promise((r) => setTimeout(r, SECOND_TRY_MS));
+          if (attempt === 0) await this._sleep(SECOND_TRY_MS);
         }
         if (!this.enabled) return;
       }
       if (!this.enabled) return;
       if (!ok) {
-        this._retryAt = Math.max(Date.now() + RETRY_MS, (err && err.retryAt) || 0);
+        this._retryAt = Math.max(this._now() + RETRY_MS, (err && err.retryAt) || 0);
         this._say("Couldn't load the street map. Move the map to try again in a moment.");
         return;
       }
@@ -210,6 +210,10 @@
       if (this._dirty) { this._dirty = false; this._update(); }
     }
   };
+
+  // The clock and the wait between tries, replaced by fakes in the tests.
+  StreetsInFogLayer.prototype._now = () => Date.now();
+  StreetsInFogLayer.prototype._sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // Judge the ways fetched since last time, in short time slices. Yields through a
   // message channel rather than a timer or animation frame: those are throttled

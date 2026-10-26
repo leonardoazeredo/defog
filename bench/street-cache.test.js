@@ -112,7 +112,6 @@ const T = (x, y) => ({ x, y });
     await assert.rejects(() => c.fetchStreets([T(1, 1), T(9, 9)], "run"), /offline/);
   }
   { // end to end with StreetIndex: a second index over the same store never touches the network
-    const { StreetIndex } = global;
     const { network, calls } = fakeNetwork();
     const store = TileStore.memory({ maxEntries: 10 });
     const rect = [{ s: 51, w: 13.7, n: 51.01, e: 13.71 }];
@@ -140,7 +139,6 @@ const T = (x, y) => ({ x, y });
     assert.deepEqual(await store.keys(), ["2:run:1:1"]);
   }
   { // the cache is installed on an index that already exists, as main.js does once the store opens
-    const { StreetIndex } = global;
     const { network, calls } = fakeNetwork();
     const store = TileStore.memory({ maxEntries: 10 });
     const warm = StreetCache.create({ store, network, now: () => 0 });
@@ -222,6 +220,31 @@ const T = (x, y) => ({ x, y });
       .fetchStreets([T(1, 1), T(2, 1)], "run", () => { throw stop; }).then(() => null, (e) => e);
     assert.equal(err, stop, "the stop is the rejection");
     assert.equal(base.calls[1].tiles.length, 2);
+  }
+  { // a bug in the caller's onTile comes back as itself, with no expired copies in its place
+    let t = 0;
+    const base = fakeNetwork();
+    const store = TileStore.memory({ maxEntries: 10 });
+    await StreetCache.create({ store, network: base.network, now: () => t }).fetchStreets([T(1, 1), T(2, 1)], "run");
+    t = 200 * DAY;
+    const bug = new TypeError("bug");
+    const err = await StreetCache.create({ store, network: base.network, now: () => t, maxAgeMs: 90 * DAY })
+      .fetchStreets([T(1, 1), T(2, 1)], "run", () => { throw bug; }).then(() => null, (e) => e);
+    assert.equal(err, bug);
+  }
+  { // a failed store write is logged once per cache, by the error's name alone
+    const { network } = fakeNetwork();
+    const store = TileStore.memory({ maxEntries: 10 });
+    store.put = async () => { throw new DOMException("quota", "QuotaExceededError"); };
+    const warned = [];
+    const warn = console.warn;
+    console.warn = (...a) => warned.push(a);
+    try {
+      const c = StreetCache.create({ store, network, now: () => 0 });
+      await c.fetchStreets([T(1, 1)], "run");
+      await c.fetchStreets([T(2, 1)], "run");
+    } finally { console.warn = warn; }
+    assert.deepEqual(warned, [["[streets] cache write failed", "QuotaExceededError"]]);
   }
   { // the run deadline passes while the request fails and every tile has an expired copy: the run still
     // gets every tile, since expired copies cost no request

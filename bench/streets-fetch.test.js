@@ -239,6 +239,22 @@ function slowSource(clock, stepMs) {
     assert.equal(asked.length, 2, "one request, tried on both endpoints");
     assert.deepEqual([err.done, err.total, err.reason, err.cause.reason], [0, 2, "busy", "busy"]);
   }
+  { // a throw from onTile that is not the caller's stop (a bug) comes out of the default source unchanged
+    global.Overpass._reset();
+    tileServer();
+    const bug = new TypeError("bug");
+    const err = await StreetIndex.overpassFetch([{ x: 548, y: 2040 }, { x: 549, y: 2040 }], "run", () => { throw bug; }).then(() => null, (e) => e);
+    assert.equal(err, bug);
+  }
+  { // a bug thrown while reading a tile comes out of ensureRects as itself, not as a download error
+    global.Overpass._reset();
+    tileServer();
+    const s = new StreetIndex({ newFrac: () => 1 });
+    s._read = () => { throw new TypeError("bug"); };
+    const err = await s.ensureRects(rect, "run").then(() => null, (e) => e);
+    assert.ok(err instanceof TypeError);
+    assert.equal(err.total, undefined);
+  }
   { // the cause's retryAt is copied onto the error, and its reason when no tile arrived
     const cause = Object.assign(new Error("overpass HTTP 429"), { reason: "busy", retryAt: 12345 });
     const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async () => { throw cause; } });
@@ -252,7 +268,7 @@ function slowSource(clock, stepMs) {
     const progress = [];
     const r = [{ s: 51.0, w: 13.7, n: 51.025, e: 13.825 }]; // five tiles in a row
     const err = await s.ensureRects(r, "run", { onProgress: (p) => progress.push(p) }).then(() => null, (e) => e);
-    assert.equal(src.asked.length, 3, "75 s pass with the third tile: no fourth request");
+    assert.equal(src.asked.length, 3, "past 75 s at the third tile (90 s): no fourth request");
     assert.deepEqual([err.done, err.total, err.reason, err.cause.reason], [3, 5, "streets-partial", "stalled"]);
     assert.deepEqual(progress, [0, 1, 2, 3].map((done) => ({ done, total: 5 })));
     const t = new StreetIndex({ newFrac: () => 1, fetchStreets: slowSource(clock, 30000).fetchStreets, now: () => clock.t });

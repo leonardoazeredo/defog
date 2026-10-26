@@ -35,9 +35,9 @@
         if (legM(points[i - 1], points[i]) > MAX_LEG_M) return TOO_FAR;
         rects.push(legRect(points[i - 1], points[i]));
       }
-      // log the class only: the message of a street source error names the tiles it lacked
+      // log the cause's class and the reason only: the messages name the tiles that were missing
       try { await streets.ensureRects(rects, streetKind(travelMode)); } catch (e) {
-        console.warn("[route] streets unavailable", e && e.name);
+        console.warn("[route] streets unavailable", e && (e.cause ? e.cause.name : e.name), e && e.reason);
         return NO_STREETS;
       }
       const planner = plannerFor(travelMode);

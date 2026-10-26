@@ -41,13 +41,15 @@
   const TILE_DEG = 0.025;        // fetch grid, ~2.8 x 1.75 km at 51°N: streets are fetched and remembered per tile; changing it means bumping the version in streetCache.js keys
   const TILE_EPS = 1e-9;         // in tiles: keeps a bound that sits on a tile edge from reaching into the neighbouring tile
   // One Overpass request per tile keeps each query small enough to finish inside the server's
-  // timeout, and lets a failed run keep the tiles that came. Batching is this one number.
+  // timeout, and lets a failed run keep the tiles that came. Raise it to batch tiles into one query;
+  // the answer is still split per tile.
   const TILES_PER_REQUEST = 1;
   const RUN_DEADLINE_MS = 75000; // a run asks no further tile past this, so a slow server ends it with its progress
 
   function StreetIndex(opts) {
     this.newFrac = opts.newFrac; // (lon,lat) -> 0..1 share of the corridor stamp still fogged
-    // the street source: (tiles, kind, onTile) -> Map "x:y" -> answer, calling onTile(tile, answer) as each arrives
+    // the street source: (tiles, kind, onTile) -> Map "x:y" -> answer, calling onTile(tile, answer) as each
+    // arrives (a source may return some tiles in the Map alone)
     this.fetchStreets = opts.fetchStreets || StreetIndex.overpassFetch;
     this.now = opts.now || Date.now; // the clock the run deadline is measured on
     this.segs = new Map();       // "gx,gy" -> [{x,y,lon,lat,lenM,frac}]
@@ -154,10 +156,12 @@
   // Fetch streets for the tiles under the given rects (skipping ones already covered), in one
   // call to the street source, nearest the centre of the rects first. kind: "run" | "bike" |
   // "car". Each tile is read into the index as it arrives, so a failed run keeps what came and
-  // the next run asks only for the rest. opts.onProgress({done, total}) hears every tile;
-  // opts.deadlineMs (default RUN_DEADLINE_MS) stops the run before its next tile once passed.
-  // Rejects, with StreetIndex.downloadError, whenever a tile is missing: suggestions end in
-  // their error state rather than plan on part of the area.
+  // the next run asks only for the rest. opts.onProgress({done, total}) hears the start (done 0)
+  // and every tile; opts.deadlineMs (default RUN_DEADLINE_MS) stops the run before its next tile
+  // once passed. Rejects, with StreetIndex.downloadError, whenever a tile is missing: suggestions
+  // end in their error state rather than plan on part of the area. A bug thrown while reading a
+  // tile rejects as itself, not wrapped in a download error, so callers see its real class and
+  // message rather than a "streets-partial" shortfall.
   StreetIndex.prototype.ensureRects = async function (rects, kind, opts) {
     opts = opts || {};
     const todo = this._uncovered(rects, kind);
@@ -177,14 +181,15 @@
       progress();
     };
     progress();
-    let answers;
+    let answers, broke = null;
     try {
       answers = await this.fetchStreets(todo, kind, (t, answer) => {
-        take(t, answer);
+        try { take(t, answer); } catch (e) { broke = e; throw e; }
         if (read.size < todo.length && this.now() - started >= deadlineMs)
           throw Object.assign(new Error("streets: run deadline passed"), { reason: "stalled" });
       });
     } catch (e) {
+      if (broke) throw broke;
       throw StreetIndex.downloadError(read.size, todo.length, e);
     }
     // a source may hand tiles over in its Map alone
@@ -285,22 +290,22 @@
   };
 
   // The default street source: one Overpass request per TILES_PER_REQUEST tiles, in the order given,
-  // each tile handed to onTile once its whole answer is in. Stops at the first failed request.
+  // each tile handed to onTile once its whole answer is in. Stops at the first failed request. A
+  // throw from onTile (the caller's stop, or a bug) passes through unchanged: it is not a download
+  // failure.
   StreetIndex.overpassFetch = async function (tiles, kind, onTile) {
     const out = new Map();
-    try {
-      for (let i = 0; i < tiles.length; i += TILES_PER_REQUEST) {
-        const batch = tiles.slice(i, i + TILES_PER_REQUEST);
-        const q = StreetIndex.rectQuery(batch.map(StreetIndex.tileBounds), kind);
-        const answers = StreetIndex.splitAnswer(await global.Overpass.post("data=" + encodeURIComponent(q)), batch);
-        for (const t of batch) {
-          const answer = answers.get(t.x + ":" + t.y);
-          out.set(t.x + ":" + t.y, answer);
-          if (onTile) onTile(t, answer);
-        }
+    for (let i = 0; i < tiles.length; i += TILES_PER_REQUEST) {
+      const batch = tiles.slice(i, i + TILES_PER_REQUEST);
+      const q = StreetIndex.rectQuery(batch.map(StreetIndex.tileBounds), kind);
+      let answers;
+      try { answers = StreetIndex.splitAnswer(await global.Overpass.post("data=" + encodeURIComponent(q)), batch); }
+      catch (e) { throw StreetIndex.downloadError(out.size, tiles.length, e); }
+      for (const t of batch) {
+        const answer = answers.get(t.x + ":" + t.y);
+        out.set(t.x + ":" + t.y, answer);
+        if (onTile) onTile(t, answer);
       }
-    } catch (e) {
-      throw StreetIndex.downloadError(out.size, tiles.length, e);
     }
     return out;
   };
@@ -325,7 +330,7 @@
     const w = Math.min(...rects.map((r) => r.w)), e = Math.max(...rects.map((r) => r.e));
     const lat = (s + n) / 2, lng = (w + e) / 2, kx = Math.cos(lat * Math.PI / 180);
     const d = (t) => Math.hypot(((t.x + 0.5) * TILE_DEG - lng) * kx, (t.y + 0.5) * TILE_DEG - lat);
-    return tiles.sort((a, b) => d(a) - d(b));
+    tiles.sort((a, b) => d(a) - d(b));
   };
 
   // Reads an Overpass answer to a rectQuery and hands each requested tile its share.
