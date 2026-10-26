@@ -190,7 +190,7 @@
         try { await this.streets.ensureRects(tiles, "run", { onProgress }); ok = true; }
         catch (e) {
           err = e;
-          // every endpoint is blocked until retryAt and nothing is sent before then: no quiet retry
+          // every endpoint is on hold, so a quiet retry would only be turned away: wait for retryAt
           if (e && e.retryAt) break;
           if (attempt === 0) await this._sleep(SECOND_TRY_MS);
         }

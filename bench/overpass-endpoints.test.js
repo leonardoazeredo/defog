@@ -362,7 +362,10 @@ process.on("exit", (code) => {
     const e = await rejection(Overpass.post("data=x"));
     assert.deepEqual(calls, []);
     assert.equal(e.reason, "blocked");
-    assert.equal(e.retryAt, start + 30_000, "coffee is asked again after its 30 s");
+    assert.equal(e.retryAt, start + 3_600_000, "blocked: the retry time is the block's hour, not coffee's 30 s");
+    calls = []; t = start + 30_001;
+    await Overpass.post("data=x");
+    assert.deepEqual(calls, [C], "coffee itself is still asked again after its 30 s");
   }
   { // a 406 on main, then coffee silent: blocked wins, and the error is main's 406, not coffee's silence
     reset();
@@ -393,7 +396,7 @@ process.on("exit", (code) => {
     assert.deepEqual(calls, [C], "main is not asked again");
     assert.equal(e.reason, "blocked");
     assert.equal(e.message, "overpass HTTP 406");
-    assert.equal(typeof e.retryAt, "number");
+    assert.equal(e.retryAt, start + 3_600_000, "the block's hour, not coffee's fresh 30 s");
     calls = [];
     const streets = new StreetIndex({ newFrac: () => 1 });
     const d = await played(streets.ensureRects([{ s: 51, w: 13.7, n: 51.01, e: 13.71 }], "run").then(() => assert.fail("expected a rejection"), (x) => x));

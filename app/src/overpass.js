@@ -115,8 +115,11 @@
     const err = (won && won.error) || new Error("overpass: no endpoint to ask");
     err.reason = reason;
     // a held endpoint's error is thrown again by later posts, so a retry time from an earlier one must go
-    const later = order.map((k) => stateOf(ENDPOINTS[k]).until).filter((at) => at > Overpass._now());
-    if (later.length === order.length) err.retryAt = Math.min(...later);
+    const held = order.map((k) => stateOf(ENDPOINTS[k])).filter((s) => s.until > Overpass._now());
+    // a block is the day's share used up: the other endpoint's 30 s would only invite a retry that is
+    // turned away again, so the blocked endpoint's own hold is the retry time
+    const until = held.filter((s) => reason !== "blocked" || s.why === "blocked").map((s) => s.until);
+    if (held.length === order.length) err.retryAt = Math.min(...until);
     else delete err.retryAt;
     throw err;
   }
@@ -126,8 +129,8 @@
   // first reason in this list wins, most actionable first. The reasons: blocked, a 406 was seen or an
   // endpoint is held after one; busy, 429, 502 or 504; stalled, no answer or a body that stopped;
   // offline, the browser says so, or every fetch failed and no status was seen; server, anything
-  // else. `retryAt` (on the Overpass._now clock) is set only when every endpoint is on hold, and
-  // nothing is sent before it.
+  // else. `retryAt` (on the Overpass._now clock) is set only when every endpoint is on hold: the end of
+  // the first hold, before which nothing is sent, or of the first block when the reason is blocked.
   function post(body) {
     const run = queue.then(() => tryEndpoints(body));
     queue = run.catch(() => {});

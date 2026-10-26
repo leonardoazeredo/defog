@@ -443,8 +443,8 @@
   const elevationReady = Elevation.open();
   const elevation = { elevationAt: (points) => elevationReady.then((e) => e.elevationAt(points)) };
 
-  // What a failed local route says. streets-fetch and no-street-data are RouteLocal's (the street
-  // download failed, or no planner for the mode); the rest are LocalRouter.explain's.
+  // What a failed local route says. too-far, streets-fetch and no-street-data are RouteLocal's (pins too
+  // far apart to download, the download failed, no planner for the mode); the rest are LocalRouter.explain's.
   function routeErrorHint(why) {
     const reason = why && why.reason, tail = " This is a straight line for now.";
     return reason === "streets-fetch" ? StreetMessages.describe(why.download, Date.now()) + tail
