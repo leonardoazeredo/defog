@@ -13,8 +13,13 @@ let stats = { hits: 0, misses: 0 };
 let lastReal = 0;
 const realFetch = global.fetch;
 
+// The page's [timeout:N] header is read as [timeout:60], the value the bench cache was recorded
+// with, so a change to it never sends the bench live; raw or URL-encoded, as
+// StreetIndex.overpassFetch builds the body.
 function keyFor(url, body) {
-  return crypto.createHash("sha1").update(url + "\n" + (body || "")).digest("hex");
+  const normalised = (body || "").replace(/(\[|%5B)timeout(:|%3A)\d+(\]|%5D)/i,
+    (_, open, colon, close) => open + "timeout" + colon + "60" + close);
+  return crypto.createHash("sha1").update(url + "\n" + normalised).digest("hex");
 }
 
 async function cachedFetch(url, opts) {
@@ -42,4 +47,4 @@ function install() { global.fetch = cachedFetch; }
 function counters() { return stats; }
 function resetCounters() { stats = { hits: 0, misses: 0 }; }
 
-module.exports = { install, cachedFetch, counters, resetCounters };
+module.exports = { install, cachedFetch, counters, resetCounters, keyFor };

@@ -231,14 +231,19 @@
     setBasemap(e.target.value);
     syncControls(); applyLayers();
   });
-  function setOverpassOrder(first) {
-    if (first !== "main") first = "coffee";
-    Overpass.setOrder(first === "main" ? ["main", "coffee"] : ["coffee", "main"]);
+  // Only an explicit choice is stored: a value written on load would pin today's default for
+  // everyone and hide a later change to it. A stale f2m_overpass value would pin the order the same
+  // way, and backups carry every f2m_ key, so it is dropped.
+  const ORDER_KEY = "f2m_overpassOrder";
+  localStorage.removeItem("f2m_overpass");
+  function setOverpassOrder(first, chosen) {
+    if (first !== "coffee") first = "main";
+    Overpass.setOrder(first === "coffee" ? ["coffee", "main"] : ["main", "coffee"]);
     $("overpass").value = first;
-    localStorage.setItem("f2m_overpass", first);
+    if (chosen) localStorage.setItem(ORDER_KEY, first);
   }
-  setOverpassOrder(localStorage.getItem("f2m_overpass"));
-  $("overpass").addEventListener("change", (e) => setOverpassOrder(e.target.value));
+  setOverpassOrder(localStorage.getItem(ORDER_KEY));
+  $("overpass").addEventListener("change", (e) => setOverpassOrder(e.target.value, true));
 
   // ---- data loading -----------------------------------------------------------
   const loadStatus = $("loadStatus");

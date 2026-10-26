@@ -43,11 +43,15 @@ suggestions** are routed entirely on your device and send nothing but the boundi
 **street map around your pins** (a kilometre beyond them; a hand-drawn route also asks for its
 heights, see **Route elevation** below), and the
 **Streets in fog** look fetches the street map of the **area on screen**, both from a public
-Overpass API server (OpenStreetMap): [private.coffee](https://overpass.private.coffee/) first
-(its terms and privacy policy are on that page), then the main instance
-[overpass-api.de](https://overpass-api.de) if it fails; the order is a setting. They only see
-bounding boxes, the same class of information the basemap tile servers already get, and
-the streets are compared against your fog entirely on your device; and **"Maps ↗"** opens
+Overpass API server (OpenStreetMap): the main instance [overpass-api.de](https://overpass-api.de)
+first, then [private.coffee](https://overpass.private.coffee/) (its terms and privacy policy are on
+that page) if the main one fails, has not started answering within 15 seconds or has not finished
+within 30 seconds; the order is a setting. As the main instance's usage policy asks, the phone
+app's web view identifies the app to the server by its User-Agent and Referer. That server also
+caps each app's and each network address's daily use, and answers 406 once the share is used up:
+the app then leaves that server alone for an hour, longer if the server says so. They only see
+bounding boxes, the same class of information the basemap tile servers already get, and the
+streets are compared against your fog entirely on your device; and **"Maps ↗"** opens
 your waypoints in Google Maps. The street map it fetches is kept as a street cache in your
 browser's storage (IndexedDB, as plain data, never uploaded and left out of backups) and fetched again
 after 90 days (an older copy is used only while there is no connection), so planning in an area you
