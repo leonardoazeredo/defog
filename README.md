@@ -46,8 +46,8 @@ heights, see **Route elevation** below), and the
 Overpass API server (OpenStreetMap): the main instance [overpass-api.de](https://overpass-api.de)
 first, then [private.coffee](https://overpass.private.coffee/) (its terms and privacy policy are on
 that page) if the main one fails, has not started answering within 15 seconds or has not finished
-within 30 seconds; the order is a setting. The street map is asked for in pieces of about 2 by 3 km,
-one request each, nearest first, and each piece is kept as it arrives. As the main instance's usage policy asks, the phone
+within 30 seconds; the order is a setting. The street map comes in pieces of about 2 by 3 km, one
+request each, nearest first, each kept on arrival. As the main instance's usage policy asks, the phone
 app's web view identifies the app to the server by its User-Agent and Referer. That server also
 caps each app's and each network address's daily use, and answers 406 once the share is used up:
 the app then leaves that server alone for an hour, longer if the server says so. They only see

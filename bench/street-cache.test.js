@@ -3,7 +3,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 require("./lib/load.js");
-const { TileStore, StreetCache } = global;
+const { TileStore, StreetCache, StreetIndex } = global;
 
 const DAY = 24 * 3600 * 1000;
 const answerFor = (t, kind) => ({ ways: [{ id: t.x * 1000 + t.y, nodes: [1, 2], geometry: [{ lat: 1, lon: 1 }, { lat: 2, lon: 2 }] }], groups: { tag: kind } });
@@ -162,7 +162,7 @@ const T = (x, y) => ({ x, y });
     assert.deepEqual((await store.get("2:run:1:1")).answer, answerFor(T(1, 1), "run"));
     assert.deepEqual((await store.get("2:run:2:1")).answer, answerFor(T(2, 1), "run"));
   }
-  { // tiles that arrived before the network failed are stored and handed on; the error counts them
+  { // tiles that arrived before the network failed are stored and handed on; the error is the network's own, counted by ensureRects
     const base = fakeNetwork();
     const network = async (tiles, kind, onTile) => {
       await base.network(tiles.slice(0, 1), kind, onTile);
@@ -175,7 +175,7 @@ const T = (x, y) => ({ x, y });
       .fetchStreets([T(0, 0), T(1, 1), T(2, 1)], "run", (t) => seen.push(t.x + ":" + t.y)).then(() => null, (e) => e);
     assert.deepEqual(seen, ["0:0", "1:1"], "the cached tile, then the one that arrived");
     assert.deepEqual((await store.keys()).sort(), ["2:run:0:0", "2:run:1:1"]);
-    assert.deepEqual([err.done, err.total, err.reason, err.cause.reason], [2, 3, "streets-partial", "busy"]);
+    assert.deepEqual([err.message, err.reason], ["overpass HTTP 502", "busy"]);
   }
   { // an unversioned key is never read, so no answer is served for a tile of another grid
     const { network, calls } = fakeNetwork();
@@ -195,7 +195,8 @@ const T = (x, y) => ({ x, y });
     assert.deepEqual(seen, [["2:1", 2001], ["1:1", 1001], ["3:1", 3001]]);
     assert.deepEqual([...got.keys()].sort(), ["1:1", "2:1", "3:1"]);
   }
-  { // offline after some tiles arrived: the rest serve from expired copies when every one of them has one
+  { // offline after some tiles arrived: the rest serve from expired copies when every one of them has one,
+    // in the returned Map only, so a caller's stop on each tile (the run deadline) cannot cut them off
     let t = 0;
     const base = fakeNetwork();
     const store = TileStore.memory({ maxEntries: 10 });
@@ -206,7 +207,7 @@ const T = (x, y) => ({ x, y });
     const seen = [];
     const got = await StreetCache.create({ store, network, now: () => t, maxAgeMs: 90 * DAY })
       .fetchStreets([T(1, 1), T(2, 1)], "run", (tile) => seen.push(tile.x + ":" + tile.y));
-    assert.deepEqual(seen, ["1:1", "2:1"]);
+    assert.deepEqual(seen, ["1:1"]);
     assert.deepEqual([...got.keys()].sort(), ["1:1", "2:1"]);
     assert.equal((await store.get("2:run:2:1")).fetchedAt, 0, "the expired copy is served, not restamped");
   }
@@ -219,9 +220,26 @@ const T = (x, y) => ({ x, y });
     const stop = Object.assign(new Error("deadline"), { reason: "stalled" });
     const err = await StreetCache.create({ store, network: base.network, now: () => t, maxAgeMs: 90 * DAY })
       .fetchStreets([T(1, 1), T(2, 1)], "run", () => { throw stop; }).then(() => null, (e) => e);
-    assert.ok(err, "the stop is a rejection");
-    assert.equal(err.cause, stop);
+    assert.equal(err, stop, "the stop is the rejection");
     assert.equal(base.calls[1].tiles.length, 2);
+  }
+  { // the run deadline passes while the request fails and every tile has an expired copy: the run still
+    // gets every tile, since expired copies cost no request
+    let t = 0;
+    const clock = { t: 0 };
+    const rect = { s: 51.0, w: 13.7, n: 51.025, e: 13.775 };
+    const tiles = StreetIndex.tilesCovering(rect);
+    assert.equal(tiles.length, 3);
+    const store = TileStore.memory({ maxEntries: 10 });
+    for (const tile of tiles) await store.put("2:run:" + tile.x + ":" + tile.y, { answer: answerFor(tile, "run"), fetchedAt: 0 });
+    t = 200 * DAY;
+    const network = async () => { clock.t += 80000; throw Object.assign(new Error("overpass: no answer"), { reason: "stalled" }); };
+    const c = StreetCache.create({ store, network, now: () => t, maxAgeMs: 90 * DAY });
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: c.fetchStreets, now: () => clock.t });
+    const progress = [];
+    await s.ensureRects([rect], "run", { onProgress: (p) => progress.push(p.done) });
+    assert.equal(s.tiles.size, 3);
+    assert.deepEqual(progress, [0, 1, 2, 3]);
   }
   console.log("street-cache.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -36,8 +36,10 @@
       return stale;
     }
 
-    // The street source contract of StreetIndex: onTile hears each tile as it is known, cached
-    // tiles first, and each network tile is stored the moment it arrives, so a failed run keeps it.
+    // The street source contract of StreetIndex: onTile hears each tile as it arrives, cached tiles
+    // first, and each network tile is stored the moment it arrives, so a failed run keeps it. The one
+    // exception is an expired copy served after a network failure (below), which comes back in the
+    // returned Map alone. A failure rethrows the network's error as it is; ensureRects counts tiles.
     async function fetchStreets(tiles, kind, onTile) {
       const state = { storeDown: false };
       const out = new Map();
@@ -73,8 +75,10 @@
         await Promise.all(puts);
         const left = missing.filter((t) => !out.has(t.x + ":" + t.y));
         // old streets beat none when offline, but only if they cover everything still missing
-        if (stopped || !left.every((t) => expired.has(t.x + ":" + t.y))) throw global.StreetIndex.downloadError(out.size, tiles.length, e);
-        for (const t of left) deliver(t, expired.get(t.x + ":" + t.y));
+        if (stopped || !left.every((t) => expired.has(t.x + ":" + t.y))) throw e;
+        // in the Map alone, past onTile: they cost no request, so the caller's per-tile stop (the run
+        // deadline) must not cut them off
+        for (const t of left) out.set(t.x + ":" + t.y, expired.get(t.x + ":" + t.y));
         return out;
       }
       // a network source may hand tiles over in its Map alone
