@@ -142,5 +142,21 @@ function tool(routeWaypoints, profile) {
     t.setProfile("hiking-mountain");
     assert.match(t.googleMapsUrl(), /travelmode=walking/);
   }
+  { // the street download's progress reaches the loading state; a superseded request's progress does not
+    const first = deferred(), progress = [];
+    const { t, emitted } = tool(async (pts, mode, onProgress) => { progress.push(onProgress); await first.promise; return { coords: line, stats }; });
+    t.add(A); t.add(B);
+    await tick();
+    progress[0]({ done: 1, total: 3 });
+    assert.deepEqual(emitted[emitted.length - 1], { points: 2, loading: true, done: 1, total: 3 });
+    t.add(C);
+    await tick();
+    const before = emitted.length;
+    progress[0]({ done: 2, total: 3 });
+    assert.equal(emitted.length, before, "the old request's progress is dropped");
+    progress[1]({ done: 0, total: 2 });
+    assert.deepEqual(emitted[emitted.length - 1], { points: 3, loading: true, done: 0, total: 2 });
+    first.resolve();
+  }
   console.log("route-local.test.js ok");
 })();

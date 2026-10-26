@@ -118,11 +118,6 @@
     for (const t of tiles) this.tiles.add(StreetIndex.tileKey(kind, t.x, t.y));
   };
 
-  // Would ensureRects actually hit the network for these, or is it
-  // all already cached from an earlier run? Lets callers show the "reading the
-  // street map" note only when there's a real fetch, not on every rerun.
-  StreetIndex.prototype.needsFetch = function (rects, kind) { return this._uncovered(rects, kind).length > 0; };
-
   // Which way a routing profile may travel each way: 1 along its node order only, -1
   // against it, 0 both. One-ways bind the profiles on wheels, not walking or the
   // straight line; bikes are exempt where a contraflow lane is tagged.
@@ -160,8 +155,8 @@
   // and every tile; opts.deadlineMs (default RUN_DEADLINE_MS) stops the run before its next tile
   // once passed. Rejects, with StreetIndex.downloadError, whenever a tile is missing: suggestions
   // end in their error state rather than plan on part of the area. A bug thrown while reading a
-  // tile rejects as itself, not wrapped in a download error, so callers see its real class and
-  // message rather than a "streets-partial" shortfall.
+  // tile rejects as itself, not wrapped in a download error, so callers tell a bug from a
+  // "streets-partial" shortfall (StreetIndex.isDownloadError).
   StreetIndex.prototype.ensureRects = async function (rects, kind, opts) {
     opts = opts || {};
     const todo = this._uncovered(rects, kind);
@@ -195,7 +190,8 @@
     // a source may hand tiles over in its Map alone
     for (const t of todo) take(t, answers && answers.get(t.x + ":" + t.y));
     const lost = todo.find((t) => !read.has(t.x + ":" + t.y));
-    if (lost) throw StreetIndex.downloadError(read.size, todo.length, new Error(`street source: no answer for tile ${lost.x}:${lost.y} (${kind})`));
+    // the source answered but left a tile out: a server's fault, not the network's, worded generically
+    if (lost) throw StreetIndex.downloadError(read.size, todo.length, Object.assign(new Error(`street source: no answer for tile ${lost.x}:${lost.y} (${kind})`), { reason: "server" }));
   };
 
   // One tile's answer into the index; the version bump tells graphs built before it to rebuild.
@@ -323,6 +319,21 @@
     return err;
   };
 
+  // Whether a street download fell short (a downloadError), rather than a bug ensureRects rethrows
+  // as itself while reading a tile: only the first is worded as a download failure.
+  StreetIndex.isDownloadError = function (e) {
+    return !!e && typeof e.total === "number" && typeof e.done === "number";
+  };
+
+  // What a caller may pass on from a failed download, for StreetMessages to word: the reasons, counts and
+  // retry time, never the message, which can hold a server remark or a tile number.
+  StreetIndex.downloadFacts = function (e) {
+    return {
+      reason: e && e.reason, done: e && e.done, total: e && e.total, retryAt: e && e.retryAt,
+      cause: e && e.cause ? { reason: e.cause.reason } : undefined,
+    };
+  };
+
   // Sorts tiles in place by distance from the centre of the rects' bounding box, longitude scaled to
   // ground distance at that latitude; equal distances keep their order.
   StreetIndex.nearestFirst = function (tiles, rects) {
@@ -336,7 +347,7 @@
   // Reads an Overpass answer to a rectQuery and hands each requested tile its share.
   StreetIndex.splitAnswer = function (gj, tiles) {
     // a timeout or out-of-memory still answers 200, with whatever it had by then
-    if (gj.remark) throw new Error("overpass: " + gj.remark);
+    if (gj.remark) throw Object.assign(new Error("overpass: " + gj.remark), { reason: "server" });
     const ways = [], groups = {};
     for (const name of GROUP_ORDER) groups[name] = [];
     let group = -1; // -1 = the geometry, then one list (see GROUP_ORDER) per count marker

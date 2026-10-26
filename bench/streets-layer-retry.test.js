@@ -4,8 +4,9 @@
 const assert = require("node:assert/strict");
 require("./lib/load.js");
 global.L.Control = global.L.Control || { extend: () => function () {} };
+require("../app/src/streetMessages.js");
 require("../app/src/streetsLayer.js");
-const { StreetsInFogLayer, StreetIndex } = global;
+const { StreetsInFogLayer, StreetIndex, StreetMessages } = global;
 
 // A layer on a fake clock: waiting moves the clock and is recorded, so no test waits on real time.
 function fakeLayer(fail) {
@@ -19,7 +20,7 @@ function fakeLayer(fail) {
     _visibleTiles: () => [{ s: 51, n: 51.05, w: 13.7, e: 13.75 }],
     _say: (m) => state.said.push(m),
     _classifyNew: async () => {}, _draw: () => { state.drawn++; },
-    streets: { needsFetch: () => true, ensureRects: async () => { state.calls++; throw fail(); } }
+    streets: { ensureRects: async () => { state.calls++; throw fail(); } }
   });
   return { layer, state, clock };
 }
@@ -27,19 +28,31 @@ function fakeLayer(fail) {
 (async () => {
   { // every endpoint rate-limited: no quiet retry, and nothing is asked before retryAt
     const retryAt = 60_000;
-    const { layer, state } = fakeLayer(() => Object.assign(new Error("overpass HTTP 429"), { retryAt }));
+    const { layer, state } = fakeLayer(() => StreetIndex.downloadError(0, 1, Object.assign(new Error("overpass HTTP 429"), { reason: "busy", retryAt })));
     await layer._update();
     assert.equal(state.calls, 1, "a rate-limited Overpass gets no quiet retry");
     assert.ok(layer._retryAt >= retryAt, "the layer waits at least until the error's retryAt");
     await layer._update();
     assert.equal(state.calls, 1, "a map move before retryAt sends nothing");
+    assert.equal(state.said.pop(), "The street servers are busy. Try again in about 60 s.", "the badge words the failure as the page does");
   }
   { // a plain failure gets one quiet retry 3 s later, then the 10 s cooldown
-    const { layer, state } = fakeLayer(() => new Error("overpass HTTP 504"));
+    const { layer, state } = fakeLayer(() => StreetIndex.downloadError(0, 1, new Error("overpass HTTP 504")));
     await layer._update();
+    assert.equal(state.said.pop(), StreetMessages.describe({}, 0), "no reason: the generic text, never the error's");
     assert.equal(state.calls, 2, "one quiet retry after a plain failure");
     assert.deepEqual(state.slept, [3000]);
     assert.equal(layer._retryAt, 3000 + 10_000);
+  }
+  { // a bug while reading streets is not a download: the generic text, no quiet retry, its class logged
+    const logged = [], orig = console.error;
+    console.error = (...a) => logged.push(a);
+    const { layer, state } = fakeLayer(() => new TypeError("cannot read tile 273:1020"));
+    await layer._update();
+    console.error = orig;
+    assert.equal(state.said.pop(), StreetMessages.describe({}, 0));
+    assert.deepEqual([state.calls, state.slept], [1, []], "a retry would only throw it again");
+    assert.deepEqual(logged, [["[streets layer] reading streets threw", "TypeError"]]);
   }
   { // a partial failure gets the quiet retry too, and the retry asks only for the tiles that did not come
     const asked = [];
@@ -70,6 +83,8 @@ function fakeLayer(fail) {
     assert.equal(asked.length, 2);
     assert.deepEqual(asked[1], asked[0].slice(1), "the retry asks only for the missing tile");
     assert.deepEqual([state.drawn, layer._retryAt], [1, 0]);
+    assert.deepEqual(state.said, ["Getting the street map, 0 of 2…", "Getting the street map, 1 of 2…",
+      "Getting the street map, 0 of 1…", "Getting the street map, 1 of 1…", ""], "the badge counts the tiles, then clears");
   }
   { // a 48-tile view on the 0.025° grid is still fetched; a larger one asks to zoom in
     assert.equal(StreetsInFogLayer.MAX_TILES, 48);

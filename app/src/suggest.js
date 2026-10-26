@@ -260,10 +260,20 @@
   // stale, or the error state was emitted because the download failed.
   SuggestTool.prototype._loadStreets = async function (rects, profile, emit, stale) {
     const kind = streetKind(profile);
-    // only announce a fetch when one will really happen; a rerun in the same
-    // area is served from cache and shouldn't flash "reading the street map"
-    if (this.streets.needsFetch(rects, kind)) emit({ loading: true, phase: "streets" });
-    try { await this.streets.ensureRects(rects, kind); } catch (e) { emit({ error: true, reason: "streets-fetch", why: e.message }); return false; }
+    // progress is heard only while some tile is missing from the index, so a rerun over covered
+    // ground stays silent
+    const onProgress = ({ done, total }) => emit({ loading: true, phase: "streets", done, total });
+    try { await this.streets.ensureRects(rects, kind, { onProgress }); } catch (e) {
+      // a bug is not a failed download: the class only, as a message can name tiles
+      if (!global.StreetIndex.isDownloadError(e)) {
+        console.error("[suggest] reading streets threw", e && e.name);
+        emit({ error: true, reason: "internal" });
+        return false;
+      }
+      console.warn("[suggest] streets unavailable", e.reason);
+      emit({ error: true, reason: "streets-fetch", download: global.StreetIndex.downloadFacts(e) });
+      return false;
+    }
     return !stale();
   };
 

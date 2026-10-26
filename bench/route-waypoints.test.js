@@ -67,11 +67,22 @@ function setup(over) {
     assert.equal(r.why.reason, "off-network");
     assert.equal(r.why.point, 1, "the pin that is off the streets");
   }
-  { // a rejected street fetch, or no planner (no ways at all), is no-street-data
-    const failing = setup({ streets: { ensureRects: async () => { throw new Error("HTTP 502"); } } });
-    assert.deepEqual(await failing.route([pt(0, 0), pt(1000, 0)], "trekking"), { error: true, why: { reason: "no-street-data" } });
+  { // a rejected street fetch is streets-fetch with the download's facts and none of its text; no planner (no ways at all) is no-street-data
+    const cause = Object.assign(new Error("overpass HTTP 502"), { reason: "busy", retryAt: 7 });
+    const failing = setup({ streets: { ensureRects: async () => { throw global.StreetIndex.downloadError(0, 2, cause); } } });
+    const orig = console.warn;
+    console.warn = () => {};
+    const r = await failing.route([pt(0, 0), pt(1000, 0)], "trekking");
+    console.warn = orig;
+    assert.deepEqual(r, { error: true, why: { reason: "streets-fetch", download: { reason: "busy", done: 0, total: 2, retryAt: 7, cause: { reason: "busy" } } } });
     const empty = setup({ plannerFor: () => null });
     assert.deepEqual(await empty.route([pt(0, 0), pt(1000, 0)], "trekking"), { error: true, why: { reason: "no-street-data" } });
+  }
+  { // the download's progress is handed to the street fetch
+    const seen = [];
+    const { route } = setup({ streets: { ensureRects: async (rects, kind, opts) => { opts.onProgress({ done: 0, total: 2 }); } } });
+    await route([pt(0, 0), pt(1000, 0)], "trekking", (p) => seen.push(p));
+    assert.deepEqual(seen, [{ done: 0, total: 2 }]);
   }
   { // pins farther apart than a street download may cover: declined before any request
     const { route, calls } = setup();
@@ -91,7 +102,16 @@ function setup(over) {
     assert.ok(!r.error);
     assert.ok(Math.abs(r.stats.km - 0.9) < 0.02, `km ${r.stats.km}`);
   }
-  { // a street source that fails is logged by its cause's class and the reason only, and gives no-street-data
+  { // a bug while reading streets is not a failed download: the internal state route.js words, its class logged
+    const logged = [], orig = console.error;
+    console.error = (...a) => logged.push(a);
+    const { route } = setup({ streets: { ensureRects: async () => { throw new TypeError("cannot read tile 273:1020"); } } });
+    const r = await route([pt(0, 0), pt(1000, 0)], "trekking");
+    console.error = orig;
+    assert.deepEqual(r, { error: true, why: { reason: "internal" } });
+    assert.deepEqual(logged, [["[route] reading streets threw", "TypeError"]]);
+  }
+  { // a street source that fails is logged by the reason only
     const logged = [];
     const orig = console.warn;
     console.warn = (...a) => logged.push(a);
@@ -99,8 +119,8 @@ function setup(over) {
     const { route } = setup({ streets: { ensureRects: async () => { throw global.StreetIndex.downloadError(1, 2, cause); } } });
     const r = await route([pt(0, 0), pt(1000, 0)], "trekking");
     console.warn = orig;
-    assert.deepEqual(logged, [["[route] streets unavailable", "TypeError", "streets-partial"]]);
-    assert.equal(r.why.reason, "no-street-data");
+    assert.deepEqual(logged, [["[route] streets unavailable", "streets-partial"]]);
+    assert.deepEqual(r.why.download, { reason: "streets-partial", done: 1, total: 2, retryAt: undefined, cause: { reason: "offline" } });
   }
   { // no heights at all: a flat 2D line, and ascent and descent unknown rather than zero
     const { route } = setup({ elevation: { elevationAt: async (pts) => pts.map(() => null) } });
