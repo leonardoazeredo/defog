@@ -260,8 +260,8 @@
   // stale, or the error state was emitted because the download failed.
   SuggestTool.prototype._loadStreets = async function (rects, profile, emit, stale) {
     const kind = streetKind(profile);
-    // progress is heard only when a tile is missing from the index, so a rerun over covered ground
-    // stays silent; tiles the street cache serves still count as progress
+    // progress is heard only while some tile is missing from the index, so a rerun over covered
+    // ground stays silent
     const onProgress = ({ done, total }) => emit({ loading: true, phase: "streets", done, total });
     try { await this.streets.ensureRects(rects, kind, { onProgress }); } catch (e) {
       console.warn("[suggest] streets unavailable", e && (e.cause ? e.cause.name : e.name), e && e.reason);

@@ -1,12 +1,13 @@
 // What the page says about a street download: its progress, and why a failed one failed. Built only from
-// the error's reason, tile counts and retry time, never its message: that can hold a server remark or a
-// tile number, which locates the area.
+// the error's reason, its cause's reason, tile counts and retry time, never a message: that can hold a
+// server remark or a tile number, which locates the area.
 (function (global) {
   const GENERIC = "Couldn't download the street map. Try again in a minute.";
   const BLOCKED = "Try another network, or try again tomorrow";
 
-  // " in about 30 s" from retryAt, or null without a retry time or a clock; a wait past two minutes reads
-  // better in minutes.
+  // " in about 30 s" from retryAt, or null without a retry time or a clock. Rounded up to 10 s because
+  // the text is read a while after it is set and an exact count would promise too early; a wait past
+  // two minutes reads better in minutes.
   function wait(retryAt, now) {
     if (!retryAt || !Number.isFinite(now)) return null;
     const s = Math.max(10, Math.ceil((retryAt - now) / 10000) * 10);
@@ -39,7 +40,7 @@
 
   function progress(done, total) {
     return Number.isInteger(done) && Number.isInteger(total)
-      ? `Downloading the street map, ${done} of ${total}…` : "Downloading the street map…";
+      ? `Getting the street map, ${done} of ${total}…` : "Getting the street map…";
   }
 
   global.StreetMessages = { describe, progress };

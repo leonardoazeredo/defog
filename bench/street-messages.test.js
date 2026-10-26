@@ -67,9 +67,9 @@ const err = (reason, more) => Object.assign(new Error("overpass HTTP 502"), { re
   }
 }
 { // progress, and without counts yet
-  assert.equal(progress(3, 12), "Downloading the street map, 3 of 12…");
-  assert.equal(progress(0, 12), "Downloading the street map, 0 of 12…");
-  assert.equal(progress(undefined, undefined), "Downloading the street map…");
+  assert.equal(progress(3, 12), "Getting the street map, 3 of 12…");
+  assert.equal(progress(0, 12), "Getting the street map, 0 of 12…");
+  assert.equal(progress(undefined, undefined), "Getting the street map…");
 }
 { // main.js words a failed street download through StreetMessages, never from the error's text
   const main = fs.readFileSync(path.join(__dirname, "..", "app", "src", "main.js"), "utf8").split("\n");

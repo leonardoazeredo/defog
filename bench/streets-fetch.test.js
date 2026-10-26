@@ -88,8 +88,8 @@ function slowSource(clock, stepMs) {
   { // a walking fetch does not cover a request for cars (no motorways in it)
     const s = new StreetIndex({ newFrac: () => 1 });
     s._cover(StreetIndex.tilesCovering({ s: 50, w: 13, n: 52, e: 14 }), "run");
-    assert.equal(s.needsFetch(rect, "bike"), false);
-    assert.equal(s.needsFetch(rect, "car"), true);
+    assert.equal(s._uncovered(rect, "bike").length, 0);
+    assert.ok(s._uncovered(rect, "car").length > 0);
   }
   { // walking and wheels both exclude motorroads; walking also foot=no
     replyWith({ elements: [] });

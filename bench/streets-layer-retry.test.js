@@ -20,7 +20,7 @@ function fakeLayer(fail) {
     _visibleTiles: () => [{ s: 51, n: 51.05, w: 13.7, e: 13.75 }],
     _say: (m) => state.said.push(m),
     _classifyNew: async () => {}, _draw: () => { state.drawn++; },
-    streets: { needsFetch: () => true, ensureRects: async () => { state.calls++; throw fail(); } }
+    streets: { ensureRects: async () => { state.calls++; throw fail(); } }
   });
   return { layer, state, clock };
 }
@@ -73,8 +73,8 @@ function fakeLayer(fail) {
     assert.equal(asked.length, 2);
     assert.deepEqual(asked[1], asked[0].slice(1), "the retry asks only for the missing tile");
     assert.deepEqual([state.drawn, layer._retryAt], [1, 0]);
-    assert.deepEqual(state.said, ["Downloading the street map, 0 of 2…", "Downloading the street map, 1 of 2…",
-      "Downloading the street map, 0 of 1…", "Downloading the street map, 1 of 1…", ""], "the badge counts the tiles, then clears");
+    assert.deepEqual(state.said, ["Getting the street map, 0 of 2…", "Getting the street map, 1 of 2…",
+      "Getting the street map, 0 of 1…", "Getting the street map, 1 of 1…", ""], "the badge counts the tiles, then clears");
   }
   { // a 48-tile view on the 0.025° grid is still fetched; a larger one asks to zoom in
     assert.equal(StreetsInFogLayer.MAX_TILES, 48);

@@ -118,11 +118,6 @@
     for (const t of tiles) this.tiles.add(StreetIndex.tileKey(kind, t.x, t.y));
   };
 
-  // Would ensureRects actually hit the network for these, or is it
-  // all already cached from an earlier run? Lets callers show the "reading the
-  // street map" note only when there's a real fetch, not on every rerun.
-  StreetIndex.prototype.needsFetch = function (rects, kind) { return this._uncovered(rects, kind).length > 0; };
-
   // Which way a routing profile may travel each way: 1 along its node order only, -1
   // against it, 0 both. One-ways bind the profiles on wheels, not walking or the
   // straight line; bikes are exempt where a contraflow lane is tagged.
@@ -195,6 +190,7 @@
     // a source may hand tiles over in its Map alone
     for (const t of todo) take(t, answers && answers.get(t.x + ":" + t.y));
     const lost = todo.find((t) => !read.has(t.x + ":" + t.y));
+    // the source answered but left a tile out: a server's fault, not the network's, worded generically
     if (lost) throw StreetIndex.downloadError(read.size, todo.length, Object.assign(new Error(`street source: no answer for tile ${lost.x}:${lost.y} (${kind})`), { reason: "server" }));
   };
 

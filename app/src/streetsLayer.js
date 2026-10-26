@@ -183,6 +183,7 @@
     if (this._now() < this._retryAt) return; // a download just failed; retry on a later move
     this._busy = true;
     try {
+      // switched off mid-download: a late count must not bring the badge back
       const onProgress = ({ done, total }) => { if (this.enabled) this._say(global.StreetMessages.progress(done, total)); };
       let ok = false, err = null;
       for (let attempt = 0; attempt < 2 && !ok; attempt++) {

@@ -29,10 +29,10 @@
   const REASONS = ["blocked", "busy", "stalled", "offline", "server"];
 
   let order = DEFAULT_ORDER.slice();
-  let state = {}; // url -> {until: time before which it is not asked again, why: that hold's reason, stalls: in a row}
+  let state = {}; // url -> {until: time before which it is not asked again, why: that hold's reason, error: the failure that earned it, stalls: in a row}
   let queue = Promise.resolve();
 
-  const stateOf = (url) => state[url] || (state[url] = { until: 0, why: null, stalls: 0 });
+  const stateOf = (url) => state[url] || (state[url] = { until: 0, why: null, error: null, stalls: 0 });
 
   // A browser exposes Retry-After to page script only if the server lists it in
   // Access-Control-Expose-Headers, and an HTTP-date value is not parsed: either way the floor
@@ -86,43 +86,44 @@
 
   async function tryEndpoints(body) {
     const now = Overpass._now();
-    let lastError = null;
-    const said = []; // one reason per endpoint, a held one contributing its hold's
-    const errorFor = {}; // the first error seen per reason, so the one thrown matches its reason
+    // one {why, error} per endpoint, a held one contributing its hold's: the error thrown is always
+    // the one that earned the reason, never another endpoint's
+    const said = [];
     let anyStatus = false;
     for (const key of order) {
       const url = ENDPOINTS[key];
       const s = stateOf(url);
-      if (s.until > now) { said.push(s.why); continue; }
+      if (s.until > now) { said.push({ why: s.why, error: s.error }); continue; }
       const r = await attempt(url, body);
       // a body stall carries its 200, but only an answer that ended proves the endpoint alive
       if (r.status !== undefined) { anyStatus = true; if (r.kind !== "stall") s.stalls = 0; }
       if (r.json !== undefined) return r.json;
-      lastError = r.error;
       let why, holdMs = 0;
       if (r.kind === "stall") { s.stalls++; why = "stalled"; holdMs = s.stalls >= STALLS_BEFORE_LONG_HOLD ? STALL_HOLD_MS : MIN_BACKOFF_MS; }
       else if (r.kind === "network") { why = "offline"; holdMs = MIN_BACKOFF_MS; }
       else if (r.status === 406) { why = "blocked"; holdMs = Math.max(BAN_HOLD_MS, r.retryAfter); }
       else if (r.status === 429) { why = "busy"; holdMs = Math.max(MIN_BACKOFF_MS, r.retryAfter); }
       else why = BUSY_STATUS[r.status] ? "busy" : "server";
-      if (holdMs) { s.until = Overpass._now() + holdMs; s.why = why; }
-      said.push(why);
-      if (!errorFor[why]) errorFor[why] = r.error;
+      if (holdMs) { s.until = Overpass._now() + holdMs; s.why = why; s.error = r.error; }
+      said.push({ why, error: r.error });
     }
     // a failed fetch means offline only when nothing answered at all: a status proves the network up
-    const reasons = said.map((why) => why === "offline" && anyStatus ? "server" : why);
-    if (typeof navigator !== "undefined" && navigator.onLine === false) reasons.push("offline");
-    const reason = REASONS.find((r) => reasons.includes(r)) || "server";
-    const err = errorFor[reason] || lastError || new Error("overpass: every endpoint is on hold");
+    for (const x of said) if (x.why === "offline" && anyStatus) x.why = "server";
+    if (typeof navigator !== "undefined" && navigator.onLine === false) said.push({ why: "offline", error: new Error("overpass: the browser is offline") });
+    const reason = REASONS.find((r) => said.some((x) => x.why === r)) || "server";
+    const won = said.find((x) => x.why === reason);
+    const err = (won && won.error) || new Error("overpass: no endpoint to ask");
     err.reason = reason;
+    // a held endpoint's error is thrown again by later posts, so a retry time from an earlier one must go
     const later = order.map((k) => stateOf(ENDPOINTS[k]).until).filter((at) => at > Overpass._now());
     if (later.length === order.length) err.retryAt = Math.min(...later);
+    else delete err.retryAt;
     throw err;
   }
 
   // Resolves with the JSON of the first endpoint, in order, whose body parses. Rejects with the
-  // first error of the winning reason (else the last error), carrying `reason` and `retryAt`. When the endpoints disagree the first reason in
-  // this list wins, most actionable first. The reasons: blocked, a 406 was seen or an
+  // error that earned the reason, carrying `reason` and `retryAt`. When the endpoints disagree the
+  // first reason in this list wins, most actionable first. The reasons: blocked, a 406 was seen or an
   // endpoint is held after one; busy, 429, 502 or 504; stalled, no answer or a body that stopped;
   // offline, the browser says so, or every fetch failed and no status was seen; server, anything
   // else. `retryAt` (on the Overpass._now clock) is set only when every endpoint is on hold, and

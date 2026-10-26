@@ -364,7 +364,6 @@ process.on("exit", (code) => {
     assert.equal(e.reason, "blocked");
     assert.equal(e.retryAt, start + 30_000, "coffee is asked again after its 30 s");
   }
-  finished = true;
   { // a 406 on main, then coffee silent: blocked wins, and the error is main's 406, not coffee's silence
     reset();
     global.fetch = routed({ [M]: status(406), [C]: silent });
@@ -384,5 +383,49 @@ process.on("exit", (code) => {
     assert.equal(text, "The street server has blocked this network for today: it caps each network's daily use. Try another network, or try again tomorrow.");
     assert.ok(!/no answer|15 s/.test(text + e.message) && !/406/.test(text), text + " / " + e.message);
   }
+  { // within the hour main is held and only coffee's silence is fresh: still main's 406, blocked, with a retry time
+    reset();
+    global.fetch = routed({ [M]: status(406), [C]: silent });
+    await rejection(played(Overpass.post("data=x")));
+    assert.ok(t - start < 3_600_000 && t - start > 30_000, "main still held, coffee's 30 s over");
+    calls = [];
+    const e = await rejection(played(Overpass.post("data=x")));
+    assert.deepEqual(calls, [C], "main is not asked again");
+    assert.equal(e.reason, "blocked");
+    assert.equal(e.message, "overpass HTTP 406");
+    assert.equal(typeof e.retryAt, "number");
+    calls = [];
+    const streets = new StreetIndex({ newFrac: () => 1 });
+    const d = await played(streets.ensureRects([{ s: 51, w: 13.7, n: 51.01, e: 13.71 }], "run").then(() => assert.fail("expected a rejection"), (x) => x));
+    assert.deepEqual([d.reason, typeof d.retryAt], ["blocked", "number"]);
+    const text = StreetMessages.describe(StreetIndex.downloadFacts(d), t);
+    assert.equal(text, "The street server has blocked this network for today: it caps each network's daily use. Try another network, or try again tomorrow.");
+    assert.ok(!/no answer|15 s/.test(text + d.message), text + " / " + d.message);
+  }
+  { // a held endpoint's error carries no retry time left over from an earlier post
+    reset();
+    global.fetch = routed({ [M]: status(406), [C]: status(429) });
+    const first = await rejection(Overpass.post("data=x"));
+    assert.equal(typeof first.retryAt, "number");
+    t = start + 40_000; global.fetch = routed({ [M]: status(406), [C]: status(500) });
+    const e = await rejection(Overpass.post("data=x"));
+    assert.equal(e.reason, "blocked");
+    assert.equal(e.retryAt, undefined, "coffee answered and is not held: no retry time");
+  }
+  { // a remapped offline and the browser's own offline each throw an error of their own reason's
+    reset();
+    global.fetch = routed({ [M]: unreachable, [C]: status(500) });
+    const e = await rejection(Overpass.post("data=x"));
+    assert.equal(e.reason, "server");
+    reset();
+    global.fetch = routed({ [M]: status(500), [C]: status(500) });
+    Object.defineProperty(global.navigator, "onLine", { value: false, configurable: true });
+    try {
+      const o = await rejection(Overpass.post("data=x"));
+      assert.equal(o.reason, "offline");
+      assert.ok(!/HTTP 500/.test(o.message), "not a server's error: " + o.message);
+    } finally { delete global.navigator.onLine; }
+  }
+  finished = true;
   console.log("overpass-endpoints.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });

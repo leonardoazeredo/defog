@@ -34,7 +34,7 @@
     this.map = map;
     this.profile = opts.profile || "trekking";
     this.onChange = opts.onChange || null;       // stats
-    this.routeWaypoints = opts.routeWaypoints || null; // (pins [{lat,lng}], travelMode, onProgress) -> Promise<{coords, stats} | {error, why}>
+    this.routeWaypoints = opts.routeWaypoints || null; // (pins [{lat,lng}], travelMode, onProgress({done, total})) -> Promise<{coords, stats} | {error, why}>
     this.onWaypoints = opts.onWaypoints || null; // waypoint list changed
     this.isNew = opts.isNew || null;         // (lon,lat) -> true if the point is new ground
     this.fogReady = opts.fogReady || null;   // () -> is fog data loaded?
