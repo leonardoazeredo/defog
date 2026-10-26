@@ -154,12 +154,14 @@ const rect = [{ s: 51, w: 13.7, n: 51.01, e: 13.71 }];
     assert.deepEqual(s.ways.map((w) => w.id), [7, 8, 9]);
     assert.equal(s.version, 1, "one version bump per fetch");
   }
-  { // pins the query text the bench cache is keyed on; a changed hash means every saved answer misses
+  { // pins the query text the bench cache is keyed on. The hash covers the timeout header too, but the
+    // bench cache ignores it: a hash change from anything else means every saved answer misses
     const boxes = [{ s: 51, w: 13.7, n: 51.01, e: 13.71 }, { s: 51.2, w: 13.8, n: 51.21, e: 13.9 }];
+    assert.ok(StreetIndex.rectQuery(boxes, "run").startsWith("[out:json][timeout:25];"), "the server gives up before the client's 30 s");
     const sha = (kind) => crypto.createHash("sha1").update(StreetIndex.rectQuery(boxes, kind)).digest("hex");
-    assert.equal(sha("run"), "e949360a8672947cd547397c201b74b9d1b6980e");
-    assert.equal(sha("bike"), "e224471687db756785bbbbdf48a0dc380640bf92");
-    assert.equal(sha("car"), "767226bcf1f28f1e3dad58826efd2d04be67bedd");
+    assert.equal(sha("run"), "822a328d1c8f332ec55d2e363755ba4075c475f2");
+    assert.equal(sha("bike"), "e3620d77390907388c5540fba2593f2325f19077");
+    assert.equal(sha("car"), "33f830337ebdd0c1c3afee063d36004a9aa1c03a");
     replyWith({ elements: [] });
     await StreetIndex.overpassFetch([{ x: 274, y: 1020 }], "run");
     assert.equal(sent, "data=" + StreetIndex.rectQuery([StreetIndex.tileBounds({ x: 274, y: 1020 })], "run"), "the default source asks for the tiles' bounds");
