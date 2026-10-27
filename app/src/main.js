@@ -238,9 +238,10 @@
   // way, and backups carry every f2m_ key, so it is dropped.
   const ORDER_KEY = "f2m_overpassOrder";
   localStorage.removeItem("f2m_overpass");
-  // NextGIS is offered only when the app was built with its key. With no stored choice, or one that
-  // cannot be honoured (an endpoint that no longer exists, or NextGIS without a key), Overpass keeps
-  // its default order, so a key that lands later still puts NextGIS first.
+  // NextGIS is offered only while the page holds its key: the phone app injects it at run time, and
+  // a plain browser has none. With no stored choice, or one that cannot be honoured (an endpoint
+  // that no longer exists, or NextGIS without a key), Overpass keeps its default order, so a key
+  // that lands later still puts NextGIS first.
   function setOverpassOrder(first, chosen) {
     const nextgis = Overpass.has("nextgis");
     if (first !== "main" && !(first === "nextgis" && nextgis)) first = null;

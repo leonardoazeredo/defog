@@ -310,7 +310,7 @@
   // but a return to [timeout:60] makes every saved rectQuery answer miss. [timeout:25]
   // caps the server's run once the query leaves its queue. overpass-api.de sends nothing until the
   // run ends, so the client guard that binds is the 90 s first byte (FIRST_BYTE_MS in overpass.js):
-  // a 39-68 s queue plus a 25 s run can still pass it, and that request counts as a stall.
+  // a 39-68 s queue plus a 25 s run can still overrun it, and that request counts as a stall.
   StreetIndex.rectQuery = function (boxes, kind) {
     const bb = (r) => [r.s, r.w, r.n, r.e].map((x) => x.toFixed(4)).join(",");
     // access filter: planned and routed trips must not cross ways the person can't

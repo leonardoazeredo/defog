@@ -1,9 +1,8 @@
 // Overpass.post: endpoint order (NextGIS first by default, only with a key, offered by main.js once
-// the key is set),
-// fallback, one request in flight, the 90 s first-byte and 120 s body guards; holds after a 429
-// (30 s) and a 406 (an hour), each longer with Retry-After, a failed fetch and a stall (30 s, ten
-// minutes from the third stall in a row); no hold after a 500 or a non-JSON 200; the rejection's
-// reason.
+// the key is set), fallback, one request in flight, the 90 s first-byte and 120 s body guards;
+// holds after a 429 (30 s) and a 406 (an hour), each longer with Retry-After, a failed fetch and a
+// stall (30 s, ten minutes from the third stall in a row); no hold after a 500 or a non-JSON 200;
+// the rejection's reason.
 // Fake fetch, fake clock, fake timers: nothing here waits on real time.
 //   node bench/overpass-endpoints.test.js
 "use strict";
@@ -11,7 +10,7 @@ const assert = require("node:assert/strict");
 require("./lib/load.js");
 require("../app/src/streetMessages.js");
 const { Overpass, StreetIndex, StreetMessages } = global;
-// a made-up key, holding a character the URL must escape; the NextGIS endpoint exists only with a key
+// a made-up key that holds a character the URL must escape; NextGIS exists only with one
 const KEY = "test-key/0";
 const N = "https://overpass.nextgis.com/" + encodeURIComponent(KEY) + "/api/interpreter", M = Overpass.ENDPOINTS.main;
 const REASONS = ["blocked", "busy", "stalled", "offline", "server"];
@@ -66,7 +65,8 @@ async function advance(ms) {
   }
   t = until;
 }
-// a post whose stalls are played out on the clock (each endpoint gets at most 120 s, so four minutes covers any order)
+// a post whose stalls are played out on the clock (each endpoint gets at most 120 s, so four minutes
+// covers both endpoints in either order)
 async function played(p) { await settle(); await advance(240_000); return p; }
 const rejection = (p) => p.then(() => assert.fail("expected a rejection"), (e) => {
   assert.ok(REASONS.includes(e.reason), "the reason is one of five words, got " + JSON.stringify(e.reason));
@@ -296,7 +296,7 @@ process.on("exit", (code) => {
     calls = []; t += 2; table[M] = answer; await Overpass.post("data=y");
     assert.deepEqual(calls, [M]);
   }
-  { // 16c. a body stall's 200 does not end the answer, so it does not reset the count: the third
+  { // 16b. a body stall's 200 does not end the answer, so it does not reset the count: the third
     //     body stall in a row holds the endpoint ten minutes
     reset();
     const table = { [M]: headersOnly, [N]: answer };
@@ -315,7 +315,7 @@ process.on("exit", (code) => {
     calls = []; t = third + 600_001; table[M] = answer; await Overpass.post("data=x");
     assert.deepEqual(calls, [M]);
   }
-  { // 16b. headers that arrive at 10 s leave the body 110 s: abandoned at 120 s total
+  { // 16c. headers that arrive at 10 s leave the body 110 s: abandoned at 120 s total
     reset();
     let release;
     const late = (url, opts) => new Promise((resolve, reject) => {
@@ -500,10 +500,12 @@ process.on("exit", (code) => {
   }
   { // main.js's endpoint choice, run against a key the phone app hands in after the page loaded:
     // NextGIS is hidden until the key's event, then offered and asked first, whether the user
-    // stored that choice or stored nothing (the default); a stored choice of overpass-api.de stays
+    // stored that choice, stored nothing (the default) or holds a name that no longer exists
+    // ("coffee"), which reads as the default; a stored choice of overpass-api.de stays
     const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "app", "src", "main.js"), "utf8");
     const from = src.indexOf("  function setOverpassOrder"), to = src.indexOf("\n", src.indexOf('addEventListener("crossfog-nextgis-key"'));
-    assert.ok(from >= 0 && to > from, "main.js shows NextGIS in its choice again when the key's event fires");
+    assert.ok(from >= 0 && to > from,
+      "main.js still defines setOverpassOrder and registers the crossfog-nextgis-key listener, so the slice under test exists");
     for (const [stored, firstWithKey] of [["nextgis", N], [null, N], ["coffee", N], ["main", M]]) {
       const els = { overpass: { value: "" }, overpassNextgis: { hidden: false } }, listeners = {};
       const win = { addEventListener: (type, fn) => { listeners[type] = fn; } };

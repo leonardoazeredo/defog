@@ -38,8 +38,8 @@
     return GENERIC;
   }
 
-  // waitUntil: the end of a busy server's wait, on the clock `now` is read on; set only while the
-  // download waits.
+  // waitUntil: when the download asks again after a busy answer, a time on the same clock as `now`;
+  // set only while the download waits that out.
   function progress(done, total, waitUntil, now) {
     const counted = Number.isInteger(done) && Number.isInteger(total);
     const again = waitUntil ? wait(waitUntil, now) : null;

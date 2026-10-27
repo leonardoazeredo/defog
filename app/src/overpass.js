@@ -4,24 +4,25 @@
 // refills (community.openstreetmap.org/t/overpass-api-performance-issues/140598), so a 406 holds it
 // an hour, longer when Retry-After says so; a 429 holds it at least 30 s. NextGIS's keyed Overpass
 // goes first by default, and exists only when the page holds a key (the phone app hands it over; a
-// browser, the bench and the tests have none). The key is part of its URL, so no message or log
-// names the keyed URL. An endpoint that sends no response headers within FIRST_BYTE_MS, or not the
-// whole answer within REQUEST_TIMEOUT_MS, is abandoned (a stall) and held 30 s, ten minutes from
-// the third stall in a row. A network failure with no readable status (no connection, or an answer
-// without CORS headers, which can hide a 429) is held 30 s. The rejection names the kind of failure
-// in `reason`, one of five words, for the page to put into words.
+// browser and the bench have none, and tests set a made-up one). The key is part of its URL, so no
+// message or log names the keyed URL. An endpoint that sends no response headers within
+// FIRST_BYTE_MS, or not the whole answer within REQUEST_TIMEOUT_MS, is abandoned (a stall) and held
+// 30 s, ten minutes from the third stall in a row. A network failure with no readable status (no
+// connection, or an answer without CORS headers, which can hide a 429) is held 30 s. The rejection
+// names the kind of failure in `reason`, one of five words, for the page to put into words.
 (function (global) {
+  // no nextgis entry: its URL carries the key, so urlOf builds it at each use
   const ENDPOINTS = {
     main: "https://overpass-api.de/api/interpreter"
   };
-  // overpass-api.de held each four-tile request 43-59 s on the phone (#185), NextGIS answered one in
-  // about 6 s; with no key NextGIS drops out and overpass-api.de is asked alone
+  // On the phone a four-tile request took 41-65 s from overpass-api.de and 5-17 s from NextGIS
+  // (#185); with no key NextGIS drops out and overpass-api.de is asked alone.
   const DEFAULT_ORDER = ["nextgis", "main"];
   const MIN_BACKOFF_MS = 30000;
-  // overpass-api.de sends nothing until a query has waited out its queue and run. The queue alone
-  // took 39-68 s on the phone (#185), even for a tiny tile, so the first-byte guard must outlast
-  // it. The price is 90 s per dead connection, which is why one stall holds only briefly and the
-  // count resets whenever an answer ends.
+  // overpass-api.de sends nothing until a query has waited out its queue and run. On the phone a
+  // one-tile request got its first byte after 39-68 s (#185), even a tile of 1 KB, so that is the
+  // queue, and the first-byte guard must outlast it. The price is 90 s per dead connection, which
+  // is why one stall holds only briefly and the count resets whenever an answer ends.
   const FIRST_BYTE_MS = 90000;
   const REQUEST_TIMEOUT_MS = 120000;
   const STALLS_BEFORE_LONG_HOLD = 3;
@@ -153,14 +154,15 @@
 
   const Overpass = {
     ENDPOINTS,
-    // the names given first, in their order, then the rest of the default. An order naming an
-    // endpoint that does not exist is a stale choice, so it reads as the default whole rather than
-    // promoting whatever follows the unknown name.
+    // the names given first, in their order and without repeats, then the rest of the default. An
+    // order naming an endpoint not in DEFAULT_ORDER is a stale choice, so it reads as the default
+    // whole rather than promoting whatever follows the unknown name.
     setOrder(keys) {
       const known = keys.every((k) => DEFAULT_ORDER.includes(k)) ? keys.filter((k, i) => keys.indexOf(k) === i) : [];
       order = known.concat(DEFAULT_ORDER.filter((k) => !known.includes(k)));
     },
-    // whether a post can reach this endpoint: false for nextgis while the page holds no key
+    // whether a post can reach this endpoint: false for an unknown name, and for nextgis while the
+    // page holds no key
     has: (name) => !!urlOf(name),
     post,
     // test-only hooks, used between settled posts: a fake clock, fake timers, the two limits, and a

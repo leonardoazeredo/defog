@@ -258,8 +258,7 @@
 
   // Make sure the streets for the rects are loaded. Resolves true when they are and the run is
   // still current; false when it is stale, or the error state was emitted because the download
-  // failed. A stale run asks for no
-  // further tile, so a newer run is not queued behind it.
+  // failed. A stale run asks for no further tile, so a newer run is not queued behind it.
   SuggestTool.prototype._loadStreets = async function (rects, profile, emit, stale) {
     const kind = streetKind(profile);
     // progress is heard only while some tile is missing from the index, so a rerun over covered

@@ -47,7 +47,7 @@ function fakeClock() {
   clock.sleep = async (ms) => { clock.sleeps.push(ms); clock.t += ms; };
   return clock;
 }
-// five tiles: the 2x2 block 548..549 x 2040..2041, nearest the centre, then 550:2040
+// two rects, five tiles: the 2x2 block 548..549 x 2040..2041, nearest the centre, then 550:2040
 const fiveTiles = [{ s: 51.0, w: 13.7, n: 51.05, e: 13.75 }, { s: 51.0, w: 13.75, n: 51.025, e: 13.775 }];
 // A street source on a fake clock: every tile takes stepMs to arrive and is handed over through onTile.
 function slowSource(clock, stepMs) {

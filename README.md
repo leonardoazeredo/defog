@@ -54,7 +54,8 @@ only the main instance. NextGIS sees the phone's network address and the boxes a
 instance does. The street map comes in tiles of 0.025° (about 3 km tall, 2 km wide at mid
 latitudes), up to four per request (a 2×2 block when it can), nearest first, each saved in the
 street cache (below) as it arrives. When a server answers that it is busy, the app asks again after
-15, 30 and then 60 seconds, and stops at the fourth busy answer in a row. As the main instance's
+15, 30 and then 60 seconds, or at the server's own retry time when that is later,
+and stops at the fourth busy answer in a row. As the main instance's
 usage policy asks, the phone app's web view identifies the app to the server by its User-Agent and
 Referer. That server also caps each app's and each network address's daily use, and answers 406 once
 the share is used up: the app then leaves that server alone for an hour, longer if the server says
