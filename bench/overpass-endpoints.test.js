@@ -80,6 +80,8 @@ process.on("exit", (code) => {
   if (!finished && code === 0) { console.error("overpass-endpoints.test.js did not finish"); process.exitCode = 1; }
 });
 
+const realFetch = global.fetch;
+
 (async () => {
   { // 1. default order with a key: NextGIS first
     reset({ order: null });
@@ -616,6 +618,7 @@ process.on("exit", (code) => {
     }
   }
   delete global.crossfogNextgisKey;
+  global.fetch = realFetch;
   finished = true;
   console.log("overpass-endpoints.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });
