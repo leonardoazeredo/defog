@@ -30,7 +30,7 @@
     if (reason === "busy") return "The street servers are busy. Try again" + (wait(retryAt, now) || " in a minute") + ".";
     if (reason === "blocked") return "The street server has blocked this network for today: it caps each network's daily use. " + BLOCKED_ADVICE + ".";
     if (reason === "stalled") return "The street server is slow to answer. Try again" + (wait(retryAt, now) || " in a few minutes") + ".";
-    if (reason === "offline") return "You're offline. This area's street map is downloaded once and kept on the phone.";
+    if (reason === "offline") return "You're offline. This area's street map is downloaded once and kept on this device.";
     if (reason === "streets-partial" && Number.isInteger(err.done) && Number.isInteger(err.total)) {
       const again = err.cause && err.cause.reason === "blocked" ? BLOCKED_ADVICE : "Try again" + (wait(retryAt, now) || "");
       return `Got ${err.done} of ${err.total} pieces of the street map before ${stopped(err.cause)}. ${again}: only the rest is downloaded.`;
