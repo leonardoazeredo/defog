@@ -113,7 +113,18 @@
     }
   }
 
-  async function tryEndpoints(body) {
+  // Resolves with the JSON of the first endpoint, in order, whose body parses. Rejects with the
+  // error that earned the reason, carrying `reason` and `retryAt`. When the endpoints disagree the
+  // first reason in this list wins, most actionable first. The reasons: blocked, a 406 was seen or an
+  // endpoint is held after one; busy, 429, 502 or 504; stalled, no answer or a body that stopped;
+  // offline, the browser says so, or every fetch failed and no status was seen; server, anything
+  // else. `retryAt` (on the Overpass._now clock) is set only when every endpoint is on hold: the end of
+  // the first hold, before which no post goes out; when the reason is blocked, the end of the earliest
+  // block instead, which can come after another endpoint's hold ends: a post in between still goes out.
+  //
+  // A post waits for a free slot on the endpoint it is about to ask, and a fallback for one on the
+  // next; one that waited is not sent where a request finished meanwhile set a hold.
+  async function post(body) {
     const names = order.filter((name) => urlOf(name));
     const urls = names.map(urlOf);
     // one {why, error} per endpoint, a held one contributing its hold's: the error thrown is always
@@ -164,21 +175,6 @@
     if (held.length === urls.length) err.retryAt = Math.min(...until);
     else delete err.retryAt;
     throw err;
-  }
-
-  // Resolves with the JSON of the first endpoint, in order, whose body parses. Rejects with the
-  // error that earned the reason, carrying `reason` and `retryAt`. When the endpoints disagree the
-  // first reason in this list wins, most actionable first. The reasons: blocked, a 406 was seen or an
-  // endpoint is held after one; busy, 429, 502 or 504; stalled, no answer or a body that stopped;
-  // offline, the browser says so, or every fetch failed and no status was seen; server, anything
-  // else. `retryAt` (on the Overpass._now clock) is set only when every endpoint is on hold: the end of
-  // the first hold, before which no post goes out; when the reason is blocked, the end of the earliest
-  // block instead, which can come after another endpoint's hold ends: a post in between still goes out.
-  //
-  // A post waits for a free slot on the endpoint it is about to ask, and a fallback for one on the
-  // next; one that waited is not sent where a request finished meanwhile set a hold.
-  function post(body) {
-    return tryEndpoints(body);
   }
 
   const Overpass = {

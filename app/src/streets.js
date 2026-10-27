@@ -227,9 +227,9 @@
     } catch (e) {
       if (broke) throw broke;
       if (cacheOnly) throw e;
-      // a stop raised on an earlier answer (the deadline or a replaced run) while the open requests
-      // landed the rest loses nothing: the run is whole
-      if (read.size < todo.length) throw StreetIndex.downloadError(read.size, todo.length, e);
+      // a deadline raised on an earlier answer while the open requests landed the rest loses
+      // nothing: the run is whole. A replaced run still rejects, so its caller does no more work.
+      if (read.size < todo.length || e.reason === "superseded") throw StreetIndex.downloadError(read.size, todo.length, e);
     }
     if (cacheOnly) {
       // an answer in the Map alone is an expired copy: drawn from, but left uncovered so a

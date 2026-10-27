@@ -330,7 +330,7 @@ function slowSource(clock, stepMs) {
     assert.equal(asked.length, 2, "the two overpass-api.de takes at once without a key, none for the third block");
     assert.deepEqual([err.done, err.total, err.reason, err.cause.reason], [0, 6, "server", "server"]);
   }
-  { // busy is asked again after 15, 30 and 60 s, each wait in the progress; the fourth busy in a row ends the run
+  { // busy is asked again after 15, 30 and 60 s, each wait in the progress; the fourth busy step ends the run
     global.Overpass._reset();
     const clock = fakeClock();
     const asked = tileServer((n) => n >= 2 && 502);
@@ -470,6 +470,17 @@ function slowSource(clock, stepMs) {
     await s.ensureRects([{ s: 51.025, w: 13.725, n: 51.05, e: 13.75 }], "run");
     assert.equal(asked.length, 1, "a run over the extra tile asks nothing");
   }
+  { // a ragged block's extra tile the index already holds is not read again
+    global.Overpass._reset();
+    tileServer();
+    const s = new StreetIndex({ newFrac: () => 1 });
+    await s.ensureRects([{ s: 51.025, w: 13.725, n: 51.05, e: 13.75 }], "run");
+    let reads = 0;
+    const read = s._read.bind(s);
+    s._read = (answer) => { reads++; return read(answer); };
+    await s.ensureRects([{ s: 51.0, w: 13.7, n: 51.025, e: 13.75 }, { s: 51.025, w: 13.7, n: 51.05, e: 13.725 }], "run");
+    assert.equal(reads, 3);
+  }
   { // one of four open requests fails: the other three finish, their tiles reach the index and the store,
     // and no further block is sent
     withKey();
@@ -600,6 +611,21 @@ function slowSource(clock, stepMs) {
     global.fetch = async (url, opts) => { clock.t += 1300000; return serve(url, opts); };
     const s = new StreetIndex({ newFrac: () => 1, now: () => clock.t });
     assert.deepEqual(await s.ensureRects(fiveTiles, "run"), { done: 5, total: 5, missing: [] });
+  }
+  { // a run replaced on an earlier answer rejects though the open requests landed every tile, which
+    // are kept
+    withKey();
+    const srv = heldServer();
+    let stale = false;
+    const s = new StreetIndex({ newFrac: () => 1 });
+    const run = s.ensureRects(sixteen, "run", { stale: () => stale }).then(() => null, (e) => e);
+    await settle();
+    await srv.reply(0);
+    stale = true;
+    while (srv.pending.length) await srv.reply(0);
+    const err = await run;
+    assert.deepEqual([srv.asked.length, err.done, err.total, err.cause.reason], [4, 16, 16, "superseded"]);
+    delete global.crossfogNextgisKey;
   }
   { // the last tile is kept even when it lands past the deadline: the check runs only while tiles remain
     const clock = { t: 0 };
