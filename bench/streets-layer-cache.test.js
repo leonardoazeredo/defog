@@ -21,7 +21,7 @@ function fakeLayer(fetchStreets, view = TWO) {
   const streets = new StreetIndex({ newFrac: () => 1, fetchStreets });
   const line = () => ({ setLatLngs: () => {}, addTo: () => {}, setStyle: () => {} });
   Object.assign(layer, {
-    enabled: true, look: "light", color: "#4fd6e6", opacity: 1, _busy: false, _dirty: false, _fetching: false, _failure: null, _missingRects: [], _tooBig: false, _view: 0, _pass: 0,
+    enabled: true, look: "light", color: "#4fd6e6", opacity: 1, _busy: false, _dirty: false, _fetching: false, _failure: null, _missingRects: [], _known: 0, _tooBig: false, _view: 0, _pass: 0,
     _visibleTiles: () => tilesOf(view),
     _say: (text, action) => { state.said.push([text, action ? action.label : null]); state.action = action || null; },
     _classifyNew: async () => {}, _draw: () => { state.drawn++; },
@@ -88,9 +88,22 @@ function source(held, net) {
     await layer._download();
     assert.deepEqual(runs, [true, false, true], "one cache-only read, the button's one run, then a recount");
     assert.deepEqual(src.calls[1], { tiles: [keys[1]], cacheOnly: false }, "the button asks only for the missing piece");
-    assert.deepEqual(state.said, [["Getting the street map, 0 of 1…", null], ["Getting the street map, 1 of 1…", null], ["", null]],
-      "the badge counts the download, then clears");
+    assert.deepEqual(state.said, [["Getting the street map, 1 of 2…", null], ["Getting the street map, 2 of 2…", null], ["", null]],
+      "the badge counts the download over the whole view, the cached piece done, then clears");
     assert.equal(state.drawn, 2);
+  }
+  { // a failed download and its retry both count over the whole view, so the total stays the same
+    let calls = 0;
+    const src = source(new Set(), async () => { if (++calls === 2) throw Object.assign(new Error("slow"), { reason: "stalled" }); });
+    const { layer, state } = fakeLayer(src.fn, { s: 51.0, w: 13.7, n: 51.025, e: 13.775 });
+    await layer._update();
+    state.said.length = 0;
+    await layer._download();
+    assert.deepEqual(state.said.map(([text]) => text).slice(0, 2), ["Getting the street map, 0 of 3…", "Getting the street map, 1 of 3…"]);
+    assert.match(state.said.pop()[0], /^Got 1 of 3 pieces of the street map before the server got too slow\./);
+    state.said.length = 0;
+    await layer._download();
+    assert.deepEqual(state.said.map(([text]) => text), ["Getting the street map, 1 of 3…", "Getting the street map, 2 of 3…", "Getting the street map, 3 of 3…", ""]);
   }
   { // a wait for a busy server shows in the badge, then the count again
     const src = async (tiles, kind, onTile, opts) => {
