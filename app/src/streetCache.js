@@ -8,6 +8,10 @@
   // in-memory one. The leading version is the tile grid's: bump it whenever TILE_DEG in streets.js
   // changes, or answers fetched for the old grid are read as tiles of the new one.
   const keyOf = (kind, t) => "2:" + kind + ":" + t.x + ":" + t.y;
+  // what a failed download carries (Overpass.post's reasons, and the default source's "streets-partial"
+  // when some tiles arrived first): only these stand for an outage; any other throw is a bug and
+  // must not be answered with old streets. Kept here, not read from streets.js, which loads after.
+  const OUTAGE_REASONS = new Set(["busy", "blocked", "stalled", "offline", "server", "streets-partial"]);
   // a run tile also stands in for bike, as in StreetIndex._uncovered: the run query drops foot=no
   // ways, so the answer can miss a few bike-only ways. Only a car fetch holds motorways.
   const kindsFor = (kind) => (kind === "bike" ? ["bike", "run"] : [kind]);
@@ -91,8 +95,9 @@
       } catch (e) {
         await Promise.all(puts);
         const left = missing.filter((t) => !out.has(t.x + ":" + t.y));
-        // old streets beat none when offline, but only if they cover everything still missing
-        if (stopped || !left.every((t) => expired.has(t.x + ":" + t.y))) throw e;
+        // old streets beat none when offline, but only if they cover everything still missing; a throw
+        // with no outage reason is a bug, which old streets must not hide
+        if (stopped || !OUTAGE_REASONS.has(e && e.reason) || !left.every((t) => expired.has(t.x + ":" + t.y))) throw e;
         // in the Map alone, past onTile: they cost no request, so the caller's per-tile stop (the run
         // deadline) must not cut them off
         for (const t of left) out.set(t.x + ":" + t.y, expired.get(t.x + ":" + t.y));

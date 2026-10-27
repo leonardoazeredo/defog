@@ -76,6 +76,20 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]]]
     assert.deepEqual(logged, [["[suggest] reading streets threw", "TypeError"]]);
     assert.deepEqual(r, { error: true, reason: "internal" });
   }
+  { // a bug thrown while the run is stale is not shown (a newer run replaced it) but its class is logged
+    const s = streetsWith(street);
+    s.tiles.clear();
+    const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => null, streets: s });
+    tool.mode = "p2p"; tool.a = pin(0, 0); tool.b = pin(1000, 0);
+    s.ensureRects = async () => { tool._runId++; throw new TypeError("cannot read tile 273:1020"); };
+    const seen = [], logged = [], orig = console.error;
+    tool.onResults = (r) => seen.push(r);
+    console.error = (...a) => logged.push(a);
+    await tool.suggest("hiking-mountain", { buffer: 0.15 });
+    console.error = orig;
+    assert.ok(!seen.some((r) => r && r.error), "no error state for a replaced run");
+    assert.deepEqual(logged, [["[suggest] reading streets threw", "TypeError"]]);
+  }
   { // the download's progress is emitted while the tiles come in, and stops when they are in
     const states = [];
     const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async (tiles, kind, onTile) => {

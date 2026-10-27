@@ -48,6 +48,10 @@
   // are one step, and a busy answer after the third wait ends the run unless an answer landed with no
   // wait set since
   const BUSY_RETRY_MS = [15000, 30000, 60000];
+  // the reasons a street source fails with (Overpass.post's, plus the run's own "superseded" stop); an
+  // error with none of them is a bug, which is never worded or wrapped as a failed download. The
+  // street cache keeps its own list (OUTAGE_REASONS): add a new Overpass reason to both.
+  const STREET_REASONS = new Set(["busy", "blocked", "stalled", "offline", "server", "superseded"]);
 
   function StreetIndex(opts) {
     this.newFrac = opts.newFrac; // (lon,lat) -> 0..1 share of the corridor stamp still fogged
@@ -165,9 +169,12 @@
   // read), and refuses a wait that would end past it. opts.stale() true (ignored for cacheOnly) means a
   // newer run replaced this one: it asks nothing further and rejects with cause reason
   // "superseded". Rejects, with StreetIndex.downloadError, whenever a tile is missing: suggestions
-  // end in their error state rather than plan on part of the area. A bug thrown while reading a
-  // tile rejects as itself, not wrapped in a download error, so callers tell a bug from a
-  // "streets-partial" shortfall (StreetIndex.isDownloadError). Resolves with {done, total, missing}.
+  // end in their error state rather than plan on part of the area. Anything else rejects as itself,
+  // not wrapped in a download error (a bug reading a tile, in the caller's onProgress or in sleep
+  // during a busy wait, or a source error with no street reason), so callers tell a bug from a
+  // "streets-partial" shortfall (StreetIndex.isDownloadError); of several bugs the first is the
+  // rejection, unless, outside a cache-only read, the source rejects with a bug of its own (see the catch
+  // below). Resolves with {done, total, missing}.
   // opts.cacheOnly reads only what the street source already holds and resolves with the tiles
   // still missing (nearest first) instead of rejecting: what the Streets in fog look draws from.
   // A source that throws on such a read rejects as itself: no download ran, so it is a bug.
@@ -181,6 +188,7 @@
     const deadlineMs = opts.deadlineMs == null ? RUN_DEADLINE_MS : opts.deadlineMs;
     const started = this.now();
     const read = new Set(), want = new Set(todo.map((t) => t.x + ":" + t.y));
+    let broke = null; // the first bug thrown by code this run drives (reading a tile, onProgress, sleep): what the run rejects with, unless the source rejects with a bug of its own outside a cache-only read (see the catch below)
     const progress = (waitUntil) => {
       if (!opts.onProgress) return;
       opts.onProgress(waitUntil === undefined ? { done: read.size, total: todo.length } : { done: read.size, total: todo.length, waitUntil });
@@ -194,10 +202,17 @@
       // requests still open when the busy came can outlast the wait: no busy text for a wait
       // already over
       if (until <= this.now()) return true;
-      progress(until);
-      await this.sleep(Math.max(0, until - this.now()));
-      if (stale()) throw superseded();
-      progress();
+      // the caller's onProgress and the sleep are not the run's own stop: a throw from them is a bug, but
+      // the run's own superseded throw below is not
+      try {
+        progress(until);
+        await this.sleep(Math.max(0, until - this.now()));
+        if (stale()) throw superseded();
+        progress();
+      } catch (e) {
+        if (!broke && !(e && e.reason === "superseded")) broke = e;
+        throw e;
+      }
       return true;
     };
     const take = (t, answer) => {
@@ -215,22 +230,29 @@
       progress();
     };
     progress();
-    let answers, broke = null;
+    let answers;
     try {
       if (stale()) throw superseded();
       answers = await this.fetchStreets(todo, kind, (t, answer) => {
-        try { take(t, answer); } catch (e) { broke = e; throw e; }
+        try { take(t, answer); } catch (e) { if (!broke) broke = e; throw e; }
         if (cacheOnly || read.size === todo.length) return;
         if (stale()) throw superseded();
         if (this.now() - started >= deadlineMs) throw Object.assign(new Error("streets: run deadline passed"), { reason: "stalled" });
       }, cacheOnly ? { cacheOnly } : { now: this.now, wait });
     } catch (e) {
+      // outside a cache-only read, a source's own bug (not a download error, no street reason) is
+      // thrown ahead of one the run's own code hit. overpassFetch rejects with the first failure it
+      // recorded, the run's bug included, and StreetCache rethrows that error; `broke` covers a run bug whose source rejection
+      // is a download error.
+      if (!cacheOnly && !StreetIndex.isDownloadError(e) && !STREET_REASONS.has(e && e.reason)) throw e;
       if (broke) throw broke;
       if (cacheOnly) throw e;
       // a deadline raised on an earlier answer while the open requests landed the rest loses
       // nothing: the run is whole. A replaced run still rejects, so its caller does no more work.
-      if (read.size < todo.length || e.reason === "superseded") throw StreetIndex.downloadError(read.size, todo.length, e);
+      if (read.size < todo.length || (e && e.reason === "superseded")) throw StreetIndex.downloadError(read.size, todo.length, e);
     }
+    // a source that swallowed the caller's throw and resolved anyway still hands the bug on
+    if (broke) throw broke;
     if (cacheOnly) {
       // an answer in the Map alone is an expired copy: drawn from, but left uncovered so a
       // suggestion's run still asks for it
@@ -387,11 +409,12 @@
   // through opts.wait(until) -> false to give up (default: sleep until then on opts.now, default
   // Date.now) only once none is open, so the page shows the busy text only while nothing is coming.
   // An answer that lands while no wait is set starts the count again; one that lands beside a busy
-  // answer, with a wait already set, does not. Any other failure, a busy answer after the last step,
-  // a refused wait, or a throw from onTile or opts.wait (the caller's stop, or a bug): nothing new is
-  // sent, the open requests finish and hand their tiles over, then the run rejects with the failure
-  // that stopped it (for a refused wait, the last busy answer); a throw from onTile or opts.wait
-  // passes through unchanged, as it is not a download failure. Holds nothing, so a cache-only read
+  // answer, with a wait already set, does not. Any other failure carrying a street reason, a busy
+  // answer after the last step, a refused wait, or a throw from onTile or opts.wait (the caller's stop,
+  // or a bug), or any error with none of STREET_REASONS (a bug building a request or reading an
+  // answer): nothing new is sent, the open requests finish and hand their tiles over, then the run
+  // rejects with the failure that stopped it (for a refused wait, the last busy answer); the throws
+  // that are not a download failure pass through unchanged. Holds nothing, so a cache-only read
   // (opts.cacheOnly) gets no tile from it.
   StreetIndex.overpassFetch = function (tiles, kind, onTile, opts) {
     opts = opts || {};
@@ -403,7 +426,8 @@
     const got = () => tiles.filter((t) => out.has(t.x + ":" + t.y)).length;
     return new Promise((resolve, reject) => {
       let open = 0, busy = 0, until = 0, lastBusy = null, waiting = false, stop = null;
-      const fail = (e, passThrough) => { if (!stop) stop = { e, passThrough }; };
+      // an error without a street reason is a bug and passes through unchanged, like the caller's own throws
+      const fail = (e, passThrough) => { if (!stop) stop = { e, passThrough: passThrough || !STREET_REASONS.has(e && e.reason) }; };
       const pump = () => {
         if (stop) {
           if (!open) reject(stop.passThrough ? stop.e : StreetIndex.downloadError(got(), tiles.length, stop.e));
@@ -419,13 +443,23 @@
           }, (e) => { waiting = false; until = 0; fail(e, true); pump(); });
           return;
         }
-        while (queue.length && open < global.Overpass.cap()) send(queue.shift());
+        // a throw here (building a request, reading the cap) is a bug and may come from an answer's
+        // handler, where nothing would catch it and the run would never settle
+        try {
+          while (!stop && queue.length && open < global.Overpass.cap()) send(queue.shift());
+        } catch (e) { fail(e, true); }
+        if (stop) return pump();
         if (!open) resolve(out);
       };
       const send = (item) => {
-        open++;
         const ask = batchTiles(item.batch);
-        global.Overpass.post("data=" + encodeURIComponent(StreetIndex.rectQuery(batchBoxes(ask), kind))).then((json) => {
+        // the query is built and the request started before open++, so a throw from either never
+        // leaves a counted request that no answer closes
+        const request = global.Overpass.post("data=" + encodeURIComponent(StreetIndex.rectQuery(batchBoxes(ask), kind)));
+        open++;
+        // a throw from a handler (a bug) must still end the run: nothing else catches it
+        const guard = (handler) => (v) => { try { handler(v); } catch (e) { fail(e, true); pump(); } };
+        request.then(guard((json) => {
           open--;
           // only an answer sent after the last wait proves the server recovered; one already open
           // when the busy came does not
@@ -439,9 +473,9 @@
             try { if (onTile) onTile(t, answer); } catch (e) { fail(e, true); }
           }
           pump();
-        }, (e) => {
+        }), guard((e) => {
           open--;
-          if (e.reason !== "busy") fail(e, false);
+          if (!e || e.reason !== "busy") fail(e, false);
           else if (!stop) {
             lastBusy = e;
             queue.push(item);
@@ -451,7 +485,7 @@
             else until = Math.max(now() + BUSY_RETRY_MS[busy++], e.retryAt || 0);
           }
           pump();
-        });
+        }));
       };
       pump();
     });
@@ -471,9 +505,16 @@
   };
 
   // Whether a street download fell short (a downloadError), rather than a bug ensureRects rethrows
-  // as itself while reading a tile: only the first is worded as a download failure.
+  // as itself: only the first is worded as a download failure.
   StreetIndex.isDownloadError = function (e) {
     return !!e && typeof e.total === "number" && typeof e.done === "number";
+  };
+
+  // Whether a run ended because a newer one replaced it (opts.stale): nothing went wrong, so a caller
+  // neither shows nor logs it. A bug thrown while a run is stale is still logged by its class; a
+  // download failure while stale is simply not shown.
+  StreetIndex.isSuperseded = function (e) {
+    return StreetIndex.isDownloadError(e) && !!e.cause && e.cause.reason === "superseded";
   };
 
   // What a caller may pass on from a failed download, for StreetMessages to word: the reasons, counts and

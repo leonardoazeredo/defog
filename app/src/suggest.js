@@ -265,13 +265,15 @@
     // ground stays silent; waitUntil is set while a busy server is waited out
     const onProgress = (p) => emit(Object.assign({ loading: true, phase: "streets" }, p));
     try { await this.streets.ensureRects(rects, kind, { onProgress, stale }); } catch (e) {
-      if (stale()) return false;
-      // a bug is not a failed download: the class only, as a message can name tiles
+      if (global.StreetIndex.isSuperseded(e)) return false;
+      // a bug is not a failed download: the class only, as a message can name tiles. Logged even
+      // when the run is stale, which only keeps it from being shown.
       if (!global.StreetIndex.isDownloadError(e)) {
         console.error("[suggest] reading streets threw", e && e.name);
-        emit({ error: true, reason: "internal" });
+        if (!stale()) emit({ error: true, reason: "internal" });
         return false;
       }
+      if (stale()) return false;
       console.warn("[suggest] streets unavailable", e.reason);
       emit({ error: true, reason: "streets-fetch", download: global.StreetIndex.downloadFacts(e) });
       return false;
