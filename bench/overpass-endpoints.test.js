@@ -1,8 +1,9 @@
 // Overpass.post: endpoint order (NextGIS first by default, only with a key, offered by main.js once
-// the key is set), fallback, one request in flight, the 90 s first-byte and 120 s body guards;
-// holds after a 429 (30 s) and a 406 (an hour), each longer with Retry-After, a failed fetch and a
-// stall (30 s, ten minutes from the third stall in a row); no hold after a 500 or a non-JSON 200;
-// the rejection's reason.
+// the key is set), fallback, at most 4 posts open on NextGIS and 2 on overpass-api.de, the 90 s
+// first-byte and 120 s body guards; holds after a 429 (30 s) and a 406 (an hour), each longer with
+// Retry-After, a failed fetch and a stall (30 s, ten minutes from the third stall in a row); no hold
+// after a 500 or a non-JSON 200; the rejection's reason; a hold reaches posts waiting for a slot,
+// stalls of requests open together count once, and a hold is never shortened by one of them.
 // Fake fetch, fake clock, fake timers: nothing here waits on real time.
 //   node bench/overpass-endpoints.test.js
 "use strict";
@@ -66,8 +67,9 @@ async function advance(ms) {
   t = until;
 }
 // a post whose stalls are played out on the clock (each endpoint gets at most 120 s, so four minutes
-// covers both endpoints in either order)
-async function played(p) { await settle(); await advance(240_000); return p; }
+// covers both endpoints in either order); the caller's handler is attached only after that, so the
+// rejection is marked handled up front
+async function played(p) { p.catch(() => {}); await settle(); await advance(240_000); return p; }
 const rejection = (p) => p.then(() => assert.fail("expected a rejection"), (e) => {
   assert.ok(REASONS.includes(e.reason), "the reason is one of five words, got " + JSON.stringify(e.reason));
   return e;
@@ -163,24 +165,111 @@ process.on("exit", (code) => {
     await Overpass.post("data=x");
     assert.deepEqual(calls, [N]);
   }
-  { // 11. one request in flight: a second post() waits until the first has its answer
-    reset();
-    let release;
-    let inFlight = 0, maxInFlight = 0;
+  // a fetch that answers the URLs in `table` itself and keeps every other request open until the
+  // test lets it go, counting what is open per URL
+  function heldFetch(table = {}) {
+    const open = {}, most = {}, pending = [];
     global.fetch = (url, opts) => {
       calls.push(url);
-      inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
-      const done = () => { inFlight--; return { ok: true, status: 200, headers: headers(), json: async () => ({ from: url }) }; };
-      return calls.length === 1 ? new Promise((r) => { release = () => r(done()); }) : Promise.resolve(done());
+      assert.ok(opts.signal, "every request carries an abort signal");
+      if (table[url]) return table[url](url, opts);
+      open[url] = (open[url] || 0) + 1; most[url] = Math.max(most[url] || 0, open[url]);
+      return new Promise((resolve) => pending.push({ url, answer: (r) => { open[url]--; resolve(r || { ok: true, status: 200, headers: headers(), json: async () => ({ from: url }) }); } }));
     };
-    const first = Overpass.post("data=a");
-    const second = Overpass.post("data=b");
+    return { open, most, pending };
+  }
+  { // 11. NextGIS takes 4 posts at once and overpass-api.de 2; a further post waits for a free slot
+    reset({ order: null });
+    assert.equal(Overpass.cap(), 4, "the first endpoint's cap: NextGIS");
+    const f = heldFetch();
+    const posts = [1, 2, 3, 4, 5, 6].map((i) => Overpass.post("data=" + i));
     await settle();
-    assert.equal(calls.length, 1, "the second request waits");
-    release();
-    await Promise.all([first, second]);
+    assert.equal(f.open[N], 4, "four open on NextGIS");
+    assert.equal(calls.length, 4, "the fifth and sixth wait");
+    f.pending.shift().answer();
+    await settle();
+    assert.equal(calls.length, 5, "a slot freed: the fifth goes");
+    while (f.pending.length) { f.pending.shift().answer(); await settle(); }
+    await Promise.all(posts);
+    assert.equal(f.most[N], 4);
+    assert.equal(calls.length, 6);
+    reset({ key: null, order: null });
+    assert.equal(Overpass.cap(), 2, "no key: overpass-api.de alone, cap 2");
+    const g = heldFetch();
+    const three = [1, 2, 3].map((i) => Overpass.post("data=" + i));
+    await settle();
+    assert.equal(g.open[M], 2);
+    assert.equal(calls.length, 2, "the third waits for one of overpass-api.de's two slots");
+    while (g.pending.length) { g.pending.shift().answer(); await settle(); }
+    await Promise.all(three);
+    assert.equal(g.most[M], 2);
+    reset({ order: ["main", "nextgis"] });
+    assert.equal(Overpass.cap(), 2, "overpass-api.de first: its cap");
+  }
+  { // 11b. posts falling back from NextGIS take overpass-api.de's slots: never more than 2 open there
+    reset({ order: null });
+    const f = heldFetch({ [N]: status(500) });
+    const posts = [1, 2, 3, 4, 5, 6].map((i) => Overpass.post("data=" + i));
+    await settle();
+    assert.equal(f.open[M], 2, "two fell back and are open on overpass-api.de");
+    assert.equal(calls.filter((u) => u === M).length, 2, "the other fallbacks wait for a slot there");
+    while (f.pending.length) { f.pending.shift().answer(); await settle(); }
+    const got = await Promise.all(posts);
+    assert.deepEqual(got, posts.map(() => ({ from: M })));
+    assert.equal(f.most[M], 2);
+    assert.equal(calls.filter((u) => u === N).length, 6);
+  }
+  { // 11c. a hold one request earns reaches the posts already waiting for a slot: they send nothing there
+    reset({ key: null, order: null });
+    const f = heldFetch();
+    const posts = [1, 2, 3, 4].map((i) => Overpass.post("data=" + i));
+    const failed = Promise.all(posts.map((p, i) => (i === 1 ? null : rejection(p))));
+    await settle();
     assert.equal(calls.length, 2);
-    assert.equal(maxInFlight, 1);
+    f.pending.shift().answer({ ok: false, status: 429, headers: headers(), json: async () => null });
+    await settle();
+    assert.equal(calls.length, 2, "overpass-api.de is held: the waiting posts do not go out");
+    const [first, , third, fourth] = await failed;
+    for (const e of [first, third, fourth]) { assert.equal(e.reason, "busy"); assert.equal(e.retryAt, start + 30_000); }
+    f.pending.shift().answer();
+    assert.deepEqual(await posts[1], { from: M }, "the request already open carries on");
+    // with a key, the waiting posts fall back to NextGIS instead
+    reset({ order: ["main", "nextgis"] });
+    const g = heldFetch({ [N]: answer });
+    const more = [1, 2, 3].map((i) => Overpass.post("data=" + i));
+    await settle();
+    assert.deepEqual(calls, [M, M]);
+    g.pending.shift().answer({ ok: false, status: 429, headers: headers(), json: async () => null });
+    await settle();
+    assert.deepEqual(calls, [M, M, N, N], "the 429's own post and the waiting one go to NextGIS, not overpass-api.de");
+    g.pending.shift().answer();
+    assert.deepEqual(await Promise.all(more), [{ from: N }, { from: M }, { from: N }]);
+  }
+  { // 11d. requests open together that stall together are one stall, not three in a row: a 30 s hold
+    reset({ order: null });
+    global.fetch = routed({ [N]: silent, [M]: answer });
+    const posts = [1, 2, 3].map((i) => Overpass.post("data=" + i));
+    await settle(); await advance(90_000);
+    assert.deepEqual(await Promise.all(posts), [{ from: M }, { from: M }, { from: M }]);
+    calls = []; t += 30_001; global.fetch = routed({ [N]: answer, [M]: answer });
+    await Overpass.post("data=4");
+    assert.deepEqual(calls, [N], "three stalls at once hold 30 s, as one would");
+    // a hold earned meanwhile is never cut short by a request that was already open: a 406's hour
+    // outlasts the stall of the request beside it
+    reset({ key: null, order: null });
+    let n = 0;
+    global.fetch = (url, opts) => { calls.push(url); return n++ ? silent(url, opts) : status(406)(); };
+    const pair = [1, 2].map((i) => Overpass.post("data=" + i));
+    const both = Promise.all(pair.map(rejection));
+    await settle();
+    assert.equal(calls.length, 2, "both open before the 406 lands");
+    await advance(90_000);
+    const [blocked, stalled] = await both;
+    assert.equal(blocked.reason, "blocked");
+    assert.equal(stalled.reason, "blocked", "the stall beside it reports the hour's block, not its own 30 s");
+    calls = []; t += 60_000;
+    await rejection(Overpass.post("data=3"));
+    assert.deepEqual(calls, [], "still held for the 406's hour");
   }
   { // 12. an endpoint that sends no byte is abandoned at 90 s on the clock, the next one is asked in
     //     the same post, and the silent one is held exactly 30 s from the moment it was abandoned

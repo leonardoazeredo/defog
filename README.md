@@ -52,12 +52,14 @@ asks for an access key, sent in each request's address: the phone app carries a 
 which anyone who has the app can read out of it, and the page in a plain browser has none and asks
 only the main instance. NextGIS sees the phone's network address and the boxes asked for, as the main
 instance does. The street map comes in tiles of 0.025° (about 3 km tall, 2 km wide at mid
-latitudes), up to four per request (a 2×2 block when it can), nearest first, each saved in the
-street cache (below) as it arrives. When a server answers that it is busy, the app asks again after
-15, 30 and then 60 seconds, or at the server's own retry time when that is later,
-and stops at the fourth busy answer in a row. As the main instance's
-usage policy asks, the phone app's web view identifies the app to the server by its User-Agent and
-Referer. That server also caps each app's and each network address's daily use, and answers 406 once
+latitudes), one 2×2 block at most per request, nearest block first, up to four requests at once
+from NextGIS and two from the main instance, each tile saved in the street cache (below) as it
+arrives. When a server answers that it is busy, the app sends nothing new and asks again after 15,
+30 and then 60 seconds, or at the server's own retry time when that is later; busy answers that come
+together count once, and the app gives up when the server is still busy after the third wait with
+no answer between. As the main instance's usage policy asks, the phone app's web view identifies the
+app to the server by its User-Agent and Referer. That server also caps each app's and each network
+address's daily use, and answers 406 once
 the share is used up: the app then leaves that server alone for an hour, longer if the server says
 so. They only see bounding boxes, the same class of information the basemap tile servers already
 get, and the streets are compared against your fog entirely on your device; and **"Maps ↗"** opens
