@@ -59,6 +59,7 @@ describe("database replacer", () => {
       databaseKeyHex: async () => {
         throw lost;
       },
+      keyState: async () => "lost" as const,
       newDatabaseKeyHex: () => "cd".repeat(32),
       replaceLostDatabaseKey: async (keyHex) => {
         kept.push(keyHex);
@@ -132,6 +133,26 @@ describe("database replacer", () => {
     ]);
     expect(target.files.exists(REPLACED_DB)).toBe(false);
     expect(target.files.exists(RESTORING_DB)).toBe(false);
+  });
+
+  it("leaves the old file untouched when the key cannot be read but is not one a restore may replace", async () => {
+    await createActivityStore(target.db).add(
+      activity({ id: "33333333-3333-4333-8333-333333333333" }),
+    );
+    const { deps, kept } = lostKeyDeps({ keyState: async () => "existing" as const });
+    const backup = await openedBackup();
+    let exported = false;
+    backup.exportTo = async () => {
+      exported = true;
+    };
+    await expect(createDatabaseReplacer(deps)(backup)).rejects.toThrow(
+      expect.objectContaining({ name: "KeyLostError" }),
+    );
+    expect(exported).toBe(false);
+    expect(kept).toEqual([]);
+    expect((await createActivityStore(target.db).list()).map((a) => a.id)).toEqual([
+      "33333333-3333-4333-8333-333333333333",
+    ]);
   });
 
   it("keeps no new key when the device key still works", async () => {

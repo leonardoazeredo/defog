@@ -56,6 +56,8 @@ export interface ReplaceDeps {
   reopen(): Promise<void>;
   /** The device key as hex; rejects with the key-lost error when it cannot be read. */
   databaseKeyHex(): Promise<string>;
+  /** The native key state; only `lost` lets `replaceLostDatabaseKey` keep a new key. */
+  keyState(): Promise<"fresh" | "existing" | "lost">;
   /** A new random device key as hex; nothing is kept until `replaceLostDatabaseKey`. */
   newDatabaseKeyHex(): string;
   /** Keeps `keyHex` as the device key in place of a lost one. */
@@ -95,9 +97,12 @@ export function createDatabaseReplacer(
     try {
       return { hex: await deps.databaseKeyHex(), lost: false };
     } catch (e) {
-      // A lost key means the current file cannot be read by anyone, so a new key costs nothing more.
-      if (deps.isKeyLost(e)) return { hex: deps.newDatabaseKeyHex(), lost: true };
-      throw e;
+      if (!deps.isKeyLost(e)) throw e;
+      // Only a key in the native `lost` state (one of alias and key file gone) is replaced: the current file
+      // cannot be read by anyone, so a new key costs nothing more. A key that is there but does not
+      // unwrap is not replaced, so a file built for a new one would be thrown away after the swap.
+      if ((await deps.keyState()) !== "lost") throw e;
+      return { hex: deps.newDatabaseKeyHex(), lost: true };
     }
   }
 

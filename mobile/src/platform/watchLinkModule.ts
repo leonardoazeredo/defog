@@ -28,7 +28,7 @@ function checkedKeyHex(hex: string): string {
   return hex;
 }
 
-/** Keeps `keyHex` as the database key in place of a lost one; the native side refuses while a key still works. */
+/** Keeps `keyHex` as the database key in place of a lost one; the native side refuses unless the key state reads `lost`. */
 export async function replaceLostDatabaseKeyHex(keyHex: string): Promise<void> {
   await WatchLink.replaceLostDatabaseKey(checkedKeyHex(keyHex));
 }

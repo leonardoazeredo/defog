@@ -4,7 +4,12 @@ import { toHex } from "../bridge/hex.js";
 import { createDatabaseFiles } from "./backupPlatform.js";
 import { closeDatabase, createDatabase, historyGate } from "./database.js";
 import { createExpoSqliteDriver } from "./expoSqliteDriver.js";
-import { getDatabaseKeyHex, KeyLostError, replaceLostDatabaseKeyHex } from "./watchLinkModule.js";
+import {
+  getDatabaseKeyHex,
+  KeyLostError,
+  keyState,
+  replaceLostDatabaseKeyHex,
+} from "./watchLinkModule.js";
 
 export const replaceDatabase = createDatabaseReplacer({
   files: createDatabaseFiles(),
@@ -15,6 +20,7 @@ export const replaceDatabase = createDatabaseReplacer({
     if (history.kind !== "ready") throw new Error("history is unavailable");
   },
   databaseKeyHex: getDatabaseKeyHex,
+  keyState,
   newDatabaseKeyHex() {
     const bytes = getRandomBytes(32);
     try {

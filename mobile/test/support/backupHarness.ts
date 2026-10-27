@@ -95,6 +95,7 @@ export async function createHarness(opts: { free?: number } = {}): Promise<Harne
           await migrate(db);
         },
         databaseKeyHex: async () => "ab".repeat(32),
+        keyState: async () => "existing" as const,
         newDatabaseKeyHex: () => "cd".repeat(32),
         replaceLostDatabaseKey: async () => {},
         isKeyLost: (e) => e instanceof Error && e.name === "KeyLostError",
