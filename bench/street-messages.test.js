@@ -34,7 +34,7 @@ const err = (reason, more) => Object.assign(new Error("overpass HTTP 502"), { re
   assert.equal(describe(err("stalled"), now), "The street server is slow to answer. Try again in a few minutes.");
 }
 { // offline
-  assert.equal(describe(err("offline"), now), "You're offline. This area's street map is downloaded once and kept on the phone.");
+  assert.equal(describe(err("offline"), now), "You're offline. This area's street map is downloaded once and kept on this device.");
 }
 { // partial: the counts, and what stopped the run when the cause says
   const partial = (cause, more) => Object.assign(new Error("streets: got 7 of 12 tiles"), { reason: "streets-partial", done: 7, total: 12, cause }, more);

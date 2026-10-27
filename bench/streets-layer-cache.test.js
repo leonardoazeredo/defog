@@ -66,8 +66,7 @@ function source(held, net) {
     global.fetch = async () => { posts++; throw new Error("no network on a pan"); };
     const { layer, state, streets } = fakeLayer(undefined);
     streets.fetchStreets = StreetIndex.overpassFetch;
-    await layer._update();
-    global.fetch = origFetch;
+    try { await layer._update(); } finally { global.fetch = origFetch; }
     assert.equal(posts, 0, "a pan never reaches Overpass.post");
     assert.deepEqual(state.said.pop(), ["Street map known for 0 of 2 pieces here.", "Download this area"]);
   }
