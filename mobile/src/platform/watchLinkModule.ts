@@ -23,14 +23,14 @@ export async function getDatabaseKeyHex(): Promise<string> {
 }
 
 function checkedKeyHex(hex: string): string {
-  // The key is spliced into PRAGMA key with no bound parameter, so anything but 64 lowercase hex digits is refused rather than reaching SQL.
-  if (!/^[0-9a-f]{64}$/.test(hex)) throw new Error("watch link returned a malformed database key");
+  // The key is spliced into PRAGMA key with no bound parameter, so anything but 64 lowercase hex digits is refused rather than reaching SQL: a key read from native, and a generated one before native keeps it.
+  if (!/^[0-9a-f]{64}$/.test(hex)) throw new Error("malformed database key");
   return hex;
 }
 
-/** A new database key after the old one was lost; the native side refuses it while a key still works. */
-export async function resetLostDatabaseKeyHex(): Promise<string> {
-  return checkedKeyHex(await WatchLink.resetLostDatabaseKey());
+/** Keeps `keyHex` as the database key in place of a lost one; the native side refuses unless the key state reads `lost`. */
+export async function replaceLostDatabaseKeyHex(keyHex: string): Promise<void> {
+  await WatchLink.replaceLostDatabaseKey(checkedKeyHex(keyHex));
 }
 
 /** The system save-as picker; null when the user backs out. */

@@ -20,7 +20,8 @@ enum class KeyState(val wire: String) { FRESH("fresh"), EXISTING("existing"), LO
 
 /**
  * Keys that must stay reachable from Kotlin while JS is not running, so they live here and not in
- * expo-secure-store. JS reads only the database key, through WatchLinkModule.
+ * expo-secure-store. JS touches only the database key, through WatchLinkModule: it reads it, and
+ * hands in a new one in place of a lost one.
  */
 class Keys(context: Context) {
   // noBackupFilesDir is outside Auto Backup and device transfer; a restored file would be undecryptable.
@@ -47,30 +48,40 @@ class Keys(context: Context) {
   }
 
   /**
-   * A new database key for a key that is lost. Refuses any other state: replacing a key that still
-   * works would make the database it protects unreadable.
+   * Keeps `dek` as the database key in place of a key that is lost. Refuses any other state:
+   * replacing a key that still works would make the database it protects unreadable. The caller
+   * builds the new database with `dek` first, so a failed build never costs the old key. The old
+   * Keystore key and file go before `dek` is stored, so a failure in between leaves no usable key:
+   * the state reads as lost or fresh, never existing, and openHistory treats both as a lost key while
+   * the database file exists.
    */
-  fun replaceLostDatabaseKey(): ByteArray = synchronized(LOCK) {
+  fun replaceLostDatabaseKey(dek: ByteArray): Unit = synchronized(LOCK) {
+    require(dek.size == DATABASE_KEY_BYTES) { "database key has the wrong length" }
     check(keyState() == KeyState.LOST) { "the database key is not lost" }
     try {
       keyStore.deleteEntry(KEK_ALIAS)
     } catch (e: Exception) {
-      // A failed delete is tolerated: createDatabaseKey generates under the same alias next and fails loudly if that cannot work.
+      // A failed delete is tolerated: storeDatabaseKey generates under the same alias next and fails loudly if that cannot work.
     }
     databaseKeyFile.delete()
-    createDatabaseKey()
+    storeDatabaseKey(dek)
   }
 
   fun stagingKey(): SecretKey =
     synchronized(LOCK) { existingKey(STAGING_ALIAS) ?: generateKey(STAGING_ALIAS) }
 
-  private fun createDatabaseKey(): ByteArray {
-    val dek = ByteArray(DATABASE_KEY_BYTES).also { SecureRandom().nextBytes(it) }
+  private fun createDatabaseKey(): ByteArray =
+    ByteArray(DATABASE_KEY_BYTES).also {
+      SecureRandom().nextBytes(it)
+      storeDatabaseKey(it)
+    }
+
+  private fun storeDatabaseKey(dek: ByteArray) {
     val kek = generateKey(KEK_ALIAS)
     try {
       writeAtomically(KeyWrap(kek, KEK_ALIAS).wrap(dek))
     } catch (e: Exception) {
-      // An alias without its file reads as a lost key; a failed first write must not leave one behind.
+      // An alias without its file reads as a lost key; a failed write must not leave one behind.
       try {
         keyStore.deleteEntry(KEK_ALIAS)
       } catch (cleanup: Exception) {
@@ -78,7 +89,6 @@ class Keys(context: Context) {
       }
       throw e
     }
-    return dek
   }
 
   private fun writeAtomically(blob: ByteArray) {
@@ -101,13 +111,9 @@ class Keys(context: Context) {
   }
 
   private fun readDatabaseKey(): ByteArray {
-    val kek = try {
-      existingKey(KEK_ALIAS)
-    } catch (e: UnrecoverableKeyException) {
-      throw KeyLostException("Keystore key cannot be used", e)
-    } ?: throw KeyLostException("Keystore key is missing")
-    // Only the failures caught below mean the key is lost; anything else (a busy Keystore, an
-    // unreadable file) propagates because it may succeed on retry.
+    val kek = readKekOrLost { existingKey(KEK_ALIAS) }
+    // Besides readKekOrLost and the length check, only the failures caught below mean the key is lost;
+    // anything else (a busy Keystore, an unreadable file) propagates because it may succeed on retry.
     val dek = try {
       KeyWrap(kek, KEK_ALIAS).unwrap(databaseKeyFile.readBytes())
     } catch (e: AEADBadTagException) {
@@ -146,4 +152,30 @@ class Keys(context: Context) {
     const val STAGING_ALIAS = "crossfog.staging.v1"
     private const val DATABASE_KEY_BYTES = 32
   }
+}
+
+private const val KEK_RETRY_PAUSE_MS = 200L
+
+/**
+ * The key-encryption key `read` returns, or KeyLostException. UnrecoverableKeyException may also
+ * be transient, so that failure is read once more after `pause` before the key counts as lost: a
+ * lost key lets a restore replace it, and replacing one that still works would make the database
+ * unreadable. Any other failure propagates unchanged.
+ */
+internal fun readKekOrLost(
+  pause: () -> Unit = { Thread.sleep(KEK_RETRY_PAUSE_MS) },
+  read: () -> SecretKey?,
+): SecretKey {
+  val kek = try {
+    read()
+  } catch (first: UnrecoverableKeyException) {
+    pause()
+    try {
+      read()
+    } catch (e: UnrecoverableKeyException) {
+      e.addSuppressed(first)
+      throw KeyLostException("Keystore key cannot be used", e)
+    }
+  }
+  return kek ?: throw KeyLostException("Keystore key is missing")
 }

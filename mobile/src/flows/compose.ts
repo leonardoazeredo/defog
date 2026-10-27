@@ -49,6 +49,18 @@ export function createFlows(deps: ComposeDeps): ComposedFlows {
     if (stored > 0) await history.publish();
   }
 
+  // A restore swaps the database file, so an activity committed to the old one during it would be
+  // lost; the hand-off is held for the whole restore and runs again after it, taking what the watch
+  // sent meanwhile.
+  async function restoreHoldingHandOff(restore: () => Promise<boolean>): Promise<boolean> {
+    try {
+      return await handOff.hold(restore);
+    } finally {
+      void handOffAndPublish();
+    }
+  }
+
+  const { backup } = deps;
   return {
     ...createNoopFlows(),
     async ready() {
@@ -60,7 +72,10 @@ export function createFlows(deps: ComposeDeps): ComposedFlows {
     needTrack: history.needTrack,
     deleteActivity: history.deleteActivity,
     ...(deps.exportFlow && { exportBinary: deps.exportFlow.onChunk }),
-    ...(deps.backup && { backup: deps.backup.backup, restore: deps.backup.restore }),
+    ...(backup && {
+      backup: backup.backup,
+      restore: () => restoreHoldingHandOff(backup.restore),
+    }),
     ...(deps.settings && {
       settings: async (json: string) => deps.settings?.onSettings(json),
       settingsApplied: async () => deps.settings?.onApplied(),

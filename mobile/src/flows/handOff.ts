@@ -19,6 +19,11 @@ export interface HandOffDeps {
 export interface HandOffFlow {
   /** Never rejects: an offer that cannot be handled stays staged for the next run. */
   run(): Promise<HandOffResult>;
+  /**
+   * Runs `fn` with the hand-off held: no offer starts, and an activity committed meanwhile keeps its
+   * staged copy. The caller runs the hand-off again once `fn` settles.
+   */
+  hold<R>(fn: () => Promise<R>): Promise<R>;
 }
 
 // Only the error name is logged; messages and ids can tie a walk to a time and a place.
@@ -28,6 +33,7 @@ function warn(what: string, e: unknown): void {
 
 export function createHandOffFlow(deps: HandOffDeps): HandOffFlow {
   const { link, activities } = deps;
+  let held = 0;
 
   async function handle(
     activityId: string,
@@ -63,6 +69,9 @@ export function createHandOffFlow(deps: HandOffDeps): HandOffFlow {
       return null;
     }
 
+    // A restore may have replaced the database this commit went to; the staged copy stays, so the
+    // run after the restore stores the activity wherever it is missing and releases it.
+    if (held > 0) return { stored, released: false };
     // Only after the commit: a crash from here on leaves the copy staged, and the next run finds the
     // activity known, stores nothing and releases.
     try {
@@ -84,6 +93,7 @@ export function createHandOffFlow(deps: HandOffDeps): HandOffFlow {
       return result;
     }
     for (const { activityId } of pending) {
+      if (held > 0) break;
       const outcome = await handle(activityId);
       if (!outcome) continue;
       if (outcome.stored) result.stored++;
@@ -110,5 +120,14 @@ export function createHandOffFlow(deps: HandOffDeps): HandOffFlow {
     return waiting;
   }
 
-  return { run };
+  async function hold<R>(fn: () => Promise<R>): Promise<R> {
+    held++;
+    try {
+      return await fn();
+    } finally {
+      held--;
+    }
+  }
+
+  return { run, hold };
 }

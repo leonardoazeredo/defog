@@ -43,12 +43,16 @@ class WatchLinkModule : Module() {
       }
     }
 
-    // Only for a restore from the lost state, where the old database cannot be read by any key.
-    AsyncFunction("resetLostDatabaseKey") {
+    // Only for a restore from the lost state, where the old database cannot be read by any key; JS
+    // calls it once the database built with this key is in place.
+    AsyncFunction("replaceLostDatabaseKey") { keyHex: String ->
+      val dek = databaseKeyFromHex(keyHex)
       try {
-        keys.replaceLostDatabaseKey().toHex()
+        keys.replaceLostDatabaseKey(dek)
       } catch (e: IllegalStateException) {
         throw CodedException(INVALID_STATE, e.message, e)
+      } finally {
+        dek.fill(0)
       }
     }
 
@@ -146,3 +150,11 @@ class WatchLinkModule : Module() {
 }
 
 internal fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
+
+// The message never repeats the text: it is key material.
+internal fun databaseKeyFromHex(hex: String): ByteArray {
+  require(hex.length == 64 && hex.all { it in '0'..'9' || it in 'a'..'f' }) {
+    "malformed database key"
+  }
+  return ByteArray(32) { i -> hex.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
+}
