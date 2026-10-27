@@ -173,7 +173,7 @@
   // not wrapped in a download error (a bug reading a tile, in the caller's onProgress or in sleep
   // during a busy wait, or a source error with no street reason), so callers tell a bug from a
   // "streets-partial" shortfall (StreetIndex.isDownloadError); of several bugs the first is the
-  // rejection. Resolves with {done, total, missing}.
+  // rejection, unless the source rejects with a bug of its own (see the catch below). Resolves with {done, total, missing}.
   // opts.cacheOnly reads only what the street source already holds and resolves with the tiles
   // still missing (nearest first) instead of rejecting: what the Streets in fog look draws from.
   // A source that throws on such a read rejects as itself: no download ran, so it is a bug.
@@ -187,7 +187,7 @@
     const deadlineMs = opts.deadlineMs == null ? RUN_DEADLINE_MS : opts.deadlineMs;
     const started = this.now();
     const read = new Set(), want = new Set(todo.map((t) => t.x + ":" + t.y));
-    let broke = null; // the first bug thrown by code this run drives (reading a tile, onProgress, sleep): what the run rejects with
+    let broke = null; // the first bug thrown by code this run drives (reading a tile, onProgress, sleep): what the run rejects with, unless the source rejects with a bug of its own outside a cache-only read (see the catch below)
     const progress = (waitUntil) => {
       if (!opts.onProgress) return;
       opts.onProgress(waitUntil === undefined ? { done: read.size, total: todo.length } : { done: read.size, total: todo.length, waitUntil });
@@ -239,14 +239,19 @@
         if (this.now() - started >= deadlineMs) throw Object.assign(new Error("streets: run deadline passed"), { reason: "stalled" });
       }, cacheOnly ? { cacheOnly } : { now: this.now, wait });
     } catch (e) {
+      // outside a cache-only read, a source's own bug (not a download error, no street reason) is
+      // thrown ahead of one the run's own code hit. overpassFetch and StreetCache reject with the first
+      // failure they recorded, the run's bug included; `broke` covers a run bug whose source rejection
+      // is a download error.
+      if (!cacheOnly && !StreetIndex.isDownloadError(e) && !STREET_REASONS.has(e && e.reason)) throw e;
       if (broke) throw broke;
       if (cacheOnly) throw e;
-      // only a download error or a failure with a street reason is a download failure; anything else is a bug in the source
-      if (!StreetIndex.isDownloadError(e) && !STREET_REASONS.has(e && e.reason)) throw e;
       // a deadline raised on an earlier answer while the open requests landed the rest loses
       // nothing: the run is whole. A replaced run still rejects, so its caller does no more work.
-      if (read.size < todo.length || e.reason === "superseded") throw StreetIndex.downloadError(read.size, todo.length, e);
+      if (read.size < todo.length || (e && e.reason === "superseded")) throw StreetIndex.downloadError(read.size, todo.length, e);
     }
+    // a source that swallowed the caller's throw and resolved anyway still hands the bug on
+    if (broke) throw broke;
     if (cacheOnly) {
       // an answer in the Map alone is an expired copy: drawn from, but left uncovered so a
       // suggestion's run still asks for it
@@ -447,10 +452,13 @@
       };
       const send = (item) => {
         const ask = batchTiles(item.batch);
-        // built before open++: a throw after it would leave a request open that no answer ever closes
-        const body = "data=" + encodeURIComponent(StreetIndex.rectQuery(batchBoxes(ask), kind));
+        // the query is built and the request started before open++, so a throw from either never
+        // leaves a counted request that no answer closes
+        const request = global.Overpass.post("data=" + encodeURIComponent(StreetIndex.rectQuery(batchBoxes(ask), kind)));
         open++;
-        global.Overpass.post(body).then((json) => {
+        // a throw from a handler (a bug) must still end the run: nothing else catches it
+        const guard = (handler) => (v) => { try { handler(v); } catch (e) { fail(e, true); pump(); } };
+        request.then(guard((json) => {
           open--;
           // only an answer sent after the last wait proves the server recovered; one already open
           // when the busy came does not
@@ -464,9 +472,9 @@
             try { if (onTile) onTile(t, answer); } catch (e) { fail(e, true); }
           }
           pump();
-        }, (e) => {
+        }), guard((e) => {
           open--;
-          if (e.reason !== "busy") fail(e, false);
+          if (!e || e.reason !== "busy") fail(e, false);
           else if (!stop) {
             lastBusy = e;
             queue.push(item);
@@ -476,7 +484,7 @@
             else until = Math.max(now() + BUSY_RETRY_MS[busy++], e.retryAt || 0);
           }
           pump();
-        });
+        }));
       };
       pump();
     });
