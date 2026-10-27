@@ -70,6 +70,8 @@
     this.runs = [];                // stretches still to do: [{ll: [[lat, lng], ...], m, s, w, n, e}]
     this.doneRuns = [];            // stretches already defogged (kept for the "% of streets in fog" readout)
     this._cursor = 0;              // how many of streets.ways have been classified
+    this._wayEpoch = this.streets.wayEpoch; // the index's epoch the runs were made under
+    this._followIndex();
     this._busy = false; this._dirty = false;
     this._missingRects = [];       // rects of the view's pieces not on the device, what the button downloads
     this._known = 0;               // how many of the view's pieces are on the device, counted done by the button's download
@@ -142,15 +144,26 @@
     this._restyle();
   };
 
-  // The street source changed (the cache opened): recount what is on the device.
+  // A suggestion's or a route's run can replace ways drawn here, and nothing else would repaint them.
+  StreetsInFogLayer.prototype._followIndex = function () {
+    this.streets.onWaysChanged = () => this.refresh();
+  };
+
+  // Recount what is on the device: once main.js swaps in the street cache, and after a run replaces ways (see _followIndex).
   StreetsInFogLayer.prototype.refresh = function () {
     if (this.enabled) this._update();
   };
 
   // The fog changed (more tiles loaded): every way needs judging again.
   StreetsInFogLayer.prototype.invalidateFog = function () {
-    this.runs = []; this.doneRuns = []; this._cursor = 0;
+    this._rejudge();
     if (this.enabled) this._update();
+  };
+
+  // runs and cursor go together, and both are valid only for the index epoch recorded here
+  StreetsInFogLayer.prototype._rejudge = function () {
+    this.runs = []; this.doneRuns = []; this._cursor = 0;
+    this._wayEpoch = this.streets.wayEpoch;
   };
 
   StreetsInFogLayer.prototype._restyle = function () {
@@ -286,6 +299,8 @@
       // a throw in a later slice runs from onmessage, outside the promise: it must reject by hand
       const step = () => {
         try {
+          // a fresh answer replaced or dropped ways and the index does not say which: judge every way again
+          if (this._wayEpoch !== this.streets.wayEpoch) this._rejudge();
           const ways = this.streets.ways, t0 = performance.now();
           while (this._cursor < ways.length && performance.now() - t0 < SLICE_MS) this._classifyWay(ways[this._cursor++]);
           if (this._cursor < ways.length) ch.port2.postMessage(null); else finish(resolve);

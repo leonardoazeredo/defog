@@ -29,6 +29,7 @@ function fakeLayer(fetchStreets, view = TWO) {
     map: { on: () => {}, off: () => {}, removeLayer: () => {}, removeControl: () => {}, getZoom: () => 14 },
     streets
   });
+  layer._followIndex();
   return { layer, state, streets };
 }
 // Counts the normal (not cache-only) ensureRects runs, the downloads.
@@ -383,6 +384,27 @@ function source(held, net) {
     big.layer.map = view({ s: 51.0, w: 13.7, n: 51.16, e: 13.9 });
     await big.layer._update();
     assert.match(big.state.said.pop()[0], /Zoom in/);
+  }
+  { // a suggestion's run refreshes an expired tile the layer drew from: the lines are redrawn from the fresh ways only
+    const KY = 110540, line = (id, y) => ({ id, nodes: [id, id + 1], geometry: [{ lat: 51 + y / KY, lon: 13.7 }, { lat: 51 + y / KY, lon: 13.7 + 400 / (111320 * Math.cos(51 * Math.PI / 180)) }] });
+    const fetchStreets = async (tiles, kind, onTile, opts) => {
+      const out = new Map();
+      for (const t of tiles) {
+        if (t.x !== 548) continue;
+        const answer = { ways: [line(1, opts && opts.cacheOnly ? 100 : 300), ...(opts && opts.cacheOnly ? [line(5, 500)] : [])], groups: {} };
+        if (opts && opts.cacheOnly) out.set(t.x + ":" + t.y, answer); else onTile(t, answer);
+      }
+      return out;
+    };
+    const { layer, streets } = fakeLayer(fetchStreets);
+    delete layer._classifyNew;
+    Object.assign(layer, { runs: [], doneRuns: [], _cursor: 0, isNew: (lon, lat) => lat > 51 + 250 / KY });
+    await layer._update();
+    const lats = (list = layer.runs) => [...new Set(list.map((r) => r.id + "@" + Math.round((r.ll[0][0] - 51) * KY)))].sort();
+    assert.deepEqual([lats(), lats(layer.doneRuns)], [["5@500"], ["1@100"]], "drawn from the expired copy, way 1 already defogged");
+    await streets.ensureRects([{ s: 51.0, w: 13.7, n: 51.025, e: 13.725 }], "run");
+    await new Promise((r) => setTimeout(r, 20)); // onWaysChanged -> refresh() -> _update() repaints the layer; the timer lets that microtask run
+    assert.deepEqual([lats(), lats(layer.doneRuns)], [["1@300"], []], "the replaced way is drawn once, at its new place, the dropped one is gone, and the defogged stretch of the old line no longer counts");
   }
   console.log("streets-layer-cache.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });
