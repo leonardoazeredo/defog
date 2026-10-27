@@ -114,15 +114,9 @@
   // fetch holds motorways, which nothing else does, so only a car fetch covers cars.
   // withStale also counts the expired tiles already drawn from, so a cache-only read skips them.
   StreetIndex.prototype._uncovered = function (rects, kind, withStale) {
-    const seen = new Set();
     const has = (set, t) => set.has(StreetIndex.tileKey(kind, t.x, t.y)) ||
       (kind !== "car" && set.has(StreetIndex.tileKey("run", t.x, t.y)));
-    return rects.flatMap((r) => StreetIndex.tilesCovering(r)).filter((t) => {
-      const k = t.x + ":" + t.y;
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return !(has(this.tiles, t) || (withStale && has(this.staleTiles, t)));
-    });
+    return StreetIndex.tilesOf(rects).filter((t) => !(has(this.tiles, t) || (withStale && has(this.staleTiles, t))));
   };
 
   StreetIndex.prototype._cover = function (tiles, kind) {
@@ -162,9 +156,10 @@
   // Fetch streets for the tiles under the given rects (skipping ones already covered), in one
   // call to the street source, nearest the centre of the rects first. kind: "run" | "bike" |
   // "car". Each tile is read into the index as it arrives, so a failed run keeps what came and
-  // the next run asks only for the rest. opts.onProgress({done, total}) hears the start (done 0)
-  // and every tile, and {done, total, waitUntil} when the source waits out a busy server (then
-  // {done, total} again once the wait ends); opts.deadlineMs (default RUN_DEADLINE_MS) stops the run
+  // the next run asks only for the rest. opts.onProgress({done, total}) hears the start (done = the
+  // tiles already held, total = every tile under the rects; nothing when all are held) and every
+  // tile, and {done, total, waitUntil} when the source waits out a busy server (then {done, total}
+  // again once the wait ends); opts.deadlineMs (default RUN_DEADLINE_MS) stops the run
   // before its next request once passed (every tile of a request already answered or still open is
   // read), and refuses a wait that would end past it. opts.stale() true (ignored for cacheOnly) means a
   // newer run replaced this one: it asks nothing further and rejects with cause reason
@@ -182,7 +177,11 @@
     opts = opts || {};
     const cacheOnly = !!opts.cacheOnly;
     const todo = this._uncovered(rects, kind, cacheOnly);
-    if (!todo.length) return { done: 0, total: 0, missing: [] };
+    // total is every tile under the rects and the tiles already held count as done from the first
+    // report, so a retry shows the same N as the run before it. In a normal run an expired copy is
+    // not held: it is asked for again and counted once it is read.
+    const total = StreetIndex.tilesOf(rects).length, held = total - todo.length;
+    if (!todo.length) return { done: total, total, missing: [] };
     this._anchor(rects[0].s);
     StreetIndex.nearestFirst(todo, rects);
     const deadlineMs = opts.deadlineMs == null ? RUN_DEADLINE_MS : opts.deadlineMs;
@@ -191,7 +190,7 @@
     let broke = null; // the first bug thrown by code this run drives (reading a tile, onProgress, sleep): what the run rejects with, unless the source rejects with a bug of its own outside a cache-only read (see the catch below)
     const progress = (waitUntil) => {
       if (!opts.onProgress) return;
-      opts.onProgress(waitUntil === undefined ? { done: read.size, total: todo.length } : { done: read.size, total: todo.length, waitUntil });
+      opts.onProgress(waitUntil === undefined ? { done: held + read.size, total } : { done: held + read.size, total, waitUntil });
     };
     const stale = () => !cacheOnly && !!opts.stale && opts.stale();
     const superseded = () => Object.assign(new Error("streets: a newer run replaced this one"), { reason: "superseded" });
@@ -249,7 +248,7 @@
       if (cacheOnly) throw e;
       // a deadline raised on an earlier answer while the open requests landed the rest loses
       // nothing: the run is whole. A replaced run still rejects, so its caller does no more work.
-      if (read.size < todo.length || (e && e.reason === "superseded")) throw StreetIndex.downloadError(read.size, todo.length, e);
+      if (read.size < todo.length || (e && e.reason === "superseded")) throw StreetIndex.downloadError(held + read.size, total, e, read.size);
     }
     // a source that swallowed the caller's throw and resolved anyway still hands the bug on
     if (broke) throw broke;
@@ -264,14 +263,14 @@
         read.add(id);
         progress();
       }
-      return { done: read.size, total: todo.length, missing: todo.filter((t) => !read.has(t.x + ":" + t.y)) };
+      return { done: held + read.size, total, missing: todo.filter((t) => !read.has(t.x + ":" + t.y)) };
     }
     // a source may hand tiles over in its Map alone
     for (const t of todo) take(t, answers && answers.get(t.x + ":" + t.y));
     const lost = todo.find((t) => !read.has(t.x + ":" + t.y));
     // the source answered but left a tile out: a server's fault, not the network's, worded generically
-    if (lost) throw StreetIndex.downloadError(read.size, todo.length, Object.assign(new Error(`street source: no answer for tile ${lost.x}:${lost.y} (${kind})`), { reason: "server" }));
-    return { done: read.size, total: todo.length, missing: [] };
+    if (lost) throw StreetIndex.downloadError(held + read.size, total, Object.assign(new Error(`street source: no answer for tile ${lost.x}:${lost.y} (${kind})`), { reason: "server" }), read.size);
+    return { done: total, total, missing: [] };
   };
 
   // One tile's answer into the index; the version bump tells graphs built before it to rebuild.
@@ -329,6 +328,14 @@
     const tiles = [];
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) tiles.push({ x, y });
     return tiles;
+  };
+  // Every tile under the rects, each once.
+  StreetIndex.tilesOf = (rects) => {
+    const seen = new Set();
+    return rects.flatMap((r) => StreetIndex.tilesCovering(r)).filter((t) => {
+      const k = t.x + ":" + t.y;
+      return !seen.has(k) && seen.add(k);
+    });
   };
   StreetIndex.tileBounds = ({ x, y }) => ({ s: y * TILE_DEG, w: x * TILE_DEG, n: (y + 1) * TILE_DEG, e: (x + 1) * TILE_DEG });
   StreetIndex.tileKey = (kind, x, y) => kind + ":" + x + ":" + y;
@@ -492,14 +499,16 @@
   };
 
   // The error a street source or ensureRects rejects with when a tile is missing: how many of the
-  // tiles asked for arrived (done of total), the failure that stopped the run as `cause`, its
+  // tiles are in (done of total), the failure that stopped the run as `cause`, its
   // retryAt, and reason "streets-partial" once any tile arrived (else the cause's own reason).
+  // `arrived` is how many came in this run and defaults to done: ensureRects counts tiles the index
+  // already held in done, which must not turn an offline run into a partial one.
   // A cause that is itself such an error is unwrapped, so `cause` is always the first failure.
-  StreetIndex.downloadError = function (done, total, cause) {
+  StreetIndex.downloadError = function (done, total, cause, arrived) {
     const first = cause && typeof cause.total === "number" && cause.cause ? cause.cause : cause;
     const err = new Error(`streets: got ${done} of ${total} tiles` + (first && first.message ? ": " + first.message : ""));
     err.done = done; err.total = total; err.cause = first;
-    err.reason = done > 0 ? "streets-partial" : first && first.reason;
+    err.reason = (arrived === undefined ? done : arrived) > 0 ? "streets-partial" : first && first.reason;
     if (first && first.retryAt) err.retryAt = first.retryAt;
     return err;
   };

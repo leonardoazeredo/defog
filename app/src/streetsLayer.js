@@ -72,6 +72,7 @@
     this._cursor = 0;              // how many of streets.ways have been classified
     this._busy = false; this._dirty = false;
     this._missingRects = [];       // rects of the view's pieces not on the device, what the button downloads
+    this._known = 0;               // how many of the view's pieces are on the device, counted done by the button's download
     this._fetching = false;        // the button's download is running
     this._failure = null;          // its failure's wording, kept until the map moves
     this._view = 0;                // bumped by each move, so a download finishing late cannot word the new view
@@ -221,6 +222,7 @@
         const cached = await this.streets.ensureRects(tiles, "run", { cacheOnly: true });
         if (!current()) return;
         this._missingRects = cached.missing.map(global.StreetIndex.tileBounds);
+        this._known = cached.done;
         await this._classifyNew();
         if (!current()) return;
         this._draw();
@@ -236,7 +238,6 @@
     }
   };
 
-  // n comes from the view: ensureRects' total leaves out the pieces already covered
   StreetsInFogLayer.prototype._sayKnown = function (n) {
     const missing = this._missingRects.length, known = "Street map known for " + (n - missing) + " of " + n + " pieces here.";
     const button = (label) => ({ label, run: () => this._download() });
@@ -249,13 +250,15 @@
   // The button: the normal download of the pieces the badge counted, never more than
   // FETCH_MAX_TILES pieces; a failure waits for the next tap, there is no quiet retry.
   StreetsInFogLayer.prototype._download = async function () {
-    const rects = this._missingRects, view = this._view;
+    // the download asks only for the missing pieces, but its count is the view's, as the badge's is:
+    // the pieces already on the device (known) are done, so a retry shows the same total
+    const rects = this._missingRects, view = this._view, known = this._known;
     if (this._fetching || !this.enabled || this._tooBig || !rects.length || rects.length > FETCH_MAX_TILES) return;
     this._fetching = true;
     this._failure = null;
     // switched off or zoomed out mid-download: a late count must not replace that badge
     const onProgress = ({ done, total, waitUntil }) => {
-      if (this.enabled && !this._tooBig) this._say(global.StreetMessages.progress(done, total, waitUntil, Date.now()));
+      if (this.enabled && !this._tooBig) this._say(global.StreetMessages.progress(done + known, total + known, waitUntil, Date.now()));
     };
     try { await this.streets.ensureRects(rects, "run", { onProgress }); }
     catch (e) {
@@ -263,7 +266,10 @@
       if (!download) console.error("[streets layer] downloading streets threw", e && e.name);
       else if (view === this._view) console.warn("[streets layer] streets unavailable", e.reason);
       // no retry time: the badge stays up with nothing to count it down, and the button is the retry
-      if (view === this._view) this._failure = download ? global.StreetMessages.describe(Object.assign(global.StreetIndex.downloadFacts(e), { retryAt: null })) : INTERNAL;
+      if (view === this._view) {
+        const facts = download && global.StreetIndex.downloadFacts(e);
+        this._failure = download ? global.StreetMessages.describe(Object.assign(facts, { done: facts.done + known, total: facts.total + known, retryAt: null })) : INTERNAL;
+      }
     } finally {
       this._fetching = false;
     }
