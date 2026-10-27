@@ -118,26 +118,36 @@
   // first reason in this list wins, most actionable first. The reasons: blocked, a 406 was seen or an
   // endpoint is held after one; busy, 429, 502 or 504; stalled, no answer or a body that stopped;
   // offline, the browser says so, or every fetch failed and no status was seen; server, anything
-  // else. `retryAt` (on the Overpass._now clock) is set only when every endpoint is on hold: the end of
-  // the first hold, before which no post goes out; when the reason is blocked, the end of the earliest
-  // block instead, which can come after another endpoint's hold ends: a post in between still goes out.
+  // else; superseded, opts.stale() (below). The endpoints this post asked speak first: an endpoint skipped as held gives the reason only
+  // when none was asked, so a NextGIS 502 during overpass-api.de's 406 hour is busy, which a run waits
+  // out, rather than a block that ends it. `retryAt` (on the Overpass._now clock) is set only when every
+  // endpoint is on hold: the end of the first hold, before which no post goes out; when the reason is
+  // blocked, the end of the earliest block instead, which can come after another endpoint's hold ends:
+  // a post in between still goes out.
   //
   // A post waits for a free slot on the endpoint it is about to ask, and a fallback for one on the
-  // next; one that waited is not sent where a request finished meanwhile set a hold.
-  async function post(body) {
+  // next; one that waited is not sent where a request finished meanwhile set a hold. opts.stale() true
+  // (the caller's run was replaced) before a request goes out sends nothing and rejects with reason
+  // "superseded", releasing the slot when it held one: a replaced run's posts still waiting for a slot would otherwise
+  // go out ahead of the run that replaced it.
+  async function post(body, opts) {
+    const stale = opts && opts.stale;
+    const superseded = () => Object.assign(new Error("overpass: the caller's run was replaced"), { reason: "superseded" });
     const names = order.filter((name) => urlOf(name));
     const urls = names.map(urlOf);
-    // one {why, error} per endpoint, a held one contributing its hold's: the error thrown is always
-    // the one that earned the reason, never another endpoint's; only the reason offline can fall back
-    // to the synthetic browser-offline error
-    const failures = [];
+    // one {why, error} per endpoint asked in failures, per endpoint skipped as held (its hold's) in
+    // heldOnly: the error thrown is always the one that earned the reason, never another endpoint's;
+    // only the reason offline can fall back to the synthetic browser-offline error.
+    const failures = [], heldOnly = [];
     let anyStatus = false;
     for (let i = 0; i < names.length; i++) {
       const name = names[i], url = urls[i], s = stateOf(url);
-      if (s.until > Overpass._now()) { failures.push({ why: s.why, error: s.error }); continue; }
+      if (stale && stale()) throw superseded();
+      if (s.until > Overpass._now()) { heldOnly.push({ why: s.why, error: s.error }); continue; }
       await acquire(name);
+      if (stale && stale()) { release(name); throw superseded(); }
       // a request that held a slot meanwhile may have put the endpoint on hold
-      if (s.until > Overpass._now()) { release(name); failures.push({ why: s.why, error: s.error }); continue; }
+      if (s.until > Overpass._now()) { release(name); heldOnly.push({ why: s.why, error: s.error }); continue; }
       const sent = Overpass._now();
       let r;
       try { r = await attempt(url, body); } finally { release(name); }
@@ -159,6 +169,7 @@
       if (holdMs) { s.until = Overpass._now() + holdMs; s.heldAt = Overpass._now(); s.why = why; s.error = r.error; }
       failures.push({ why, error: r.error });
     }
+    if (!failures.length) failures.push(...heldOnly);
     // a failed fetch means offline only when nothing answered at all: a status proves the network up
     for (const f of failures) if (f.why === "offline" && anyStatus) f.why = "server";
     if (typeof navigator !== "undefined" && navigator.onLine === false) failures.push({ why: "offline", error: new Error("overpass: the browser is offline") });

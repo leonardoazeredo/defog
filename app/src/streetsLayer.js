@@ -273,7 +273,10 @@
     const onProgress = ({ done, total, waitUntil }) => {
       if (this.enabled && !this._tooBig) this._say(global.StreetMessages.progress(done + known, total + known, waitUntil, Date.now()));
     };
-    try { await this.streets.ensureRects(rects, "run", { onProgress }); }
+    // the download belongs to the view it was tapped in: once the map moves or the look is switched off
+    // it asks nothing further, so it does not keep the server busy through its busy waits
+    const stale = () => view !== this._view || !this.enabled;
+    try { await this.streets.ensureRects(rects, "run", { onProgress, stale }); }
     catch (e) {
       const download = global.StreetIndex.isDownloadError(e);
       if (!download) console.error("[streets layer] downloading streets threw", e && e.name);

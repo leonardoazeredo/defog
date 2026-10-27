@@ -382,6 +382,77 @@ async function testCase(body) {
     assert.deepEqual([err.done, err.total, err.cause.reason, srv.asked.length], [4, 5, "busy", 5]);
     assert.deepEqual(clock.sleeps, [15000, 30000, 60000]);
   });
+  await testCase(async () => { // after the third busy wait the order the answers land in does not decide the outcome: two street
+    // blocks asked again together, one busy and one bringing its tiles, in either order, restart the count and wait 15 s;
+    // both busy end the run, but only once the second has landed
+    for (const order of ["tiles, then busy", "busy, then tiles", "busy, then busy"]) {
+      global.Overpass._reset();
+      const clock = fakeClock();
+      const srv = heldServer();
+      const s = new StreetIndex({ newFrac: () => 1, now: clock.now, sleep: clock.sleep });
+      let settled = false;
+      const run = s.ensureRects(fiveTiles, "run").then((r) => r, (e) => e).finally(() => { settled = true; });
+      await settle();
+      for (let step = 0; step < 3; step++) { await srv.reply(0, 502); await srv.reply(0, 502); }
+      assert.deepEqual([clock.sleeps, srv.pending.length], [[15000, 30000, 60000], 2], order);
+      if (order === "tiles, then busy") { await srv.reply(0); await srv.reply(0, 502); }
+      else {
+        await srv.reply(0, 502);
+        assert.equal(settled, false, order + ": the run waits for the request still open");
+        await srv.reply(0, order === "busy, then tiles" ? undefined : 502);
+      }
+      const got = order === "busy, then busy" ? await run : null;
+      if (got) {
+        assert.deepEqual([got.done, got.total, got.cause.reason, clock.sleeps.length], [0, 5, "busy", 3], order);
+        continue;
+      }
+      assert.deepEqual([clock.sleeps, srv.pending.length], [[15000, 30000, 60000, 15000], 1], order);
+      await srv.reply(0);
+      const whole = await run;
+      assert.deepEqual([whole.done, whole.total], [5, 5], order);
+    }
+  });
+  await testCase(async () => { // overpass-api.de held for its 406 and NextGIS busy: the run waits and asks NextGIS again
+    withKey();
+    const clock = fakeClock();
+    global.Overpass._now = clock.now;
+    let nextgis = 0;
+    global.fetch = async (url, opts) => {
+      if (!url.includes("nextgis")) return { ok: false, status: 406, json: async () => ({}) };
+      nextgis++;
+      if (nextgis <= 2) return { ok: false, status: nextgis === 1 ? 500 : 502, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ elements: tileElements(boxesOf(opts.body)) }) };
+    };
+    // NextGIS 500, overpass-api.de 406: held an hour
+    assert.equal(await global.Overpass.post("data=x").then(() => null, (e) => e.reason), "blocked");
+    const s = new StreetIndex({ newFrac: () => 1, now: clock.now, sleep: clock.sleep });
+    const got = await s.ensureRects(rect, "run");
+    assert.deepEqual([got.done, got.total, nextgis, clock.sleeps], [1, 1, 3, [15000]]);
+    delete global.crossfogNextgisKey;
+    global.Overpass._reset();
+  });
+  await testCase(async () => { // a replaced run's posts still waiting for an Overpass slot are not sent, so the next run's go first
+    global.Overpass._reset();
+    const srv = heldServer();
+    const first = new StreetIndex({ newFrac: () => 1 }).ensureRects(fiveTiles, "run");
+    await settle();
+    let stale = false;
+    const replaced = new StreetIndex({ newFrac: () => 1 }).ensureRects([{ s: 51.1, w: 13.7, n: 51.15, e: 13.8 }], "run", { stale: () => stale })
+      .then(() => null, (e) => e);
+    await settle();
+    assert.equal(srv.asked.length, 2, "the first run holds both of overpass-api.de's slots; the second's two posts wait");
+    stale = true;
+    const next = new StreetIndex({ newFrac: () => 1 }).ensureRects([{ s: 51.2, w: 13.7, n: 51.225, e: 13.725 }], "run");
+    await settle();
+    await srv.reply(0);
+    await srv.reply(0);
+    assert.deepEqual(srv.asked.slice(2), [box(548, 2048)], "the replaced run sent nothing; the next run's post went out");
+    const err = await within(replaced);
+    assert.deepEqual([err.done, err.total, err.cause.reason], [0, 8, "superseded"]);
+    await srv.reply(0);
+    assert.equal((await within(next)).done, 1);
+    assert.equal((await within(first)).done, 5);
+  });
   await testCase(async () => { // a busy with a later retry time waits until then
     global.Overpass._reset();
     const clock = fakeClock();
