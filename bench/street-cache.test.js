@@ -127,7 +127,7 @@ const T = (x, y) => ({ x, y });
   { // a network failure is an error, unless every missing tile has an expired copy: then those serve
     let fail = false;
     const base = fakeNetwork();
-    const network = async (tiles, kind) => { if (fail) throw new Error("offline"); return base.network(tiles, kind); };
+    const network = async (tiles, kind) => { if (fail) throw Object.assign(new Error("offline"), { reason: "offline" }); return base.network(tiles, kind); };
     let t = 0;
     const c = StreetCache.create({ store: TileStore.memory({ maxEntries: 10 }), network, now: () => t, maxAgeMs: 90 * DAY });
     await c.fetchStreets([T(1, 1)], "run");
@@ -226,7 +226,7 @@ const T = (x, y) => ({ x, y });
     const c = StreetCache.create({ store, network: base.network, now: () => t, maxAgeMs: 90 * DAY });
     await c.fetchStreets([T(2, 1)], "run");
     t = 200 * DAY;
-    const network = async (tiles, kind, onTile) => { await base.network(tiles.slice(0, 1), kind, onTile); throw new Error("offline"); };
+    const network = async (tiles, kind, onTile) => { await base.network(tiles.slice(0, 1), kind, onTile); throw Object.assign(new Error("offline"), { reason: "offline" }); };
     const seen = [];
     const got = await StreetCache.create({ store, network, now: () => t, maxAgeMs: 90 * DAY })
       .fetchStreets([T(1, 1), T(2, 1)], "run", (tile) => seen.push(tile.x + ":" + tile.y));
@@ -256,6 +256,23 @@ const T = (x, y) => ({ x, y });
     const err = await StreetCache.create({ store, network: base.network, now: () => t, maxAgeMs: 90 * DAY })
       .fetchStreets([T(1, 1), T(2, 1)], "run", () => { throw bug; }).then(() => null, (e) => e);
     assert.equal(err, bug);
+  }
+  { // a bug thrown by the network source is not an outage: no expired copy stands in for it
+    let t = 0;
+    const base = fakeNetwork();
+    const store = TileStore.memory({ maxEntries: 10 });
+    await StreetCache.create({ store, network: base.network, now: () => t }).fetchStreets([T(1, 1), T(2, 1)], "run");
+    t = 200 * DAY;
+    const bug = new TypeError("bug");
+    const network = async () => { throw bug; };
+    const err = await StreetCache.create({ store, network, now: () => t, maxAgeMs: 90 * DAY })
+      .fetchStreets([T(1, 1), T(2, 1)], "run").then(() => null, (e) => e);
+    assert.equal(err, bug);
+    // a download error from the default source (streets-partial) is an outage like the others
+    const partial = Object.assign(new Error("got 1 of 2"), { reason: "streets-partial" });
+    const got = await StreetCache.create({ store, network: async () => { throw partial; }, now: () => t, maxAgeMs: 90 * DAY })
+      .fetchStreets([T(1, 1), T(2, 1)], "run");
+    assert.deepEqual([...got.keys()].sort(), ["1:1", "2:1"]);
   }
   { // a failed store write is logged once per cache, by the error's name alone
     const { network } = fakeNetwork();

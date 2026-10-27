@@ -70,6 +70,7 @@ const KEY = "test-key";
 const withKey = () => { global.Overpass._reset(); global.crossfogNextgisKey = KEY; };
 // 16 tiles in the four 2x2 blocks of 548..551 x 2040..2043; 24 tiles in six blocks out to x 553
 const sixteen = [{ s: 51.0, w: 13.7, n: 51.1, e: 13.8 }];
+const twelve = [{ s: 51.0, w: 13.7, n: 51.05, e: 13.84 }]; // three blocks
 const twentyFour = [{ s: 51.0, w: 13.7, n: 51.1, e: 13.85 }];
 // the bbox of tiles x0..x1 by y0..y1, as a query writes it
 const span = (x0, y0, x1, y1) => [y0, x0, y1 + 1, x1 + 1].map((v) => (v * StreetIndex.TILE_DEG).toFixed(4)).join(",");
@@ -580,6 +581,84 @@ async function testCase(body) {
     const err = await s.ensureRects(rect, "run").then(() => null, (e) => e);
     assert.ok(err instanceof TypeError);
     assert.equal(err.total, undefined);
+  });
+  await testCase(async () => { // a request that cannot be built (a bug) rejects the run as itself, whether it is the first pump's
+    // second request (nothing answered yet; cap 2 without a key) or a later pump's (after an answer), and the requests already open
+    // still hand their tiles over; the run never hangs
+    const real = StreetIndex.rectQuery;
+    try {
+      for (const failAt of [2, 3]) {
+        global.Overpass._reset();
+        tileServer();
+        const bug = new TypeError("bug");
+        let calls = 0;
+        StreetIndex.rectQuery = (...a) => { if (++calls === failAt) throw bug; return real(...a); };
+        const heard = [];
+        const hung = Symbol("hung");
+        const err = await Promise.race([
+          StreetIndex.overpassFetch(StreetIndex.tilesCovering(twelve[0]), "run", (t) => heard.push(t.x + ":" + t.y)).then(() => null, (e) => e),
+          new Promise((r) => setTimeout(() => r(hung), 500)),
+        ]);
+        assert.notEqual(err, hung, `rectQuery throwing on call ${failAt} left the run pending`);
+        assert.equal(err, bug);
+        assert.ok(heard.length >= 4, "the first request's tiles reached onTile");
+      }
+    } finally { StreetIndex.rectQuery = real; }
+  });
+  await testCase(async () => { // through ensureRects the same bug is the run's rejection as itself, not a download error
+    const real = StreetIndex.rectQuery;
+    try {
+      global.Overpass._reset();
+      tileServer();
+      const bug = new TypeError("bug");
+      let calls = 0;
+      StreetIndex.rectQuery = (...a) => { if (++calls === 3) throw bug; return real(...a); };
+      const err = await new StreetIndex({ newFrac: () => 1 }).ensureRects(twelve, "run").then(() => null, (e) => e);
+      assert.equal(err, bug);
+    } finally { StreetIndex.rectQuery = real; }
+  });
+  await testCase(async () => { // a bug thrown by the caller's onProgress or by sleep during a busy wait rejects as itself
+    for (const where of ["onProgress", "sleep"]) {
+      global.Overpass._reset();
+      const clock = fakeClock();
+      tileServer((n) => n >= 2 && 502);
+      const bug = new TypeError("bug in " + where);
+      const s = new StreetIndex({ newFrac: () => 1, now: clock.now, sleep: where === "sleep" ? async () => { throw bug; } : clock.sleep });
+      const opts = where === "onProgress" ? { onProgress: (p) => { if ("waitUntil" in p) throw bug; } } : {};
+      const err = await s.ensureRects(fiveTiles, "run", opts).then(() => null, (e) => e);
+      assert.equal(err, bug, where);
+      assert.equal(StreetIndex.isDownloadError(err), false);
+    }
+  });
+  await testCase(async () => { // only a failure carrying a street reason is a download failure: a source's other throw rejects as itself
+    const bug = new TypeError("bug");
+    const bad = await new StreetIndex({ newFrac: () => 1, fetchStreets: async () => { throw bug; } }).ensureRects(rect, "run").then(() => null, (e) => e);
+    assert.equal(bad, bug);
+    for (const reason of ["busy", "blocked", "stalled", "offline", "server"]) {
+      const cause = Object.assign(new Error("x"), { reason });
+      const err = await new StreetIndex({ newFrac: () => 1, fetchStreets: async () => { throw cause; } }).ensureRects(rect, "run").then(() => null, (e) => e);
+      assert.ok(StreetIndex.isDownloadError(err), reason);
+      assert.equal(err.cause, cause);
+    }
+    // overpassFetch does not dress a bug in reading an answer as a download failure either
+    global.Overpass._reset();
+    global.fetch = async () => ({ ok: true, status: 200, json: async () => ({ elements: [] }) });
+    const real = StreetIndex.splitAnswer;
+    StreetIndex.splitAnswer = () => { throw bug; };
+    try {
+      const err = await StreetIndex.overpassFetch([T(548, 2040)], "run").then(() => null, (e) => e);
+      assert.equal(err, bug);
+    } finally { StreetIndex.splitAnswer = real; }
+  });
+  await testCase(async () => { // several bugs in one run: the first is the rejection, so the class a caller logs is the first's
+    global.Overpass._reset();
+    tileServer();
+    const first = new TypeError("first"), second = new RangeError("second");
+    let n = 0;
+    const s = new StreetIndex({ newFrac: () => 1 });
+    s._read = () => { throw ++n === 1 ? first : second; };
+    const err = await s.ensureRects(sixteen, "run").then(() => null, (e) => e);
+    assert.equal(err, first);
   });
   await testCase(async () => { // the cause's retryAt is copied onto the error, and its reason when no tile arrived
     const cause = Object.assign(new Error("overpass HTTP 429"), { reason: "busy", retryAt: 12345 });

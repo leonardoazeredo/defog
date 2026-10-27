@@ -99,6 +99,15 @@ function setup(over) {
     assert.equal(handed, stale);
     assert.deepEqual(logged, []);
   }
+  { // a bug thrown while the request is stale is not shown (a newer request replaced it) but its class is logged
+    const logged = [], orig = console.error;
+    console.error = (...a) => logged.push(a);
+    const { route } = setup({ streets: { ensureRects: async () => { throw new TypeError("cannot read tile 273:1020"); } } });
+    const r = await route([pt(0, 0), pt(1000, 0)], "trekking", null, () => true);
+    console.error = orig;
+    assert.deepEqual(r, { error: true, why: { reason: "superseded" } });
+    assert.deepEqual(logged, [["[route] reading streets threw", "TypeError"]]);
+  }
   { // pins farther apart than a street download may cover: declined before any request
     const { route, calls } = setup();
     const r = await route([pt(0, 0), pt(40000, 0)], "trekking");

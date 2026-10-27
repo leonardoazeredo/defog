@@ -7,6 +7,7 @@
   const MAX_LEG_M = 30000;   // as Suggest's A-to-B cap: farther apart needs a street download past what we allow
   const NO_STREETS = { error: true, why: { reason: "no-street-data" } };
   const INTERNAL = { error: true, why: { reason: "internal" } };
+  const SUPERSEDED = { error: true, why: { reason: "superseded" } };
   const TOO_FAR = { error: true, why: { reason: "too-far" } };
   let warnedHeights = false;
 
@@ -40,11 +41,13 @@
       }
       // a failed download logs its reason, a bug its class, never a message: messages name tiles
       try { await streets.ensureRects(rects, streetKind(travelMode), { onProgress, stale }); } catch (e) {
-        if (stale && stale()) return { error: true, why: { reason: "superseded" } }; // replaced by a newer request, which _recalc ignores; nothing to log
+        if (global.StreetIndex.isSuperseded(e)) return SUPERSEDED; // replaced by a newer request, which _recalc ignores; nothing to log
+        // a bug is logged even when the request is stale: staleness only keeps it from being shown
         if (!global.StreetIndex.isDownloadError(e)) {
           console.error("[route] reading streets threw", e && e.name);
-          return INTERNAL;
+          return stale && stale() ? SUPERSEDED : INTERNAL;
         }
+        if (stale && stale()) return SUPERSEDED; // a download failure nobody will see
         console.warn("[route] streets unavailable", e.reason);
         return { error: true, why: { reason: "streets-fetch", download: global.StreetIndex.downloadFacts(e) } };
       }
