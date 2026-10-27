@@ -21,7 +21,7 @@ const config = {
   // all test files against every mutant, which is sufficient for this suite.
   vitest: { related: false },
   mutate: [
-    "src/bridge/{protocol,base64,hex,navigationPolicy,exportFile,send}.ts",
+    "src/bridge/{protocol,base64,hex,navigationPolicy,exportFile,send,pageConfig}.ts",
     "src/flows/*.ts",
     "src/fog/*.ts",
     "src/import/{incoming,incomingQueue}.ts",

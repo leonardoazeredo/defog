@@ -47,13 +47,14 @@
     // opts.cacheOnly, it comes back in the returned Map alone. A failure rethrows the network's error
     // as it is; ensureRects counts tiles. opts.cacheOnly: what the store holds and nothing else, never
     // the network, so the Streets in fog look can draw on every pan without spending the server's
-    // daily share.
+    // daily share. The run's other opts (its clock and busy wait) go to the network source, so a busy
+    // wait keeps to the run's deadline and stop.
     async function fetchStreets(tiles, kind, onTile, opts) {
       const state = { storeDown: false };
       const out = new Map();
       const missing = [];
       const expired = new Map(); // "x:y" -> an out-of-date answer, the fallback if the network is down
-      let stopped = false; // the caller's onTile threw (its stop, or a bug): no more tiles, stale ones included
+      let stopped = false; // the caller's onTile or busy wait threw (its stop, or a bug): no more tiles, stale ones included
       const deliver = (t, answer) => {
         out.set(t.x + ":" + t.y, answer);
         if (!onTile) return;
@@ -79,9 +80,14 @@
         if (!state.storeDown) puts.push(store.put(keyOf(kind, t), { answer, fetchedAt: now() }).catch((e) => storeFailed(state, "write", e)));
         deliver(t, answer);
       };
+      // a throw from the run's busy wait is the caller's stop too, like one from onTile
+      const wait = opts && opts.wait;
+      const netOpts = wait ? Object.assign({}, opts, { wait: async (until) => {
+        try { return await wait(until); } catch (e) { stopped = true; throw e; }
+      } }) : opts;
       let fresh;
       try {
-        fresh = await network(missing, kind, keep);
+        fresh = await network(missing, kind, keep, netOpts);
       } catch (e) {
         await Promise.all(puts);
         const left = missing.filter((t) => !out.has(t.x + ":" + t.y));

@@ -44,17 +44,22 @@ suggestions** are routed entirely on your device and send nothing but the boundi
 heights, see **Route elevation** below). The **Streets in fog** look is drawn from the streets
 already on your device and fetches the street map of the **area on screen** only when you tap its
 **Download this area** button. Both get the street map from a public Overpass API server
-(OpenStreetMap): the main instance [overpass-api.de](https://overpass-api.de)
-first, then [private.coffee](https://overpass.private.coffee/) (its terms and privacy policy are on
-that page) if the main one fails, has not started answering within 15 seconds or has not finished
-within 30 seconds; the order is a setting. The street map comes in tiles of 0.025° (about 3 km
-tall, 2 km wide at mid latitudes), one request each, nearest first, each saved in the street
-cache (below) as it arrives. As the main instance's usage policy asks, the phone
-app's web view identifies the app to the server by its User-Agent and Referer. That server also
-caps each app's and each network address's daily use, and answers 406 once the share is used up:
-the app then leaves that server alone for an hour, longer if the server says so. They only see
-bounding boxes, the same class of information the basemap tile servers already get, and the
-streets are compared against your fog entirely on your device; and **"Maps ↗"** opens
+(OpenStreetMap): NextGIS's instance (overpass.nextgis.com; see its
+[terms](https://nextgis.com/terms/) and [privacy policy](https://nextgis.com/privacy/)) first, then
+the main instance [overpass-api.de](https://overpass-api.de) if NextGIS fails, has not started
+answering within 90 seconds or has not finished within 120 seconds; the order is a setting. NextGIS
+asks for an access key, sent in each request's address: the phone app carries a key of its own,
+which anyone who has the app can read out of it, and the page in a plain browser has none and asks
+only the main instance. NextGIS sees the phone's network address and the boxes asked for, as the main
+instance does. The street map comes in tiles of 0.025° (about 3 km tall, 2 km wide at mid
+latitudes), up to four per request (a 2×2 block when it can), nearest first, each saved in the
+street cache (below) as it arrives. When a server answers that it is busy, the app asks again after
+15, 30 and then 60 seconds, and stops at the fourth busy answer in a row. As the main instance's
+usage policy asks, the phone app's web view identifies the app to the server by its User-Agent and
+Referer. That server also caps each app's and each network address's daily use, and answers 406 once
+the share is used up: the app then leaves that server alone for an hour, longer if the server says
+so. They only see bounding boxes, the same class of information the basemap tile servers already
+get, and the streets are compared against your fog entirely on your device; and **"Maps ↗"** opens
 your waypoints in Google Maps. The street map it fetches is kept as a street cache in your
 browser's storage (IndexedDB, as plain data, never uploaded and left out of backups), so planning in
 an area you have planned in before needs no connection. After 90 days a copy is out of date:

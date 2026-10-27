@@ -310,9 +310,11 @@
     this._emit({ points: this.wps.length, loading: true });
     const pins = this.wps.map((w) => ({ lat: w.latlng.lat, lng: w.latlng.lng }));
     const t0 = performance.now();
-    const onProgress = ({ done, total }) => { if (reqId === this._reqId) this._emit({ points: this.wps.length, loading: true, done, total }); };
+    const stale = () => reqId !== this._reqId;
+    // {done, total}, with waitUntil while a busy server is waited out
+    const onProgress = (p) => { if (!stale()) this._emit(Object.assign({ points: this.wps.length, loading: true }, p)); };
     let res;
-    try { res = this.routeWaypoints ? await this.routeWaypoints(pins, this.profile, onProgress) : INTERNAL; }
+    try { res = this.routeWaypoints ? await this.routeWaypoints(pins, this.profile, onProgress, stale) : INTERNAL; }
     catch (e) {
       // the class only: an error message can carry tile numbers, which locate the route
       console.error("[route] routeWaypoints threw", e && e.name);

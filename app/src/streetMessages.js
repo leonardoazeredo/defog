@@ -38,9 +38,13 @@
     return GENERIC;
   }
 
-  function progress(done, total) {
-    return Number.isInteger(done) && Number.isInteger(total)
-      ? `Getting the street map, ${done} of ${total}…` : "Getting the street map…";
+  // waitUntil: the end of a busy server's wait, on the clock `now` is read on; set only while the
+  // download waits.
+  function progress(done, total, waitUntil, now) {
+    const counted = Number.isInteger(done) && Number.isInteger(total);
+    const again = waitUntil ? wait(waitUntil, now) : null;
+    if (again) return "The street servers are busy. Trying again" + again + "…" + (counted ? ` (${done} of ${total})` : "");
+    return counted ? `Getting the street map, ${done} of ${total}…` : "Getting the street map…";
   }
 
   global.StreetMessages = { describe, progress };

@@ -11,6 +11,7 @@ import { createBackupFlow } from "./backup/backup.js";
 import { createRestoreFlow } from "./backup/restore.js";
 import { createSettingsChannel } from "./backup/settings.js";
 import { decideNavigation, shouldOpenWindowExternally } from "./bridge/navigationPolicy.js";
+import { pageConfigScript } from "./bridge/pageConfig.js";
 import { isTrustedSource, ORIGIN, parseWebToNative } from "./bridge/protocol.js";
 import { createSend, scheduleTask } from "./bridge/send.js";
 import { type Controller, createController } from "./controller.js";
@@ -254,6 +255,7 @@ export function WebShell(): React.JSX.Element {
   }, [controller]);
 
   const userAgent = `CrossTheFog/${Constants.expoConfig?.version ?? "0"} (+https://madera.codes)`;
+  const pageConfig = pageConfigScript(Constants.expoConfig?.extra?.nextgisOverpassKey);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: PAGE_BG }}>
@@ -261,6 +263,7 @@ export function WebShell(): React.JSX.Element {
         key={webKey}
         ref={webViewRef}
         source={{ html: WEB_HTML, baseUrl: ORIGIN }}
+        {...(pageConfig ? { injectedJavaScriptBeforeContentLoaded: pageConfig } : {})}
         originWhitelist={["*"]}
         applicationNameForUserAgent={userAgent}
         domStorageEnabled

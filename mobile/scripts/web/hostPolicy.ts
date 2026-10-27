@@ -1,5 +1,5 @@
 export const HOST_POLICY = {
-  connect: ["overpass.private.coffee", "overpass-api.de", "elevation-tiles-prod.s3.amazonaws.com"],
+  connect: ["overpass-api.de", "overpass.nextgis.com", "elevation-tiles-prod.s3.amazonaws.com"],
   img: ["tile.openstreetmap.org", "*.tile-cyclosm.openstreetmap.fr"],
   external: [
     "www.google.com",

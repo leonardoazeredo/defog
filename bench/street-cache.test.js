@@ -23,6 +23,31 @@ function fakeNetwork() {
 const T = (x, y) => ({ x, y });
 
 (async () => {
+  { // the network hears the run's options, so a busy wait keeps to the run's clock and stop
+    const seen = [];
+    const network = async (tiles, kind, onTile, opts) => { seen.push(opts); return new Map(tiles.map((t) => [t.x + ":" + t.y, answerFor(t, kind)])); };
+    const c = StreetCache.create({ store: TileStore.memory({ maxEntries: 10 }), network, now: () => 0 });
+    const waits = [];
+    const opts = { now: () => 7, wait: async (until) => { waits.push(until); return true; } };
+    await c.fetchStreets([T(1, 2)], "run", null, opts);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].now(), 7);
+    assert.equal(await seen[0].wait(15000), true);
+    assert.deepEqual(waits, [15000]);
+  }
+  { // the caller stopping the run during a busy wait is its stop: no expired copy stands in for the rest
+    let t = 0;
+    const store = TileStore.memory({ maxEntries: 10 });
+    const { network } = fakeNetwork();
+    const c = StreetCache.create({ store, network, now: () => t, maxAgeMs: DAY });
+    await c.fetchStreets([T(1, 2)], "run");
+    t = 2 * DAY;
+    const stop = Object.assign(new Error("replaced"), { reason: "superseded" });
+    const waiting = async (tiles, kind, onTile, opts) => { await opts.wait(t + 15000); throw new Error("not reached"); };
+    const c2 = StreetCache.create({ store, network: waiting, now: () => t, maxAgeMs: DAY });
+    const got = await c2.fetchStreets([T(1, 2)], "run", null, { now: () => t, wait: async () => { throw stop; } }).then(() => null, (e) => e);
+    assert.equal(got, stop);
+  }
   { // a cold request fetches and stores; the same request again makes no network call
     const { network, calls } = fakeNetwork();
     const c = StreetCache.create({ store: TileStore.memory({ maxEntries: 10 }), network, now: () => 0 });

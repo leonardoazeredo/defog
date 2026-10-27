@@ -13,20 +13,42 @@ function replyWith(body) {
   global.fetch = async (url, opts) => { sent = decodeURIComponent(opts.body); return { ok: true, status: 200, json: async () => body }; };
 }
 const rect = [{ s: 51, w: 13.7, n: 51.01, e: 13.71 }];
-// Answers each query with one way inside the bbox it asks for; fail(bbox) picks the queries that get a 502.
+// Answers each query with one way in every tile of every bbox it asks for, and records the query's
+// bboxes, space-separated; fail(n, bboxes) gives the HTTP status for the n-th query (from 1), nothing
+// for a 200.
 let nextWay = 100;
 function tileServer(fail) {
   const asked = [];
   global.fetch = async (url, opts) => {
-    const bbox = decodeURIComponent(opts.body).match(/\(([\d.,]+)\);/)[1];
-    asked.push(bbox);
-    if (fail && fail(bbox)) return { ok: false, status: 502, json: async () => ({}) };
-    const [s, w] = bbox.split(",").map(Number), id = nextWay++;
-    return { ok: true, status: 200, json: async () => ({ elements: [{ type: "way", id, nodes: [id * 10, id * 10 + 1], geometry: [{ lat: s + 0.001, lon: w + 0.001 }, { lat: s + 0.002, lon: w + 0.001 }] }] }) };
+    const boxes = [...new Set([...decodeURIComponent(opts.body).matchAll(/\(([\d.,]+)\);/g)].map((m) => m[1]))];
+    asked.push(boxes.join(" "));
+    const status = fail && fail(asked.length, asked[asked.length - 1]);
+    if (status) return { ok: false, status, json: async () => ({}) };
+    const elements = [];
+    for (const b of boxes) {
+      const [s, w, n, e] = b.split(",").map(Number);
+      for (const t of StreetIndex.tilesCovering({ s, w, n, e })) {
+        const id = nextWay++, tb = StreetIndex.tileBounds(t);
+        elements.push({ type: "way", id, nodes: [id * 10, id * 10 + 1], geometry: [{ lat: tb.s + 0.001, lon: tb.w + 0.001 }, { lat: tb.s + 0.002, lon: tb.w + 0.001 }] });
+      }
+    }
+    return { ok: true, status: 200, json: async () => ({ elements }) };
   };
   return asked;
 }
-const box = (x, y) => { const b = StreetIndex.tileBounds({ x, y }); return [b.s, b.w, b.n, b.e].map((v) => v.toFixed(4)).join(","); };
+// the bbox of tiles x0..x1 by y0..y1, as a query writes it
+const span = (x0, y0, x1, y1) => [y0, x0, y1 + 1, x1 + 1].map((v) => (v * StreetIndex.TILE_DEG).toFixed(4)).join(",");
+const box = (x, y) => span(x, y, x, y);
+const T = (x, y) => ({ x, y });
+// a clock the run's waits move: sleep(ms) records ms and moves the clock on at once
+function fakeClock() {
+  const clock = { t: 0, sleeps: [] };
+  clock.now = () => clock.t;
+  clock.sleep = async (ms) => { clock.sleeps.push(ms); clock.t += ms; };
+  return clock;
+}
+// five tiles: the 2x2 block 548..549 x 2040..2041, nearest the centre, then 550:2040
+const fiveTiles = [{ s: 51.0, w: 13.7, n: 51.05, e: 13.75 }, { s: 51.0, w: 13.75, n: 51.025, e: 13.775 }];
 // A street source on a fake clock: every tile takes stepMs to arrive and is handed over through onTile.
 function slowSource(clock, stepMs) {
   const asked = [];
@@ -110,15 +132,14 @@ function slowSource(clock, stepMs) {
     assert.equal(s.covered(51.09, 13.79), true);
     assert.equal(s.covered(51.11, 13.79), false, "the tile north of the fetch is not covered");
   }
-  { // a rect over two tiles asks for each in its own query, a highway and a service clause with the tile's bbox
+  { // a rect over two tiles side by side is one query over the box they fill, a highway and a service clause
     const bodies = [];
     global.fetch = async (url, opts) => { bodies.push(decodeURIComponent(opts.body)); return { ok: true, status: 200, json: async () => ({ elements: [] }) }; };
     const s = new StreetIndex({ newFrac: () => 1 });
     await s.ensureRects([{ s: 51.01, w: 13.74, n: 51.02, e: 13.76 }], "run");
-    assert.equal(bodies.length, 2, "one query per tile");
-    const tilesOf = bodies.map((b) => [...b.matchAll(/\(([\d.,]+)\);/g)].map((m) => m[1]));
-    for (const t of tilesOf) assert.equal(new Set(t).size, 1, "a query holds one tile's bbox");
-    assert.deepEqual(tilesOf.map((t) => [t.length, t[0]]).sort(), [[2, "51.0000,13.7250,51.0250,13.7500"], [2, "51.0000,13.7500,51.0250,13.7750"]]);
+    assert.equal(bodies.length, 1, "one query for both tiles");
+    assert.deepEqual([...bodies[0].matchAll(/\(([\d.,]+)\);/g)].map((m) => m[1]), ["51.0000,13.7250,51.0250,13.7750", "51.0000,13.7250,51.0250,13.7750"]);
+    assert.equal(s.covered(51.01, 13.74), true);
     assert.equal(s.covered(51.01, 13.76), true);
   }
   { // tiles are the 0.025° grid; an east or north bound on a tile edge does not pull in the next tile, but a rect with no width there still finds its tile
@@ -200,7 +221,7 @@ function slowSource(clock, stepMs) {
   { // pins the query text the bench cache is keyed on. The hash covers the timeout header too, but the
     // bench cache ignores it: a hash change from anything else means every saved answer misses
     const boxes = [{ s: 51, w: 13.7, n: 51.01, e: 13.71 }, { s: 51.2, w: 13.8, n: 51.21, e: 13.9 }];
-    assert.ok(StreetIndex.rectQuery(boxes, "run").startsWith("[out:json][timeout:25];"), "the server gives up before the client's 30 s");
+    assert.ok(StreetIndex.rectQuery(boxes, "run").startsWith("[out:json][timeout:25];"), "the server's run is capped at 25 s, under the client's guards");
     const sha = (kind) => crypto.createHash("sha1").update(StreetIndex.rectQuery(boxes, kind)).digest("hex");
     assert.equal(sha("run"), "822a328d1c8f332ec55d2e363755ba4075c475f2");
     assert.equal(sha("bike"), "e3620d77390907388c5540fba2593f2325f19077");
@@ -209,39 +230,131 @@ function slowSource(clock, stepMs) {
     await StreetIndex.overpassFetch([{ x: 548, y: 2040 }], "run");
     assert.equal(sent, "data=" + StreetIndex.rectQuery([StreetIndex.tileBounds({ x: 548, y: 2040 })], "run"), "the default source asks for the tile's bounds");
   }
-  { // four uncovered tiles are four requests, the one nearest the centre of the rects first
-    // centre 51.03, 13.73 lies in tile 549:2041; west of it is nearer than south of it once longitude is scaled by cos(lat)
+  { // four uncovered tiles of one 2x2 block are one request over the block's box, split back per tile
     global.Overpass._reset();
     const asked = tileServer();
     const s = new StreetIndex({ newFrac: () => 1 });
-    await s.ensureRects([{ s: 51.02, w: 13.72, n: 51.04, e: 13.74 }], "run");
-    assert.deepEqual(asked, [box(549, 2041), box(548, 2041), box(549, 2040), box(548, 2040)]);
-    assert.equal(s.ways.length, 4);
+    const progress = [];
+    await s.ensureRects([{ s: 51.02, w: 13.72, n: 51.04, e: 13.74 }], "run", { onProgress: (p) => progress.push(p.done) });
+    assert.deepEqual(asked, [span(548, 2040, 549, 2041)]);
+    assert.deepEqual([s.ways.length, s.tiles.size, progress], [4, 4, [0, 1, 2, 3, 4]]);
   }
-  { // the third of four requests fails: the first two tiles are kept, and the retry asks only the other two
+  { // eight missing tiles are two requests, one per 2x2 block, nearest block first, each tile handed over on its own
+    global.Overpass._reset();
+    const asked = tileServer();
+    const got = [];
+    const tiles = [T(549, 2040), T(550, 2040), T(549, 2041), T(550, 2041), T(548, 2040), T(551, 2040), T(548, 2041), T(551, 2041)];
+    const out = await StreetIndex.overpassFetch(tiles, "run", (t, answer) => got.push([t.x + ":" + t.y, answer.ways.length]));
+    assert.deepEqual(asked, [span(548, 2040, 549, 2041), span(550, 2040, 551, 2041)]);
+    assert.deepEqual(got, [["549:2040", 1], ["549:2041", 1], ["548:2040", 1], ["548:2041", 1], ["550:2040", 1], ["550:2041", 1], ["551:2040", 1], ["551:2041", 1]]);
+    assert.equal(out.size, 8);
+  }
+  { // a batch takes the nearest tile's 2x2 block mates first, fills up to four with the next nearest,
+    // and asks tiles that do not fill a rectangle as a box each
+    global.Overpass._reset();
+    const asked = tileServer();
+    await StreetIndex.overpassFetch([T(548, 2040), T(550, 2040), T(549, 2040), T(552, 2040), T(549, 2041), T(548, 2041), T(551, 2040)], "run");
+    assert.deepEqual(asked, [span(548, 2040, 549, 2041), span(550, 2040, 552, 2040)]);
+    asked.length = 0;
+    await StreetIndex.overpassFetch([T(548, 2040), T(551, 2041)], "run");
+    assert.deepEqual(asked, [box(548, 2040) + " " + box(551, 2041)]);
+  }
+  { // the second of two requests fails: the first block's tiles are kept, and the retry asks only the other block
     global.Overpass._reset();
     let failing = true;
-    const asked = tileServer((bbox) => failing && bbox === box(549, 2040));
+    const asked = tileServer((n) => failing && n === 2 && 500);
     const s = new StreetIndex({ newFrac: () => 1 });
-    const r = [{ s: 51.02, w: 13.72, n: 51.04, e: 13.74 }];
+    const r = [{ s: 51.0, w: 13.7, n: 51.05, e: 13.79 }];
     const err = await s.ensureRects(r, "run").then(() => null, (e) => e);
     assert.ok(err, "a run with a tile missing rejects");
-    assert.deepEqual([err.done, err.total, err.reason], [2, 4, "streets-partial"]);
-    assert.equal(err.cause.reason, "busy", "the Overpass error is the cause");
-    assert.equal(asked.filter((b) => b === box(548, 2040)).length, 0, "the run stops at the failed request");
-    assert.deepEqual([s.covered(51.03, 13.73), s.covered(51.03, 13.72), s.covered(51.02, 13.73)], [true, true, false]);
+    assert.deepEqual([err.done, err.total, err.reason], [4, 8, "streets-partial"]);
+    assert.equal(err.cause.reason, "server", "the Overpass error is the cause");
+    assert.deepEqual(asked, [span(548, 2040, 549, 2041), span(550, 2040, 551, 2041)]);
+    assert.deepEqual([s.covered(51.01, 13.74), s.covered(51.04, 13.71), s.covered(51.01, 13.76)], [true, true, false]);
     failing = false;
     asked.length = 0;
     await s.ensureRects(r, "run");
-    assert.deepEqual(asked, [box(549, 2040), box(548, 2040)]);
-    assert.equal(s.ways.length, 4);
+    assert.deepEqual(asked, [span(550, 2040, 551, 2041)]);
+    assert.equal(s.ways.length, 8);
   }
-  { // the default source stops at its first failed request; nothing arrived, so the error carries the cause's reason
+  { // the default source stops at its first failed request that is not busy; nothing arrived, so the error carries the cause's reason
     global.Overpass._reset();
-    const asked = tileServer(() => true);
-    const err = await StreetIndex.overpassFetch([{ x: 548, y: 2040 }, { x: 549, y: 2040 }], "run").then(() => null, (e) => e);
-    assert.equal(asked.length, 2, "one request, tried on both endpoints");
-    assert.deepEqual([err.done, err.total, err.reason, err.cause.reason], [0, 2, "busy", "busy"]);
+    const asked = tileServer(() => 500);
+    const tiles = [T(548, 2040), T(549, 2040), T(548, 2041), T(549, 2041), T(550, 2040)];
+    const err = await StreetIndex.overpassFetch(tiles, "run").then(() => null, (e) => e);
+    assert.equal(asked.length, 1, "one request on the one endpoint there is without a key, none for the next batch");
+    assert.deepEqual([err.done, err.total, err.reason, err.cause.reason], [0, 5, "server", "server"]);
+  }
+  { // busy is asked again after 15, 30 and 60 s, each wait in the progress; the fourth busy in a row ends the run
+    global.Overpass._reset();
+    const clock = fakeClock();
+    const asked = tileServer((n) => n >= 2 && 502);
+    const s = new StreetIndex({ newFrac: () => 1, now: clock.now, sleep: clock.sleep });
+    const progress = [];
+    const err = await s.ensureRects(fiveTiles, "run", { onProgress: (p) => progress.push(p) }).then(() => null, (e) => e);
+    assert.deepEqual(asked, [span(548, 2040, 549, 2041), box(550, 2040), box(550, 2040), box(550, 2040), box(550, 2040)]);
+    assert.deepEqual(clock.sleeps, [15000, 30000, 60000]);
+    assert.deepEqual([err.done, err.total, err.reason, err.cause.reason], [4, 5, "streets-partial", "busy"]);
+    const at = (done, waitUntil) => (waitUntil === undefined ? { done, total: 5 } : { done, total: 5, waitUntil });
+    assert.deepEqual(progress, [at(0), at(1), at(2), at(3), at(4), at(4, 15000), at(4), at(4, 45000), at(4), at(4, 105000), at(4)]);
+  }
+  { // an answer between busy ones starts the count again: three busy before each of two requests still completes
+    global.Overpass._reset();
+    const clock = fakeClock();
+    const asked = tileServer((n) => n % 4 !== 0 && 502);
+    const s = new StreetIndex({ newFrac: () => 1, now: clock.now, sleep: clock.sleep });
+    const got = await s.ensureRects(fiveTiles, "run");
+    assert.deepEqual([got.done, got.total, asked.length], [5, 5, 8]);
+    assert.deepEqual(clock.sleeps, [15000, 30000, 60000, 15000, 30000, 60000]);
+  }
+  { // a busy with a later retry time waits until then
+    global.Overpass._reset();
+    const clock = fakeClock();
+    global.Overpass._now = clock.now;
+    let posts = 0;
+    global.fetch = async () => {
+      posts++;
+      if (posts === 1) return { ok: false, status: 429, headers: { get: (k) => (k.toLowerCase() === "retry-after" ? "100" : null) }, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ elements: [] }) };
+    };
+    const s = new StreetIndex({ newFrac: () => 1, now: clock.now, sleep: clock.sleep });
+    const progress = [];
+    await s.ensureRects(rect, "run", { onProgress: (p) => progress.push(p) });
+    assert.deepEqual([posts, clock.sleeps], [2, [100000]]);
+    assert.deepEqual(progress[1], { done: 0, total: 1, waitUntil: 100000 });
+    global.Overpass._reset();
+  }
+  { // a wait that would end past the run deadline is not waited: the run ends there, busy
+    global.Overpass._reset();
+    const clock = fakeClock();
+    const asked = tileServer(() => 502);
+    const s = new StreetIndex({ newFrac: () => 1, now: clock.now, sleep: clock.sleep });
+    const err = await s.ensureRects(rect, "run", { deadlineMs: 40000 }).then(() => null, (e) => e);
+    assert.deepEqual([asked.length, clock.sleeps], [2, [15000]], "15 s fits in 40 s, 15 + 30 s does not");
+    assert.deepEqual([err.done, err.total, err.reason], [0, 1, "busy"]);
+  }
+  { // a run superseded while it waits out a busy server asks nothing further
+    global.Overpass._reset();
+    const clock = fakeClock();
+    const asked = tileServer((n) => n >= 2 && 502);
+    let stale = false;
+    const s = new StreetIndex({ newFrac: () => 1, now: clock.now, sleep: async (ms) => { await clock.sleep(ms); stale = true; } });
+    const err = await s.ensureRects(fiveTiles, "run", { stale: () => stale }).then(() => null, (e) => e);
+    assert.equal(asked.length, 2, "no request after the wait");
+    assert.ok(StreetIndex.isDownloadError(err));
+    assert.equal(err.cause.reason, "superseded");
+  }
+  { // a run superseded once a request has answered asks for no further batch; one already stale asks nothing
+    global.Overpass._reset();
+    const asked = tileServer();
+    let stale = false;
+    const s = new StreetIndex({ newFrac: () => 1 });
+    const err = await s.ensureRects([{ s: 51.0, w: 13.7, n: 51.05, e: 13.79 }], "run", { stale: () => stale, onProgress: (p) => { if (p.done === 4) stale = true; } }).then(() => null, (e) => e);
+    assert.equal(asked.length, 1);
+    assert.deepEqual([err.done, err.total, err.cause.reason], [4, 8, "superseded"]);
+    asked.length = 0;
+    const err2 = await new StreetIndex({ newFrac: () => 1 }).ensureRects(rect, "run", { stale: () => true }).then(() => null, (e) => e);
+    assert.deepEqual([asked.length, err2.cause.reason], [0, "superseded"]);
   }
   { // a throw from onTile that is not the caller's stop (a bug) comes out of the default source unchanged
     global.Overpass._reset();
@@ -267,17 +380,27 @@ function slowSource(clock, stepMs) {
   }
   { // a run past its deadline stops before the next request, with its progress
     const clock = { t: 0 };
-    const src = slowSource(clock, 30000);
+    const src = slowSource(clock, 500000);
     const s = new StreetIndex({ newFrac: () => 1, fetchStreets: src.fetchStreets, now: () => clock.t });
     const progress = [];
     const r = [{ s: 51.0, w: 13.7, n: 51.025, e: 13.825 }]; // five tiles in a row
     const err = await s.ensureRects(r, "run", { onProgress: (p) => progress.push(p) }).then(() => null, (e) => e);
-    assert.equal(src.asked.length, 3, "past 75 s at the third tile (90 s): no fourth request");
+    assert.equal(src.asked.length, 3, "past 20 min at the third tile (25 min): no fourth request");
     assert.deepEqual([err.done, err.total, err.reason, err.cause.reason], [3, 5, "streets-partial", "stalled"]);
     assert.deepEqual(progress, [0, 1, 2, 3].map((done) => ({ done, total: 5 })));
     const t = new StreetIndex({ newFrac: () => 1, fetchStreets: slowSource(clock, 30000).fetchStreets, now: () => clock.t });
     const err2 = await t.ensureRects(r, "run", { deadlineMs: 20000 }).then(() => null, (e) => e);
     assert.deepEqual([err2.done, err2.total], [1, 5], "opts.deadlineMs sets the deadline");
+  }
+  { // a request answered past the deadline keeps every tile it brought, then asks nothing further
+    const clock = { t: 0 };
+    const asked = tileServer();
+    const serve = global.fetch;
+    global.fetch = async (url, opts) => { clock.t += 1300000; return serve(url, opts); }; // past 20 min
+    const s = new StreetIndex({ newFrac: () => 1, now: () => clock.t });
+    const err = await s.ensureRects(fiveTiles, "run").then(() => null, (e) => e);
+    assert.equal(asked.length, 1);
+    assert.deepEqual([err.done, err.total, err.reason, err.cause.reason], [4, 5, "streets-partial", "stalled"]);
   }
   { // the last tile is kept even when it lands past the deadline: the check runs only while tiles remain
     const clock = { t: 0 };

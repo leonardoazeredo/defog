@@ -238,13 +238,23 @@
   // way, and backups carry every f2m_ key, so it is dropped.
   const ORDER_KEY = "f2m_overpassOrder";
   localStorage.removeItem("f2m_overpass");
+  // NextGIS is offered only when the app was built with its key. With no stored choice, or one that
+  // cannot be honoured (an endpoint that no longer exists, or NextGIS without a key), Overpass keeps
+  // its default order, so a key that lands later still puts NextGIS first.
   function setOverpassOrder(first, chosen) {
-    if (first !== "coffee") first = "main";
-    Overpass.setOrder(first === "coffee" ? ["coffee", "main"] : ["main", "coffee"]);
-    $("overpass").value = first;
-    if (chosen) localStorage.setItem(ORDER_KEY, first);
+    const nextgis = Overpass.has("nextgis");
+    if (first !== "main" && !(first === "nextgis" && nextgis)) first = null;
+    Overpass.setOrder(first === "nextgis" ? ["nextgis", "main"] : first === "main" ? ["main", "nextgis"] : []);
+    $("overpass").value = first || (nextgis ? "nextgis" : "main");
+    if (chosen && first) localStorage.setItem(ORDER_KEY, first);
   }
-  setOverpassOrder(localStorage.getItem(ORDER_KEY));
+  function offerOverpass() {
+    $("overpassNextgis").hidden = !Overpass.has("nextgis");
+    setOverpassOrder(localStorage.getItem(ORDER_KEY));
+  }
+  offerOverpass();
+  // On Android the phone app's key is sometimes set after this script has run: offer NextGIS then.
+  window.addEventListener("crossfog-nextgis-key", offerOverpass);
   $("overpass").addEventListener("change", (e) => setOverpassOrder(e.target.value, true));
 
   // ---- data loading -----------------------------------------------------------
@@ -483,7 +493,7 @@
       sendControl.update();
       if (!s) { clearRouteInfo(IDLE); setExports(false); return; }
       if (s.loading) {
-        routeHint.textContent = s.done < s.total ? StreetMessages.progress(s.done, s.total) : `Routing ${s.points} waypoints…`;
+        routeHint.textContent = s.done < s.total ? StreetMessages.progress(s.done, s.total, s.waitUntil, Date.now()) : `Routing ${s.points} waypoints…`;
         routeHint.style.display = ""; return;
       }
       if (s.error) { clearRouteInfo(routeErrorHint(s.why)); setExports(route.routeCoords.length >= 2); return; }
@@ -550,7 +560,7 @@
     if (s.loading) {
       sugResults.innerHTML = `<div class="muted" style="margin-top:10px">${
         s.phase === "baseline" ? "Finding the fastest route…" :
-        s.phase === "streets" ? (s.done < s.total ? StreetMessages.progress(s.done, s.total) : "Reading the street map…") :
+        s.phase === "streets" ? (s.done < s.total ? StreetMessages.progress(s.done, s.total, s.waitUntil, Date.now()) : "Reading the street map…") :
         s.phase === "loops" ? `Routing loops… ${s.done}/${s.total}` :
         s.phase === "shapes" ? `Trying more loops… ${s.done}/${s.total}` :
         `Exploring detours… ${s.done}/${s.total}`}</div>`;

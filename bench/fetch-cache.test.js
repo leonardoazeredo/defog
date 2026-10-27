@@ -15,7 +15,7 @@ assert.equal(keyFor(url, body(query(25))), keyFor(url, body(query(60))), "rectQu
 assert.notEqual(keyFor(url, body(query(120))), keyFor(url, body(query(60))), "a 120 request does not share the saved 60 key");
 assert.equal(keyFor(url, query(25)), keyFor(url, query(60)), "a raw, unencoded body normalises the same way");
 assert.notEqual(keyFor(url, body(query(25))), keyFor(url, body(query(25, "51.0,13.7,51.1,13.9"))), "the box does");
-assert.notEqual(keyFor(url, body(query(25))), keyFor("https://overpass.private.coffee/api/interpreter", body(query(25))), "so does the host");
+assert.notEqual(keyFor(url, body(query(25))), keyFor("https://overpass.example/api/interpreter", body(query(25))), "so does the host");
 assert.equal(keyFor(url, undefined), keyFor(url, ""), "no body reads as an empty one");
 // the saved files were keyed on the literal [timeout:60] request, so a normalised request must hash to the same name
 const crypto = require("crypto");

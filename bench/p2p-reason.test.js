@@ -43,6 +43,28 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]]]
     assert.deepEqual(r.download, { reason: "streets-partial", done: 2, total: 5, retryAt: 12345, cause: { reason: "busy" } });
     assert.ok(!JSON.stringify(r).includes("timed out"), "no server text in the result");
   }
+  { // a run replaced while its streets download: the run's stale reaches ensureRects (true once a
+    // newer run started), and the failure it ends with is neither emitted nor logged
+    const s = streetsWith(street);
+    s.tiles.clear();
+    const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => null, streets: s });
+    tool.mode = "p2p"; tool.a = pin(0, 0); tool.b = pin(1000, 0);
+    let handed = null;
+    s.ensureRects = async (rects, kind, opts) => {
+      handed = opts.stale;
+      tool._runId++; // a newer run started
+      throw StreetIndex.downloadError(0, 5, Object.assign(new Error("superseded"), { reason: "superseded" }));
+    };
+    const seen = [], logged = [], orig = console.warn;
+    tool.onResults = (r) => seen.push(r);
+    console.warn = (...a) => logged.push(a);
+    await tool.suggest("hiking-mountain", { buffer: 0.15 });
+    console.warn = orig;
+    assert.equal(typeof handed, "function");
+    assert.equal(handed(), true);
+    assert.ok(!seen.some((r) => r && r.error), "no error state for a replaced run");
+    assert.deepEqual(logged, []);
+  }
   { // a bug while reading streets is not a failed download: the internal state, its class logged
     const s = streetsWith(street);
     s.tiles.clear();

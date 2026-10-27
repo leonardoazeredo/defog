@@ -256,14 +256,17 @@
   function streetKind(profile) { return profile === "hiking-mountain" ? "run" : profile === "car-fast" ? "car" : "bike"; }
   SuggestTool.streetKind = streetKind; // route editing fetches the same street class for a mode
 
-  // Make sure the streets for the rects are loaded. Resolves false once the run is over:
-  // stale, or the error state was emitted because the download failed.
+  // Make sure the streets for the rects are loaded. Resolves true when they are and the run is
+  // still current; false when it is stale, or the error state was emitted because the download
+  // failed. A stale run asks for no
+  // further tile, so a newer run is not queued behind it.
   SuggestTool.prototype._loadStreets = async function (rects, profile, emit, stale) {
     const kind = streetKind(profile);
     // progress is heard only while some tile is missing from the index, so a rerun over covered
-    // ground stays silent
-    const onProgress = ({ done, total }) => emit({ loading: true, phase: "streets", done, total });
-    try { await this.streets.ensureRects(rects, kind, { onProgress }); } catch (e) {
+    // ground stays silent; waitUntil is set while a busy server is waited out
+    const onProgress = (p) => emit(Object.assign({ loading: true, phase: "streets" }, p));
+    try { await this.streets.ensureRects(rects, kind, { onProgress, stale }); } catch (e) {
+      if (stale()) return false;
       // a bug is not a failed download: the class only, as a message can name tiles
       if (!global.StreetIndex.isDownloadError(e)) {
         console.error("[suggest] reading streets threw", e && e.name);

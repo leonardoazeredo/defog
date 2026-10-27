@@ -18,7 +18,7 @@
 // shows while you're planning a bike ride.
 (function (global) {
   const MAX_TILES = 48;      // no higher: what it paints stays in the shared index, whose MAX_SEGS caps it for the page's life
-  const FETCH_MAX_TILES = 16; // the most missing pieces one tap downloads (one request each)
+  const FETCH_MAX_TILES = 16; // the most missing pieces one tap downloads
   const PIECE_M = 20;        // ways are judged in pieces this long
   const DONE_WITHIN_M = 20;  // a piece is done if a defogged cell lies this close (forgives GPS wobble)
   const MIN_RUN_M = 25;      // shorter leftover stretches aren't drawn (confetti at crossings)
@@ -247,15 +247,15 @@
   };
 
   // The button: the normal download of the pieces the badge counted, never more than
-  // FETCH_MAX_TILES requests; a failure waits for the next tap, there is no quiet retry.
+  // FETCH_MAX_TILES pieces; a failure waits for the next tap, there is no quiet retry.
   StreetsInFogLayer.prototype._download = async function () {
     const rects = this._missingRects, view = this._view;
     if (this._fetching || !this.enabled || this._tooBig || !rects.length || rects.length > FETCH_MAX_TILES) return;
     this._fetching = true;
     this._failure = null;
     // switched off or zoomed out mid-download: a late count must not replace that badge
-    const onProgress = ({ done, total }) => {
-      if (this.enabled && !this._tooBig) this._say(global.StreetMessages.progress(done, total));
+    const onProgress = ({ done, total, waitUntil }) => {
+      if (this.enabled && !this._tooBig) this._say(global.StreetMessages.progress(done, total, waitUntil, Date.now()));
     };
     try { await this.streets.ensureRects(rects, "run", { onProgress }); }
     catch (e) {

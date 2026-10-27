@@ -84,6 +84,21 @@ function setup(over) {
     await route([pt(0, 0), pt(1000, 0)], "trekking", (p) => seen.push(p));
     assert.deepEqual(seen, [{ done: 0, total: 2 }]);
   }
+  { // the request's stale check is handed to the street fetch; a run it stopped is not logged as a failure
+    let handed = null, isStale = false;
+    const logged = [], orig = console.warn;
+    console.warn = (...a) => logged.push(a);
+    const { route } = setup({ streets: { ensureRects: async (rects, kind, opts) => {
+      handed = opts.stale;
+      isStale = true;
+      throw global.StreetIndex.downloadError(0, 2, Object.assign(new Error("superseded"), { reason: "superseded" }));
+    } } });
+    const stale = () => isStale;
+    await route([pt(0, 0), pt(1000, 0)], "trekking", null, stale);
+    console.warn = orig;
+    assert.equal(handed, stale);
+    assert.deepEqual(logged, []);
+  }
   { // pins farther apart than a street download may cover: declined before any request
     const { route, calls } = setup();
     const r = await route([pt(0, 0), pt(40000, 0)], "trekking");
