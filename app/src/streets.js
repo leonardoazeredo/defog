@@ -173,7 +173,8 @@
   // not wrapped in a download error (a bug reading a tile, in the caller's onProgress or in sleep
   // during a busy wait, or a source error with no street reason), so callers tell a bug from a
   // "streets-partial" shortfall (StreetIndex.isDownloadError); of several bugs the first is the
-  // rejection, unless the source rejects with a bug of its own (see the catch below). Resolves with {done, total, missing}.
+  // rejection, unless, outside a cache-only read, the source rejects with a bug of its own (see the catch
+  // below). Resolves with {done, total, missing}.
   // opts.cacheOnly reads only what the street source already holds and resolves with the tiles
   // still missing (nearest first) instead of rejecting: what the Streets in fog look draws from.
   // A source that throws on such a read rejects as itself: no download ran, so it is a bug.
@@ -240,8 +241,8 @@
       }, cacheOnly ? { cacheOnly } : { now: this.now, wait });
     } catch (e) {
       // outside a cache-only read, a source's own bug (not a download error, no street reason) is
-      // thrown ahead of one the run's own code hit. overpassFetch and StreetCache reject with the first
-      // failure they recorded, the run's bug included; `broke` covers a run bug whose source rejection
+      // thrown ahead of one the run's own code hit. overpassFetch rejects with the first failure it
+      // recorded, the run's bug included, and StreetCache rethrows that error; `broke` covers a run bug whose source rejection
       // is a download error.
       if (!cacheOnly && !StreetIndex.isDownloadError(e) && !STREET_REASONS.has(e && e.reason)) throw e;
       if (broke) throw broke;

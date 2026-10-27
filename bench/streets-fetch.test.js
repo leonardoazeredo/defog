@@ -650,7 +650,7 @@ async function testCase(body) {
   await testCase(async () => { // a bug in the code around the request ends the run as itself, never pending. The real async Overpass.post
     // cannot throw at once, so that stand-in only exercises the try around pump's send loop; the two cases
     // after it force defensive paths (an answer reader returning nothing, and a rejection with no value,
-    // which the real post never sends): the run rejects as itself, with undefined in the second
+    // which the real post never sends): the answer-reader case rejects with the TypeError it throws, the no-value rejection with undefined
     const realPost = global.Overpass.post, realSplit = StreetIndex.splitAnswer;
     const bug = new TypeError("bug");
     try {
