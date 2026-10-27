@@ -1,0 +1,11 @@
+appId: codes.madera.crossfog
+---
+- tapOn: ${LINK}
+- extendedWaitUntil:
+    notVisible: "Expand or collapse panel"
+    timeout: 15000
+- launchApp:
+    stopApp: false
+- extendedWaitUntil:
+    visible: "Expand or collapse panel"
+    timeout: 30000
