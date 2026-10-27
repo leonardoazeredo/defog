@@ -16,12 +16,14 @@ export function installLinks(win: Window, doc: Document, send: Send): void {
   // JS thread and the native side lets the load through when the answer is late (#138). Capture phase, because Leaflet's
   // controls stop propagation on their own containers.
   const intercept = (ev: Event): void => {
-    const a = (ev.target as Element).closest("a[href]");
+    if (!(ev.target instanceof Element)) return;
+    const a = ev.target.closest("a[href]");
     if (a == null) return;
     let url: URL;
     try {
       url = new URL(a.getAttribute("href") ?? "", doc.baseURI);
     } catch {
+      ev.preventDefault();
       return;
     }
     if (url.origin === PAGE_ORIGIN) return;

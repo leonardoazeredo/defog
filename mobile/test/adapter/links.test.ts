@@ -171,6 +171,33 @@ it("stops a non-web scheme from navigating without opening anything", () => {
   expect(sent).toEqual([]);
 });
 
+it("stops a link whose href cannot be parsed from navigating", () => {
+  const sent = install();
+  pageAt(ORIGIN, '<a href="http://[">x</a>');
+  const a = document.querySelector("a");
+  if (a == null) throw new Error("no link rendered");
+  expect(click(a).defaultPrevented).toBe(true);
+  expect(sent).toEqual([]);
+});
+
+it("opens a plain http link on the page's own host as foreign", () => {
+  const sent = install();
+  pageAt(ORIGIN, `<a href="${ORIGIN.replace("https:", "http:")}x">x</a>`);
+  const a = document.querySelector("a");
+  if (a == null) throw new Error("no link rendered");
+  expect(click(a).defaultPrevented).toBe(true);
+  expect(sent).toEqual([
+    { v: 1, type: "openExternal", url: `${ORIGIN.replace("https:", "http:")}x` },
+  ]);
+});
+
+it("ignores a click dispatched on the document itself", () => {
+  const sent = install();
+  pageAt(ORIGIN, "");
+  expect(click(document as unknown as Element).defaultPrevented).toBe(false);
+  expect(sent).toEqual([]);
+});
+
 it("ignores clicks that are not on a link", () => {
   const sent = install();
   pageAt(ORIGIN, '<button id="b">x</button><a name="anchor">no href</a>');
