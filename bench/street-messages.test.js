@@ -71,6 +71,13 @@ const err = (reason, more) => Object.assign(new Error("overpass HTTP 502"), { re
   assert.equal(progress(0, 12), "Getting the street map, 0 of 12…");
   assert.equal(progress(undefined, undefined), "Getting the street map…");
 }
+{ // progress while a busy server is waited out: the wait rounded like a retry time, then the counts
+  assert.equal(progress(4, 12, now + 15_000, now), "The street servers are busy. Trying again in about 20 s… (4 of 12)");
+  assert.equal(progress(4, 12, now + 60_000, now), "The street servers are busy. Trying again in about 60 s… (4 of 12)");
+  assert.equal(progress(0, 3, now - 1000, now), "The street servers are busy. Trying again in about 10 s… (0 of 3)");
+  assert.equal(progress(0, 3, now + 180_000, now), "The street servers are busy. Trying again in about 3 min… (0 of 3)");
+  assert.equal(progress(4, 12, undefined, now), "Getting the street map, 4 of 12…", "no wait: the counts alone");
+}
 { // main.js words a failed street download through StreetMessages, never from the error's text
   const main = fs.readFileSync(path.join(__dirname, "..", "app", "src", "main.js"), "utf8").split("\n");
   for (const [i, line] of main.entries()) {
@@ -79,8 +86,9 @@ const err = (reason, more) => Object.assign(new Error("overpass HTTP 502"), { re
   const fetchLines = main.filter((l) => l.includes('"streets-fetch"'));
   assert.equal(fetchLines.length, 2, "the suggestion card and the route hint each word streets-fetch");
   for (const l of fetchLines) assert.match(l, /StreetMessages\.describe\(/, l.trim());
-  assert.ok(main.some((l) => /StreetMessages\.progress\(s\.done, s\.total\)/.test(l) && l.includes('"streets"')), "the suggestion shows the download's progress");
-  assert.ok(main.some((l) => /routeHint\.textContent = .*StreetMessages\.progress\(s\.done, s\.total\)/.test(l)), "the route hint shows it the same way");
+  const shown = /StreetMessages\.progress\(s\.done, s\.total, s\.waitUntil, Date\.now\(\)\)/;
+  assert.ok(main.some((l) => shown.test(l) && l.includes('"streets"')), "the suggestion shows the download's progress and waits");
+  assert.ok(main.some((l) => /routeHint\.textContent = /.test(l) && shown.test(l)), "the route hint shows them the same way");
   // A failure's `why` (s.why, the route hint's why and the card's w) reaches the text only through
   // the fields LocalRouter and RouteLocal set for it, never whole: a template or a + of it could
   // carry an error's text into the page.

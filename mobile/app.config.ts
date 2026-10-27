@@ -70,6 +70,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   extra: {
     eas: { projectId: "caaa478d-1167-481c-bbb5-0339a7fbfadb" },
     e2e: process.env.CROSSFOG_E2E === "1",
+    // Read at build time (with-secret NEXTGIS_OVERPASS_KEY -- ...) and handed to the page by WebShell;
+    // it ships inside the app, so anyone holding the app can read it (README "Privacy").
+    nextgisOverpassKey: process.env.NEXTGIS_OVERPASS_KEY || null,
   },
   experiments: { typedRoutes: true },
 });

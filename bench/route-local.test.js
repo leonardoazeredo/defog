@@ -158,5 +158,19 @@ function tool(routeWaypoints, profile) {
     assert.deepEqual(emitted[emitted.length - 1], { points: 3, loading: true, done: 0, total: 2 });
     first.resolve();
   }
+  { // a wait for a busy server reaches the loading state; the request hears when a newer one replaced it
+    const first = deferred(), calls = [];
+    const { t, emitted } = tool(async (pts, mode, onProgress, stale) => { calls.push({ onProgress, stale }); await first.promise; return { coords: line, stats }; });
+    t.add(A); t.add(B);
+    await tick();
+    calls[0].onProgress({ done: 1, total: 3, waitUntil: 15000 });
+    assert.deepEqual(emitted[emitted.length - 1], { points: 2, loading: true, done: 1, total: 3, waitUntil: 15000 });
+    assert.equal(calls[0].stale(), false);
+    t.add(C);
+    await tick();
+    assert.equal(calls[0].stale(), true);
+    assert.equal(calls[1].stale(), false);
+    first.resolve();
+  }
   console.log("route-local.test.js ok");
 })();

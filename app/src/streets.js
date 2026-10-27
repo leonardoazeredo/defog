@@ -40,18 +40,27 @@
   const CORRIDOR_M = 30;         // full width Fog of World clears as you travel
   const TILE_DEG = 0.025;        // fetch grid, ~2.8 x 1.75 km at 51°N: streets are fetched and remembered per tile; changing it means bumping the version in streetCache.js keys
   const TILE_EPS = 1e-9;         // in tiles: keeps a bound that sits on a tile edge from reaching into the neighbouring tile
-  // One Overpass request per tile keeps each query small enough to finish inside the server's
-  // timeout, and lets a failed run keep the tiles that came. Raise it to batch tiles into one query;
-  // the answer is still split per tile.
-  const TILES_PER_REQUEST = 1;
-  const RUN_DEADLINE_MS = 75000; // a run asks no further tile past this, so a slow server ends it with its progress
+  // overpass-api.de makes every request wait out its queue (39-68 s on the phone, #185) whatever its
+  // size, so a request asks for up to four tiles, a whole 2x2 block when the nearest tile's block is
+  // missing that many: a quarter of the waits, and a failed run still keeps the requests that were
+  // answered. A dense 2x2 block ran in about 4.5 s on NextGIS, well inside [timeout:25]. batches()
+  // builds 2x2 blocks, so a different size needs a different block there.
+  const TILES_PER_REQUEST = 4;
+  // a run sends no further request past this (an answer already in keeps all its tiles), so a server
+  // that never recovers ends it with its progress; long, because every request can spend a minute or
+  // more in the queue
+  const RUN_DEADLINE_MS = 1200000;
+  // waits before asking again after a busy answer (429, 502, 504); the fourth busy answer in a row
+  // ends the run
+  const BUSY_RETRY_MS = [15000, 30000, 60000];
 
   function StreetIndex(opts) {
     this.newFrac = opts.newFrac; // (lon,lat) -> 0..1 share of the corridor stamp still fogged
-    // the street source: (tiles, kind, onTile) -> Map "x:y" -> answer, calling onTile(tile, answer) as each
-    // arrives (a source may return some tiles in the Map alone)
+    // the street source: (tiles, kind, onTile, opts) -> Map "x:y" -> answer, calling onTile(tile, answer) as
+    // each arrives (a source may return some tiles in the Map alone); opts is {cacheOnly: true} or {now, wait}
     this.fetchStreets = opts.fetchStreets || StreetIndex.overpassFetch;
     this.now = opts.now || Date.now; // the clock the run deadline is measured on
+    this.sleep = opts.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.segs = new Map();       // "gx,gy" -> [{x,y,lon,lat,lenM,frac}]
     this.tiles = new Set();      // fetched coverage, StreetIndex.tileKey(kind, x, y)
     this.staleTiles = new Set(); // expired cached tiles a cache-only read drew from: not coverage, so a normal run fetches them again (their ways already held are kept as they were)
@@ -155,8 +164,12 @@
   // call to the street source, nearest the centre of the rects first. kind: "run" | "bike" |
   // "car". Each tile is read into the index as it arrives, so a failed run keeps what came and
   // the next run asks only for the rest. opts.onProgress({done, total}) hears the start (done 0)
-  // and every tile; opts.deadlineMs (default RUN_DEADLINE_MS) stops the run before its next tile
-  // once passed. Rejects, with StreetIndex.downloadError, whenever a tile is missing: suggestions
+  // and every tile, and {done, total, waitUntil} when the source waits out a busy server (then
+  // {done, total} again once the wait ends); opts.deadlineMs (default RUN_DEADLINE_MS) stops the run
+  // before its next request once passed (every tile of a request already answered is still read),
+  // and refuses a wait that would end past it. opts.stale() true (ignored for cacheOnly) means a
+  // newer run replaced this one: it asks nothing further and rejects with cause reason
+  // "superseded". Rejects, with StreetIndex.downloadError, whenever a tile is missing: suggestions
   // end in their error state rather than plan on part of the area. A bug thrown while reading a
   // tile rejects as itself, not wrapped in a download error, so callers tell a bug from a
   // "streets-partial" shortfall (StreetIndex.isDownloadError). Resolves with {done, total, missing}.
@@ -173,7 +186,22 @@
     const deadlineMs = opts.deadlineMs == null ? RUN_DEADLINE_MS : opts.deadlineMs;
     const started = this.now();
     const read = new Set();
-    const progress = () => { if (opts.onProgress) opts.onProgress({ done: read.size, total: todo.length }); };
+    const progress = (waitUntil) => {
+      if (!opts.onProgress) return;
+      opts.onProgress(waitUntil === undefined ? { done: read.size, total: todo.length } : { done: read.size, total: todo.length, waitUntil });
+    };
+    const stale = () => !cacheOnly && !!opts.stale && opts.stale();
+    const superseded = () => Object.assign(new Error("streets: a newer run replaced this one"), { reason: "superseded" });
+    // the source's wait before asking again: false when it would end past the deadline
+    const wait = async (until) => {
+      if (stale()) throw superseded();
+      if (until - started > deadlineMs) return false;
+      progress(until);
+      await this.sleep(Math.max(0, until - this.now()));
+      if (stale()) throw superseded();
+      progress();
+      return true;
+    };
     const take = (t, answer) => {
       const id = t.x + ":" + t.y;
       if (!answer || read.has(id)) return;
@@ -185,11 +213,13 @@
     progress();
     let answers, broke = null;
     try {
+      if (stale()) throw superseded();
       answers = await this.fetchStreets(todo, kind, (t, answer) => {
         try { take(t, answer); } catch (e) { broke = e; throw e; }
-        if (!cacheOnly && read.size < todo.length && this.now() - started >= deadlineMs)
-          throw Object.assign(new Error("streets: run deadline passed"), { reason: "stalled" });
-      }, { cacheOnly });
+        if (cacheOnly || read.size === todo.length) return;
+        if (stale()) throw superseded();
+        if (this.now() - started >= deadlineMs) throw Object.assign(new Error("streets: run deadline passed"), { reason: "stalled" });
+      }, cacheOnly ? { cacheOnly } : { now: this.now, wait });
     } catch (e) {
       if (broke) throw broke;
       if (cacheOnly) throw e;
@@ -278,8 +308,9 @@
   // The Overpass query for the given boxes ([{s,w,n,e}]). The bench cache is keyed on this
   // text, with its [timeout:25] read as [timeout:60] (bench/lib/fetch-cache.js), so any edit
   // but a return to [timeout:60] makes every saved rectQuery answer miss. [timeout:25]
-  // caps the server's run, so a query the client has given up on at 15 s (FIRST_BYTE_MS in
-  // overpass.js) still ends by 25 s.
+  // caps the server's run once the query leaves its queue. overpass-api.de sends nothing until the
+  // run ends, so the client guard that binds is the 90 s first byte (FIRST_BYTE_MS in overpass.js):
+  // a 39-68 s queue plus a 25 s run can still overrun it, and that request counts as a stall.
   StreetIndex.rectQuery = function (boxes, kind) {
     const bb = (r) => [r.s, r.w, r.n, r.e].map((x) => x.toFixed(4)).join(",");
     // access filter: planned and routed trips must not cross ways the person can't
@@ -307,24 +338,65 @@
     return q;
   };
 
-  // The default street source: one Overpass request per TILES_PER_REQUEST tiles, in the order given,
-  // each tile handed to onTile once its whole answer is in. Stops at the first failed request. A
-  // throw from onTile (the caller's stop, or a bug) passes through unchanged: it is not a download
-  // failure. Holds nothing, so a cache-only read (opts.cacheOnly) gets no tile from it.
+  // Splits tiles (nearest first) into requests of up to TILES_PER_REQUEST: the nearest tile left, the
+  // rest of its 2x2 block (blocks start at even tile indices), then the nearest others.
+  function batches(tiles) {
+    const left = tiles.slice(), out = [];
+    const block = (t) => Math.floor(t.x / 2) + ":" + Math.floor(t.y / 2);
+    while (left.length) {
+      const b = block(left[0]);
+      const mates = left.filter((t) => block(t) === b).slice(0, TILES_PER_REQUEST);
+      const batch = mates.concat(left.filter((t) => block(t) !== b).slice(0, TILES_PER_REQUEST - mates.length));
+      for (const t of batch) left.splice(left.indexOf(t), 1);
+      out.push(batch);
+    }
+    return out;
+  }
+
+  // The boxes a batch's query asks for: one box when the tiles fill a rectangle (a 2x2 block, a strip,
+  // a single tile), so the query stays short, else a box per tile.
+  function batchBoxes(batch) {
+    const xs = batch.map((t) => t.x), ys = batch.map((t) => t.y);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) !== batch.length) return batch.map(StreetIndex.tileBounds);
+    return [{ s: y0 * TILE_DEG, w: x0 * TILE_DEG, n: (y1 + 1) * TILE_DEG, e: (x1 + 1) * TILE_DEG }];
+  }
+
+  // The default street source: one Overpass request per batch of tiles (batches above), each tile
+  // handed to onTile once its batch's whole answer is in. A busy answer is asked again after
+  // BUSY_RETRY_MS (or its retryAt when later), through opts.wait(until) -> false to give up (default:
+  // sleep until then on opts.now, default Date.now); an answer starts the count again. Stops at the
+  // first other failure, the busy after the last wait, or a refused wait. A throw from onTile or
+  // opts.wait (the caller's stop, or a bug) passes through unchanged: it is not a download failure.
+  // Holds nothing, so a cache-only read (opts.cacheOnly) gets no tile from it.
   StreetIndex.overpassFetch = async function (tiles, kind, onTile, opts) {
+    opts = opts || {};
     const out = new Map();
-    if (opts && opts.cacheOnly) return out;
-    for (let i = 0; i < tiles.length; i += TILES_PER_REQUEST) {
-      const batch = tiles.slice(i, i + TILES_PER_REQUEST);
-      const q = StreetIndex.rectQuery(batch.map(StreetIndex.tileBounds), kind);
+    if (opts.cacheOnly) return out;
+    const now = opts.now || Date.now;
+    const wait = opts.wait || ((until) => new Promise((resolve) => setTimeout(() => resolve(true), Math.max(0, until - now()))));
+    let busy = 0;
+    for (const batch of batches(tiles)) {
+      const q = StreetIndex.rectQuery(batchBoxes(batch), kind);
+      let json;
+      for (;;) {
+        try { json = await global.Overpass.post("data=" + encodeURIComponent(q)); busy = 0; break; }
+        catch (e) {
+          if (e.reason !== "busy" || busy === BUSY_RETRY_MS.length) throw StreetIndex.downloadError(out.size, tiles.length, e);
+          if (!(await wait(Math.max(now() + BUSY_RETRY_MS[busy++], e.retryAt || 0)))) throw StreetIndex.downloadError(out.size, tiles.length, e);
+        }
+      }
       let answers;
-      try { answers = StreetIndex.splitAnswer(await global.Overpass.post("data=" + encodeURIComponent(q)), batch); }
+      try { answers = StreetIndex.splitAnswer(json, batch); }
       catch (e) { throw StreetIndex.downloadError(out.size, tiles.length, e); }
+      // the whole answer is in: every tile of it is handed over before the caller's stop is thrown on
+      let stop = null;
       for (const t of batch) {
         const answer = answers.get(t.x + ":" + t.y);
         out.set(t.x + ":" + t.y, answer);
-        if (onTile) onTile(t, answer);
+        try { if (onTile) onTile(t, answer); } catch (e) { if (!stop) stop = { e }; }
       }
+      if (stop) throw stop.e;
     }
     return out;
   };

@@ -29,16 +29,18 @@
   // {elevationAt}; estimates: Estimates; streetKind(travelMode) -> "run"|"bike"|"car".
   function create({ streets, plannerFor, elevation, estimates, streetKind }) {
     // points: [{lat, lng}] (at least two), travelMode as the mode buttons name it;
-    // onProgress({done, total}) hears the street download, if one is needed.
+    // onProgress({done, total, waitUntil?}) hears the street download, if one is needed; stale()
+    // true means a newer request replaced this one, so the download asks for nothing further.
     // -> {coords, stats: {km, seconds, ascent, descent}} or {error: true, why}
-    return async function routeWaypoints(points, travelMode, onProgress) {
+    return async function routeWaypoints(points, travelMode, onProgress, stale) {
       const rects = [];
       for (let i = 1; i < points.length; i++) {
         if (legM(points[i - 1], points[i]) > MAX_LEG_M) return TOO_FAR;
         rects.push(legRect(points[i - 1], points[i]));
       }
       // a failed download logs its reason, a bug its class, never a message: messages name tiles
-      try { await streets.ensureRects(rects, streetKind(travelMode), { onProgress }); } catch (e) {
+      try { await streets.ensureRects(rects, streetKind(travelMode), { onProgress, stale }); } catch (e) {
+        if (stale && stale()) return { error: true, why: { reason: "superseded" } }; // replaced by a newer request, which _recalc ignores; nothing to log
         if (!global.StreetIndex.isDownloadError(e)) {
           console.error("[route] reading streets threw", e && e.name);
           return INTERNAL;

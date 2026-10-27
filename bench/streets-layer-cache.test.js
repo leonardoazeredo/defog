@@ -89,6 +89,22 @@ function source(held, net) {
       "the badge counts the download, then clears");
     assert.equal(state.drawn, 2);
   }
+  { // a wait for a busy server shows in the badge, then the count again
+    const src = async (tiles, kind, onTile, opts) => {
+      const out = new Map();
+      if (opts && opts.cacheOnly) return out;
+      assert.equal(await opts.wait(Date.now() + 15000), true);
+      for (const t of tiles) { out.set(t.x + ":" + t.y, { ways: [], groups: {} }); onTile(t, out.get(t.x + ":" + t.y)); }
+      return out;
+    };
+    const { layer, state, streets } = fakeLayer(src);
+    streets.sleep = async () => {};
+    await layer._update();
+    state.said.length = 0;
+    await layer._download();
+    assert.deepEqual(state.said.slice(0, 3).map(([text]) => text), ["Getting the street map, 0 of 2…",
+      "The street servers are busy. Trying again in about 20 s… (0 of 2)", "Getting the street map, 0 of 2…"]);
+  }
   { // a second tap while the download runs does nothing
     let release;
     const gate = new Promise((r) => { release = r; });
