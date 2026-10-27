@@ -1,11 +1,11 @@
 // Overpass endpoints for the street data, shared by suggestions and the "Streets in fog" look so
-// they obey one backoff. One request is in flight at a time. overpass-api.de meters every app and
-// every IP over a 24 h window and answers 406 once that share is used up, a block until the window
-// refills (community.openstreetmap.org/t/overpass-api-performance-issues/140598), so a 406 holds it
-// an hour, longer when Retry-After says so; a 429 holds it at least 30 s. NextGIS's keyed Overpass
-// goes first by default, and exists only when the page holds a key (the phone app hands it over; a
-// browser and the bench have none, and tests set a made-up one). The key is part of its URL, so no
-// message or log names the keyed URL. An endpoint that sends no response headers within
+// they obey one backoff and one cap on requests in flight per endpoint. overpass-api.de meters every
+// app and every IP over a 24 h window and answers 406 once that share is used up, a block until the
+// window refills (community.openstreetmap.org/t/overpass-api-performance-issues/140598), so a 406
+// holds it an hour, longer when Retry-After says so; a 429 holds it at least 30 s. NextGIS's keyed
+// Overpass goes first by default, and exists only when the page holds a key (the phone app hands it
+// over; a browser and the bench have none, and tests set a made-up one). The key is part of its URL,
+// so no message or log names the keyed URL. An endpoint that sends no response headers within
 // FIRST_BYTE_MS, or not the whole answer within REQUEST_TIMEOUT_MS, is abandoned (a stall) and held
 // 30 s, ten minutes from the third stall in a row. A network failure with no readable status (no
 // connection, or an answer without CORS headers, which can hide a 429) is held 30 s. The rejection
@@ -18,6 +18,11 @@
   // On the phone a four-tile request took 41-65 s from overpass-api.de and 5-17 s from NextGIS
   // (#185); with no key NextGIS drops out and overpass-api.de is asked alone.
   const DEFAULT_ORDER = ["nextgis", "main"];
+  // Requests in flight per endpoint, every caller's together. NextGIS's /api/status reports no
+  // limit ("Rate limit: 0"), so its 4 is our own choice, not the server's. overpass-api.de's
+  // reports "Rate limit: 2" per IP, where a third request would wait 15 s and get a 429. A post
+  // falling back from NextGIS takes one of overpass-api.de's slots.
+  const CAPS = { nextgis: 4, main: 2 };
   const MIN_BACKOFF_MS = 30000;
   // overpass-api.de sends nothing until a query has waited out its queue and run. On the phone a
   // one-tile request got its first byte after 39-68 s (#185), even a tile of 1 KB, so that is the
@@ -41,10 +46,22 @@
     const key = global.crossfogNextgisKey;
     return typeof key === "string" && key ? "https://overpass.nextgis.com/" + encodeURIComponent(key) + "/api/interpreter" : undefined;
   }
-  let state = {}; // url -> {until: time before which it is not asked again, why: that hold's reason, error: the failure that earned it, stalls: in a row}
-  let queue = Promise.resolve();
+  let state = {}; // url -> {until: time before which it is not asked again, heldAt: when that hold was set, why: its reason, error: the failure that earned it, stalls: in a row}
+  let slots = {}; // endpoint name -> {open: requests in flight, waiting: resolvers, first come first served}
 
-  const stateOf = (url) => state[url] || (state[url] = { until: 0, why: null, error: null, stalls: 0 });
+  const stateOf = (url) => state[url] || (state[url] = { until: 0, heldAt: -Infinity, why: null, error: null, stalls: 0 });
+  const slotOf = (name) => slots[name] || (slots[name] = { open: 0, waiting: [] });
+  function acquire(name) {
+    const s = slotOf(name);
+    if (s.open < CAPS[name]) { s.open++; return Promise.resolve(); }
+    return new Promise((resolve) => s.waiting.push(resolve));
+  }
+  // a freed slot passes straight to the next waiter, so open never exceeds the cap
+  function release(name) {
+    const s = slotOf(name);
+    if (s.waiting.length) s.waiting.shift()();
+    else s.open--;
+  }
 
   // A browser exposes Retry-After to page script only if the server lists it in
   // Access-Control-Expose-Headers, and an HTTP-date value is not parsed: either way the floor
@@ -97,27 +114,38 @@
   }
 
   async function tryEndpoints(body) {
-    const now = Overpass._now();
-    const urls = order.map(urlOf).filter(Boolean);
+    const names = order.filter((name) => urlOf(name));
+    const urls = names.map(urlOf);
     // one {why, error} per endpoint, a held one contributing its hold's: the error thrown is always
     // the one that earned the reason, never another endpoint's; only the reason offline can fall back
     // to the synthetic browser-offline error
     const failures = [];
     let anyStatus = false;
-    for (const url of urls) {
-      const s = stateOf(url);
-      if (s.until > now) { failures.push({ why: s.why, error: s.error }); continue; }
-      const r = await attempt(url, body);
+    for (let i = 0; i < names.length; i++) {
+      const name = names[i], url = urls[i], s = stateOf(url);
+      if (s.until > Overpass._now()) { failures.push({ why: s.why, error: s.error }); continue; }
+      await acquire(name);
+      // a request that held a slot meanwhile may have put the endpoint on hold
+      if (s.until > Overpass._now()) { release(name); failures.push({ why: s.why, error: s.error }); continue; }
+      const sent = Overpass._now();
+      let r;
+      try { r = await attempt(url, body); } finally { release(name); }
       // a body stall carries its 200, but only an answer that ended proves the endpoint alive
       if (r.status !== undefined) { anyStatus = true; if (r.kind !== "stall") s.stalls = 0; }
       if (r.json !== undefined) return r.json;
       let why, holdMs = 0;
-      if (r.kind === "stall") { s.stalls++; why = "stalled"; holdMs = s.stalls >= STALLS_BEFORE_LONG_HOLD ? STALL_HOLD_MS : MIN_BACKOFF_MS; }
+      // a stall of a request already open when the endpoint's last hold was set adds nothing to the
+      // count: requests open together that stall together are one stall in a row (a later one can
+      // still lengthen the hold)
+      if (r.kind === "stall") { if (s.heldAt < sent) s.stalls++; why = "stalled"; holdMs = s.stalls >= STALLS_BEFORE_LONG_HOLD ? STALL_HOLD_MS : MIN_BACKOFF_MS; }
       else if (r.kind === "network") { why = "offline"; holdMs = MIN_BACKOFF_MS; }
       else if (r.status === 406) { why = "blocked"; holdMs = Math.max(BAN_HOLD_MS, r.retryAfter); }
       else if (r.status === 429) { why = "busy"; holdMs = Math.max(MIN_BACKOFF_MS, r.retryAfter); }
       else why = BUSY_STATUS[r.status] ? "busy" : "server";
-      if (holdMs) { s.until = Overpass._now() + holdMs; s.why = why; s.error = r.error; }
+      // a hold that a request open beside this one earned is never cut short (a 406's hour by a stall),
+      // and this post reports that hold's reason and error
+      if (holdMs && Overpass._now() + holdMs <= s.until) { failures.push({ why: s.why, error: s.error }); continue; }
+      if (holdMs) { s.until = Overpass._now() + holdMs; s.heldAt = Overpass._now(); s.why = why; s.error = r.error; }
       failures.push({ why, error: r.error });
     }
     // a failed fetch means offline only when nothing answered at all: a status proves the network up
@@ -146,10 +174,11 @@
   // else. `retryAt` (on the Overpass._now clock) is set only when every endpoint is on hold: the end of
   // the first hold, before which no post goes out; when the reason is blocked, the end of the earliest
   // block instead, which can come after another endpoint's hold ends: a post in between still goes out.
+  //
+  // A post waits for a free slot on the endpoint it is about to ask, and a fallback for one on the
+  // next; one that waited is not sent where a request finished meanwhile set a hold.
   function post(body) {
-    const run = queue.then(() => tryEndpoints(body));
-    queue = run.catch(() => {});
-    return run;
+    return tryEndpoints(body);
   }
 
   const Overpass = {
@@ -165,6 +194,9 @@
     // page holds no key
     has: (name) => !!urlOf(name),
     post,
+    // the cap of the endpoint asked first, read at each use since the key and the order can change;
+    // its slots are every caller's together, so a caller keeps at most this many open
+    cap: () => CAPS[order.find((name) => urlOf(name))],
     // test-only hooks, used between settled posts: a fake clock, fake timers, the two limits, and a
     // way back to the initial state
     _now: () => Date.now(),
@@ -173,7 +205,7 @@
     _firstByteMs: FIRST_BYTE_MS,
     _timeoutMs: REQUEST_TIMEOUT_MS,
     _reset() {
-      order = DEFAULT_ORDER.slice(); state = {}; queue = Promise.resolve();
+      order = DEFAULT_ORDER.slice(); state = {}; slots = {};
       Overpass._now = () => Date.now();
       Overpass._setTimeout = (fn, ms) => setTimeout(fn, ms); Overpass._clearTimeout = (timer) => clearTimeout(timer);
       Overpass._firstByteMs = FIRST_BYTE_MS; Overpass._timeoutMs = REQUEST_TIMEOUT_MS;
