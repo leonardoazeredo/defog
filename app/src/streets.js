@@ -62,7 +62,12 @@
     this.sleep = opts.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.segs = new Map();       // "gx,gy" -> [{x,y,lon,lat,lenM,frac}]
     this.tiles = new Set();      // fetched coverage, StreetIndex.tileKey(kind, x, y)
-    this.staleTiles = new Set(); // expired cached tiles a cache-only read drew from: not coverage, so a normal run fetches them again (their ways already held are kept as they were)
+    this.staleTiles = new Set(); // expired cached tiles a cache-only read drew from: not coverage, so a normal run fetches them again
+    // ways held only because an expired copy brought them: id -> {from: the staleTiles keys of the expired copies that still list it,
+    // segs: its scoring segments}. A fresh answer replaces them (see _read); a way any fresh tile brought is not here.
+    this.staleWays = new Map();
+    this.onWaysChanged = null;   // called once a read has dropped or replaced ways, for a reader that drew them (the Streets in fog look)
+    this.wayEpoch = 0;           // bumped when a way leaves the index or is replaced, so a reader that went through `ways` once starts over
     this.wayIds = new Set();     // dedupe across overlapping fetches
     this.classIds = { bike: new Set(), road: new Set(), car: new Set() };
     this.classified = new Set(); // ways we know the travel classes of (blank = assume usable)
@@ -77,6 +82,10 @@
     this.kx = null; this.ky = 110540; // metre frame, anchored on first fetch
   }
 
+  const holds = (set, kind, t) => set.has(StreetIndex.tileKey(kind, t.x, t.y)) ||
+    (kind !== "car" && set.has(StreetIndex.tileKey("run", t.x, t.y)));
+  const cellKey = (x, y) => Math.floor(x / GRID_M) + "," + Math.floor(y / GRID_M);
+
   StreetIndex.prototype._anchor = function (lat) {
     if (this.kx === null) this.kx = 111320 * Math.cos(lat * Math.PI / 180);
   };
@@ -86,7 +95,8 @@
     return ["run", "bike", "car"].some((k) => this.tiles.has(StreetIndex.tileKey(k, t.x, t.y)));
   };
 
-  StreetIndex.prototype._addWay = function (w) {
+  // segLog, when given, collects the segments this way adds (a way an expired copy brought, to take them out again)
+  StreetIndex.prototype._addWay = function (w, segLog) {
     if (!w.geometry || w.geometry.length < 2 || this.wayIds.has(w.id)) return;
     this.wayIds.add(w.id);
     if (w.nodes && w.nodes.length === w.geometry.length) this.ways.push({ id: w.id, nodes: w.nodes, geometry: w.geometry });
@@ -99,13 +109,40 @@
       for (let s = 0; s < n; s++) {
         const t = (s + 0.5) / n;
         const x = ax + (bx - ax) * t, y = ay + (by - ay) * t;
-        const key = Math.floor(x / GRID_M) + "," + Math.floor(y / GRID_M);
+        const key = cellKey(x, y);
         let cell = this.segs.get(key);
         if (!cell) this.segs.set(key, (cell = []));
-        cell.push({ x, y, lon: a.lon + (b.lon - a.lon) * t, lat: a.lat + (b.lat - a.lat) * t, lenM: edgeM / n, frac: null });
+        const seg = { x, y, lon: a.lon + (b.lon - a.lon) * t, lat: a.lat + (b.lat - a.lat) * t, lenM: edgeM / n, frac: null };
+        cell.push(seg);
+        if (segLog) segLog.push(seg);
         this.segCount++;
       }
     }
+  };
+
+  // Takes ways held from expired copies out of the index. The MAX_SEGS share must be given back and every
+  // list the way joined must forget it, or a replaced way would count twice.
+  StreetIndex.prototype._dropWays = function (ids) {
+    if (!ids.length) return;
+    const gone = new Set(ids), dead = new Map();
+    for (const id of ids) {
+      for (const seg of this.staleWays.get(id).segs) {
+        const key = cellKey(seg.x, seg.y);
+        if (!dead.has(key)) dead.set(key, new Set());
+        dead.get(key).add(seg);
+      }
+      this.staleWays.delete(id);
+      this.wayIds.delete(id);
+      this.classified.delete(id);
+      for (const name of GROUP_ORDER) (this.classIds[name] || this[name]).delete(id);
+    }
+    for (const [key, segs] of dead) {
+      const live = this.segs.get(key).filter((seg) => !segs.has(seg));
+      if (live.length) this.segs.set(key, live); else this.segs.delete(key);
+      this.segCount -= segs.size;
+    }
+    this.ways = this.ways.filter((w) => !gone.has(w.id));
+    this.wayEpoch++;
   };
 
   // A tile counts as covered when it was fetched for the same kind AND fetched at
@@ -114,9 +151,7 @@
   // fetch holds motorways, which nothing else does, so only a car fetch covers cars.
   // withStale also counts the expired tiles already drawn from, so a cache-only read skips them.
   StreetIndex.prototype._uncovered = function (rects, kind, withStale) {
-    const has = (set, t) => set.has(StreetIndex.tileKey(kind, t.x, t.y)) ||
-      (kind !== "car" && set.has(StreetIndex.tileKey("run", t.x, t.y)));
-    return StreetIndex.tilesOf(rects).filter((t) => !(has(this.tiles, t) || (withStale && has(this.staleTiles, t))));
+    return StreetIndex.tilesOf(rects).filter((t) => !(holds(this.tiles, kind, t) || (withStale && holds(this.staleTiles, kind, t))));
   };
 
   StreetIndex.prototype._cover = function (tiles, kind) {
@@ -219,11 +254,11 @@
       // a block's tile that came in its box unasked: read and covered unless already held, so a later
       // run need not ask for it, but not counted in this run's progress
       if (answer && !want.has(id) && !this.tiles.has(StreetIndex.tileKey(kind, t.x, t.y))) {
-        this._read(answer);
+        this._read(answer, { kind, x: t.x, y: t.y });
         this._cover([t], kind);
       }
       if (!answer || !want.has(id) || read.has(id)) return;
-      this._read(answer);
+      this._read(answer, { kind, x: t.x, y: t.y });
       this._cover([t], kind);
       read.add(id);
       progress();
@@ -254,11 +289,14 @@
     if (broke) throw broke;
     if (cacheOnly) {
       // an answer in the Map alone is an expired copy: drawn from, but left uncovered so a
-      // suggestion's run still asks for it
+      // suggestion's run still asks for it; that run's fresh answer then replaces the ways read here
       for (const t of todo) {
         const id = t.x + ":" + t.y, answer = answers && answers.get(id);
         if (read.has(id) || !answer) continue;
-        this._read(answer);
+        // a run that covered the tile while this read was open already holds fresher ways: an expired
+        // copy added now would leave ways the fresh answer lacks, and nothing would ask for the tile again
+        if (holds(this.tiles, kind, t)) { read.add(id); progress(); continue; }
+        this._read(answer, { kind, x: t.x, y: t.y, stale: true });
         this.staleTiles.add(StreetIndex.tileKey(kind, t.x, t.y));
         read.add(id);
         progress();
@@ -274,13 +312,58 @@
   };
 
   // One tile's answer into the index; the version bump tells graphs built before it to rebuild.
-  StreetIndex.prototype._read = function (answer) {
-    for (const w of answer.ways) { this._addWay(w); this.classified.add(w.id); }
+  // from is the tile ({kind, x, y}, plus stale: true for an expired copy). A way is held while any
+  // tile brings it, and splitAnswer hands a whole way to every tile it touches (the first, when none
+  // holds one of its points), so:
+  //  - a fresh answer replaces every expired copy of a way it lists, whichever tile brought that copy;
+  //  - a way held only through expired copies goes when the fresh answer lacks it and no other copy
+  //    still lists it (the other expired tiles are refreshed in their turn);
+  //  - an expired copy adds no way a fresh tile holds, and no class or one-way flag to one, so it
+  //    never overwrites fresher data;
+  //  - a fresh answer of kind K replaces what an expired copy of K (and, for run, of bike) brought:
+  //    a bike answer never lists a footway, so it cannot say one is gone.
+  StreetIndex.prototype._read = function (answer, from) {
+    const epoch = this.wayEpoch, stale = !!(from && from.stale), key = from && StreetIndex.tileKey(from.kind, from.x, from.y);
+    if (from && !stale && this.staleWays.size) {
+      const mine = (from.kind === "run" ? ["run", "bike"] : [from.kind]).map((k) => StreetIndex.tileKey(k, from.x, from.y));
+      const listed = new Set(answer.ways.map((w) => w.id)), out = [];
+      for (const [id, held] of this.staleWays) {
+        if (!listed.has(id)) for (const k of mine) held.from.delete(k);
+        if (listed.has(id) || !held.from.size) out.push(id);
+      }
+      this._dropWays(out);
+    }
+    const freshHeld = new Set();
+    try {
+      this._addAnswer(answer, stale, key, freshHeld);
+    } finally {
+      // a throw midway leaves ways dropped: the graphs built before must still rebuild
+      this.version++;
+      if (this.wayEpoch !== epoch && this.onWaysChanged) Promise.resolve().then(() => this.onWaysChanged());
+    }
+  };
+
+  // the per-way part of _read; freshHeld collects what an expired copy must not add classes to
+  StreetIndex.prototype._addAnswer = function (answer, stale, key, freshHeld) {
+    for (const w of answer.ways) {
+      const held = this.staleWays.get(w.id);
+      if (held) { if (stale) held.from.add(key); } // a fresh read with a tile has dropped its listed ways above
+      else if (stale && !this.wayIds.has(w.id)) {
+        // registered before the add so a way that throws midway can still be taken out
+        const segs = [];
+        this.staleWays.set(w.id, { from: new Set([key]), segs });
+        this._addWay(w, segs);
+        if (!this.wayIds.has(w.id)) this.staleWays.delete(w.id);
+      } else {
+        if (stale && this.wayIds.has(w.id)) freshHeld.add(w.id);
+        this._addWay(w);
+      }
+      this.classified.add(w.id);
+    }
     for (const name of GROUP_ORDER) {
       const into = this.classIds[name] || this[name];
-      for (const id of answer.groups[name] || []) into.add(id);
+      for (const id of answer.groups[name] || []) if (!freshHeld.has(id)) into.add(id);
     }
-    this.version++;
   };
 
   // Defoggable area (m²) reachable by travelling the ways within rM of the
