@@ -222,4 +222,56 @@ describe("hand-off", () => {
     expect(overlap).toBe(false);
     expect((await activities.list()).map((a) => a.id)).toEqual([B, A]);
   });
+
+  it("keeps the staged copy of an activity that commits while a restore holds the hand-off", async () => {
+    const { link, activities } = setup();
+    let commit!: () => void;
+    const committed = new Promise<void>((resolve) => {
+      commit = resolve;
+    });
+    const slow = {
+      add: async (a: Parameters<typeof activities.add>[0]) => {
+        await committed;
+        return activities.add(a);
+      },
+    };
+    const flow = createHandOffFlow({ link, activities: slow, parseGpx, now: () => NOW });
+    link.stage(offer(A, "2026-03-01T10:00:00Z"));
+
+    const pass = flow.run();
+    await new Promise((r) => setTimeout(r, 0));
+    const restore = flow.hold(async () => {
+      commit();
+      return await pass;
+    });
+
+    expect(await restore).toEqual({ stored: 1, released: 0 });
+    expect(link.released()).toEqual([]);
+    expect((await link.pendingActivities()).map((p) => p.activityId)).toEqual([A]);
+  });
+
+  it("starts no offer while held, and takes it on the first run after the hold", async () => {
+    const { link, activities, flow } = setup();
+    link.stage(offer(A, "2026-03-01T10:00:00Z"));
+
+    expect(await flow.hold(() => flow.run())).toEqual({ stored: 0, released: 0 });
+    expect(await activities.list()).toEqual([]);
+    expect(await link.pendingActivities()).toHaveLength(1);
+
+    expect(await flow.run()).toEqual({ stored: 1, released: 1 });
+    expect(link.released()).toEqual([A]);
+  });
+
+  it("returns what the held work returns, and ends the hold when that work fails", async () => {
+    const { link, flow } = setup();
+    await expect(flow.hold(async () => "done")).resolves.toBe("done");
+    await expect(
+      flow.hold(async () => {
+        throw new Error("restore failed");
+      }),
+    ).rejects.toThrow("restore failed");
+
+    link.stage(offer(A, "2026-03-01T10:00:00Z"));
+    expect(await flow.run()).toEqual({ stored: 1, released: 1 });
+  });
 });

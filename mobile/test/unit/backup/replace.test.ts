@@ -9,6 +9,7 @@ import {
   putBackReplacedCopy,
   REPLACED_DB,
   RESTORING_DB,
+  type ReplaceDeps,
   recoverInterruptedReplace,
 } from "../../../src/backup/replace.js";
 import { createActivityStore } from "../../../src/history/activityStore.js";
@@ -50,23 +51,99 @@ async function openedBackup() {
 }
 
 describe("database replacer", () => {
-  it("restores when the device key was lost, with a freshly minted key", async () => {
-    const lost = Object.assign(new Error("gone"), { name: "KeyLostError" });
-    const keys: string[] = [];
-    const replace = createDatabaseReplacer(
+  const lost = Object.assign(new Error("gone"), { name: "KeyLostError" });
+
+  function lostKeyDeps(over: Partial<ReplaceDeps> = {}) {
+    const kept: string[] = [];
+    const deps = target.replacerDeps({
+      databaseKeyHex: async () => {
+        throw lost;
+      },
+      newDatabaseKeyHex: () => "cd".repeat(32),
+      replaceLostDatabaseKey: async (keyHex) => {
+        kept.push(keyHex);
+      },
+      ...over,
+    });
+    return { deps, kept };
+  }
+
+  it("restores when the device key was lost, keeping the new key it built the file with", async () => {
+    const seen: string[] = [];
+    const { deps, kept } = lostKeyDeps();
+    const backup = await openedBackup();
+    const real = backup.exportTo;
+    backup.exportTo = async (path, key) => {
+      seen.push(String(key));
+      return real(path, key);
+    };
+    await createDatabaseReplacer(deps)(backup);
+    expect(seen).toEqual([`x'${"cd".repeat(32)}'`]);
+    expect(kept).toEqual(["cd".repeat(32)]);
+    expect((await createActivityStore(target.db).list()).map((a) => a.id)).toEqual([activity().id]);
+  });
+
+  it("keeps the new key only once the new file is in place", async () => {
+    const at: Array<{ live: boolean; replaced: boolean; restoring: boolean }> = [];
+    const { deps } = lostKeyDeps({
+      replaceLostDatabaseKey: async () => {
+        at.push({
+          live: target.files.exists(LIVE_DB),
+          replaced: target.files.exists(REPLACED_DB),
+          restoring: target.files.exists(RESTORING_DB),
+        });
+      },
+    });
+    await createDatabaseReplacer(deps)(await openedBackup());
+    expect(at).toEqual([{ live: true, replaced: true, restoring: false }]);
+  });
+
+  it("leaves the old key and file untouched when a lost-key restore cannot build the new file", async () => {
+    await createActivityStore(target.db).add(
+      activity({ id: "33333333-3333-4333-8333-333333333333" }),
+    );
+    const { deps, kept } = lostKeyDeps();
+    const backup = await openedBackup();
+    backup.exportTo = async () => {
+      throw new Error("no space");
+    };
+    await expect(createDatabaseReplacer(deps)(backup)).rejects.toThrow("no space");
+    expect(kept).toEqual([]);
+    expect((await createActivityStore(target.db).list()).map((a) => a.id)).toEqual([
+      "33333333-3333-4333-8333-333333333333",
+    ]);
+    expect(target.files.exists(RESTORING_DB)).toBe(false);
+  });
+
+  it("puts the old file back when the new key cannot be kept", async () => {
+    await createActivityStore(target.db).add(
+      activity({ id: "33333333-3333-4333-8333-333333333333" }),
+    );
+    const { deps } = lostKeyDeps({
+      replaceLostDatabaseKey: async () => {
+        throw new Error("keystore refused");
+      },
+    });
+    await expect(createDatabaseReplacer(deps)(await openedBackup())).rejects.toThrow(
+      "keystore refused",
+    );
+    expect((await createActivityStore(target.db).list()).map((a) => a.id)).toEqual([
+      "33333333-3333-4333-8333-333333333333",
+    ]);
+    expect(target.files.exists(REPLACED_DB)).toBe(false);
+    expect(target.files.exists(RESTORING_DB)).toBe(false);
+  });
+
+  it("keeps no new key when the device key still works", async () => {
+    const kept: string[] = [];
+    await createDatabaseReplacer(
       target.replacerDeps({
-        databaseKeyHex: async () => {
-          throw lost;
-        },
-        mintDatabaseKeyHex: async () => {
-          keys.push("minted");
-          return "cd".repeat(32);
+        replaceLostDatabaseKey: async (keyHex) => {
+          kept.push(keyHex);
         },
       }),
-    );
-    await replace(await openedBackup());
-    expect(keys).toEqual(["minted"]);
-    expect((await createActivityStore(target.db).list()).map((a) => a.id)).toEqual([activity().id]);
+    )(await openedBackup());
+    expect(kept).toEqual([]);
   });
 
   it("exports with the raw device key", async () => {

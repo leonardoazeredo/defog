@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const native = {
   getDatabaseKeyHex: vi.fn(),
   keyState: vi.fn(),
-  resetLostDatabaseKey: vi.fn(),
+  replaceLostDatabaseKey: vi.fn(),
   createDocument: vi.fn(),
   copyToUri: vi.fn(),
   displayNameOf: vi.fn(),
@@ -20,7 +20,7 @@ vi.mock("../../../modules/watch-link", () => ({ default: native }));
 const {
   getDatabaseKeyHex,
   keyState,
-  resetLostDatabaseKeyHex,
+  replaceLostDatabaseKeyHex,
   createDocument,
   copyToUri,
   displayNameOf,
@@ -121,11 +121,14 @@ describe("staging and outbox calls", () => {
 });
 
 describe("backup file functions", () => {
-  it("checks the key a reset returns", async () => {
-    native.resetLostDatabaseKey.mockResolvedValue("ab".repeat(32));
-    await expect(resetLostDatabaseKeyHex()).resolves.toBe("ab".repeat(32));
-    native.resetLostDatabaseKey.mockResolvedValue("nope");
-    await expect(resetLostDatabaseKeyHex()).rejects.toThrow("malformed database key");
+  it("hands a well-formed key to the native side to keep, and refuses any other", async () => {
+    native.replaceLostDatabaseKey.mockResolvedValue(undefined);
+    await replaceLostDatabaseKeyHex("ab".repeat(32));
+    expect(native.replaceLostDatabaseKey).toHaveBeenCalledExactlyOnceWith("ab".repeat(32));
+    await expect(replaceLostDatabaseKeyHex("AB".repeat(32))).rejects.toThrow(
+      "malformed database key",
+    );
+    expect(native.replaceLostDatabaseKey).toHaveBeenCalledOnce();
   });
 
   it("passes the picker's answer through, null included", async () => {

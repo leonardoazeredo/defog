@@ -114,13 +114,13 @@ class KeysTest {
   }
 
   @Test
-  fun replacingALostKeyGivesAWorkingNewKey() {
+  fun replacingALostKeyKeepsTheGivenKey() {
     val keys = Keys(context)
     val old = keys.databaseKey()
     keys.databaseKeyFile.delete()
     assertEquals(KeyState.LOST, keys.keyState())
-    val fresh = keys.replaceLostDatabaseKey()
-    assertEquals(32, fresh.size)
+    val fresh = ByteArray(32) { (it + 1).toByte() }
+    keys.replaceLostDatabaseKey(fresh.copyOf())
     assertFalse(fresh.contentEquals(old))
     assertEquals(KeyState.EXISTING, keys.keyState())
     assertArrayEquals(fresh, Keys(context).databaseKey())
@@ -130,8 +130,17 @@ class KeysTest {
   fun aKeyThatStillWorksCannotBeReplaced() {
     val keys = Keys(context)
     val key = keys.databaseKey()
-    assertThrows(IllegalStateException::class.java) { keys.replaceLostDatabaseKey() }
+    assertThrows(IllegalStateException::class.java) { keys.replaceLostDatabaseKey(ByteArray(32)) }
     assertArrayEquals(key, keys.databaseKey())
+  }
+
+  @Test
+  fun aLostKeyIsNotReplacedWithAKeyOfTheWrongLength() {
+    val keys = Keys(context)
+    keys.databaseKey()
+    keys.databaseKeyFile.delete()
+    assertThrows(IllegalArgumentException::class.java) { keys.replaceLostDatabaseKey(ByteArray(16)) }
+    assertEquals(KeyState.LOST, keys.keyState())
   }
 
   private fun reset() {

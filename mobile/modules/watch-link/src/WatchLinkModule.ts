@@ -4,7 +4,7 @@ import type { KeyState, WatchLinkNativeEvents } from "./WatchLink.types";
 declare class WatchLinkModule extends NativeModule<WatchLinkNativeEvents> {
   getDatabaseKeyHex(): Promise<string>;
   keyState(): Promise<KeyState>;
-  resetLostDatabaseKey(): Promise<string>;
+  replaceLostDatabaseKey(keyHex: string): Promise<void>;
   createDocument(name: string, mime: string): Promise<string | null>;
   displayNameOf(uri: string): Promise<string | null>;
   copyToUri(sourcePath: string, uri: string): Promise<number>;

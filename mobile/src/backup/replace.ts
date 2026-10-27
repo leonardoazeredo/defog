@@ -56,8 +56,10 @@ export interface ReplaceDeps {
   reopen(): Promise<void>;
   /** The device key as hex; rejects with the key-lost error when it cannot be read. */
   databaseKeyHex(): Promise<string>;
-  /** Replaces a lost device key with a new one. */
-  mintDatabaseKeyHex(): Promise<string>;
+  /** A new random device key as hex; nothing is kept until `replaceLostDatabaseKey`. */
+  newDatabaseKeyHex(): string;
+  /** Keeps `keyHex` as the device key in place of a lost one. */
+  replaceLostDatabaseKey(keyHex: string): Promise<void>;
   isKeyLost(e: unknown): boolean;
   /** Opens a database file in the SQLite directory with the device key. */
   openFile(name: string, keyHex: string): Promise<SqlDriver>;
@@ -71,21 +73,30 @@ async function count(db: { all<T>(sql: string): Promise<T[]> }, table: string): 
 /**
  * Makes the opened backup the history database: a new file keyed with the device key, checked
  * against the backup, then swapped in. The old file is kept until the new one opens, so a failure
- * before the swap, during it, or when the new file does not open, leaves the phone as it was. A
- * process killed between the two moves in swap() is undone by `recoverInterruptedReplace`; killed
- * after the second, the new file stays live and the next first open decides.
+ * before the swap, during it, or when the new file does not open, leaves the phone as it was
+ * (except for a lost key already replaced, below). A process killed between the two moves in swap()
+ * is undone by `recoverInterruptedReplace`; killed after the second, the new file stays live and
+ * the next first open decides.
+ *
+ * When the device key was lost, the new file is built with a new key that is kept only after the
+ * swap, so a restore that fails before then leaves the old key as well as the old file (a failure
+ * inside `replaceLostDatabaseKey` may leave no usable key; the native `Keys` says how it reads). A
+ * failure after the key is kept puts the old file back beside the new key, which cannot open it (nor could
+ * the lost one), so history stays unavailable until another restore. A process killed after the
+ * swap and before the key is kept leaves the key lost beside a live file nothing can read, which a
+ * second restore replaces.
  */
 export function createDatabaseReplacer(
   deps: ReplaceDeps,
 ): (backup: AttachedBackup) => Promise<void> {
   const { files } = deps;
 
-  async function deviceKey(): Promise<string> {
+  async function deviceKey(): Promise<{ hex: string; lost: boolean }> {
     try {
-      return await deps.databaseKeyHex();
+      return { hex: await deps.databaseKeyHex(), lost: false };
     } catch (e) {
       // A lost key means the current file cannot be read by anyone, so a new key costs nothing more.
-      if (deps.isKeyLost(e)) return deps.mintDatabaseKeyHex();
+      if (deps.isKeyLost(e)) return { hex: deps.newDatabaseKeyHex(), lost: true };
       throw e;
     }
   }
@@ -130,9 +141,10 @@ export function createDatabaseReplacer(
   return (backup) =>
     deps.exclusive(async () => {
       await deps.closeLive();
+      let key: { hex: string; lost: boolean };
       try {
-        const keyHex = await deviceKey();
-        await build(backup, keyHex);
+        key = await deviceKey();
+        await build(backup, key.hex);
       } catch (e) {
         removeWithSidecars(files, RESTORING_DB);
         await deps.reopen().catch(() => undefined);
@@ -140,6 +152,8 @@ export function createDatabaseReplacer(
       }
       try {
         swap();
+        // Kept before reopen, which reads the key from the device.
+        if (key.lost) await deps.replaceLostDatabaseKey(key.hex);
         await deps.reopen();
       } catch (e) {
         rollback();
