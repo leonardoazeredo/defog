@@ -1,12 +1,11 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { expect, it } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { ORIGIN } from "../../src/bridge/protocol.js";
 import { installLinks } from "../../web-adapter/links.js";
 
 it("opens the attribution's copyright link in the system browser", () => {
-  const sent: unknown[] = [];
-  installLinks(window, document, (m) => sent.push(m));
+  const sent = install();
   document.body.innerHTML =
     '<div class="leaflet-control-attribution">&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></div>';
   const a = document.querySelector("a");
@@ -34,6 +33,24 @@ function pageAt(origin: string, body: string): void {
   document.head.innerHTML = `<base href="${origin}">`;
   document.body.innerHTML = body;
 }
+
+// installLinks has no way to uninstall, so a listener left on the shared document would also answer later tests' clicks and
+// let a missing preventDefault go unnoticed.
+const added: [string, EventListenerOrEventListenerObject][] = [];
+const addEventListener = document.addEventListener.bind(document);
+document.addEventListener = (
+  type: string,
+  listener: EventListenerOrEventListenerObject,
+  opts?: unknown,
+) => {
+  added.push([type, listener]);
+  addEventListener(type, listener, opts as boolean);
+};
+
+afterEach(() => {
+  for (const [type, listener] of added.splice(0))
+    document.removeEventListener(type, listener, true);
+});
 
 function install(): unknown[] {
   const sent: unknown[] = [];
