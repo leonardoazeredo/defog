@@ -211,6 +211,30 @@ describe("composed flows", () => {
     expect(await link.pendingActivities()).toEqual([]);
   });
 
+  it("runs a hand-off held by a restore that failed", async () => {
+    let fail!: (e: Error) => void;
+    const { link, activities, flows } = setupWithRestore(
+      () =>
+        new Promise<boolean>((_, reject) => {
+          fail = reject;
+        }),
+    );
+    flows.start();
+    await settle();
+
+    const restored = flows.restore();
+    await settle();
+    link.stage({ activityId: A, travelMode: "walk", encoderVersion: "e", gpx: GPX });
+    await settle();
+    expect(await activities.get(A)).toBeNull();
+
+    fail(new Error("not a backup"));
+    await expect(restored).rejects.toThrow("not a backup");
+    await settle();
+    expect(await activities.get(A)).not.toBeNull();
+    expect(await link.pendingActivities()).toEqual([]);
+  });
+
   it("runs a hand-off held by a restore once the restore ends, and publishes it", async () => {
     let finish!: (replaced: boolean) => void;
     const { link, activities, sent, flows } = setupWithRestore(

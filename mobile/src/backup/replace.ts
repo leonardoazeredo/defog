@@ -76,17 +76,16 @@ async function count(db: { all<T>(sql: string): Promise<T[]> }, table: string): 
  * Makes the opened backup the history database: a new file keyed with the device key, checked
  * against the backup, then swapped in. The old file is kept until the new one opens, so a failure
  * before the swap, during it, or when the new file does not open, leaves the phone as it was
- * (except for a lost key already replaced, below). A process killed between the two moves in swap()
+ * (except once a lost key is replaced, below). A process killed between the two moves in swap()
  * is undone by `recoverInterruptedReplace`; killed after the second, the new file stays live and
  * the next first open decides.
  *
  * When the device key was lost, the new file is built with a new key that is kept only after the
  * swap, so a restore that fails before then leaves the old key as well as the old file (a failure
  * inside `replaceLostDatabaseKey` may leave no usable key; the native `Keys` says how it reads). A
- * failure after the key is kept puts the old file back beside the new key, which cannot open it (nor could
- * the lost one), so history stays unavailable until another restore. A process killed after the
- * swap and before the key is kept leaves the key lost beside a live file nothing can read, which a
- * second restore replaces.
+ * failure after the key is kept leaves the new file live and drops the old one, which neither key
+ * can open, so the next open may still succeed. A process killed after the swap and before the key
+ * is kept leaves the key lost beside a live file nothing can read, which a second restore replaces.
  */
 export function createDatabaseReplacer(
   deps: ReplaceDeps,
@@ -101,7 +100,10 @@ export function createDatabaseReplacer(
       // Only a key in the native `lost` state (one of alias and key file gone) is replaced: the current file
       // cannot be read by anyone, so a new key costs nothing more. A key that is there but does not
       // unwrap is not replaced, so a file built for a new one would be thrown away after the swap.
-      if ((await deps.keyState()) !== "lost") throw e;
+      const state = await deps.keyState().catch(() => {
+        throw e;
+      });
+      if (state !== "lost") throw e;
       return { hex: deps.newDatabaseKeyHex(), lost: true };
     }
   }
@@ -155,13 +157,20 @@ export function createDatabaseReplacer(
         await deps.reopen().catch(() => undefined);
         throw e;
       }
+      let keyKept = false;
       try {
         swap();
         // Kept before reopen, which reads the key from the device.
-        if (key.lost) await deps.replaceLostDatabaseKey(key.hex);
+        if (key.lost) {
+          await deps.replaceLostDatabaseKey(key.hex);
+          keyKept = true;
+        }
         await deps.reopen();
       } catch (e) {
-        rollback();
+        // Neither key opens the old file once the new one is kept, so the new file is the only one
+        // worth keeping.
+        if (keyKept) discardReplacedCopy(files);
+        else rollback();
         await deps.reopen().catch(() => undefined);
         throw e;
       }

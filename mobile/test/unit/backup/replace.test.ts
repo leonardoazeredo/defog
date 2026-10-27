@@ -155,6 +155,63 @@ describe("database replacer", () => {
     ]);
   });
 
+  it("keeps the new key before reopening, which reads it", async () => {
+    const order: string[] = [];
+    const { deps } = lostKeyDeps();
+    const reopen = deps.reopen;
+    await createDatabaseReplacer({
+      ...deps,
+      replaceLostDatabaseKey: async () => {
+        order.push("keep");
+      },
+      reopen: async () => {
+        order.push("reopen");
+        await reopen();
+      },
+    })(await openedBackup());
+    expect(order).toEqual(["keep", "reopen"]);
+  });
+
+  it("keeps the new file live when it does not reopen after its key was kept", async () => {
+    await createActivityStore(target.db).add(
+      activity({ id: "33333333-3333-4333-8333-333333333333" }),
+    );
+    let keptKey = false;
+    let failed = false;
+    const { deps } = lostKeyDeps();
+    const reopen = deps.reopen;
+    await expect(
+      createDatabaseReplacer({
+        ...deps,
+        replaceLostDatabaseKey: async () => {
+          keptKey = true;
+        },
+        reopen: async () => {
+          if (keptKey && !failed) {
+            failed = true;
+            throw new Error("busy");
+          }
+          await reopen();
+        },
+      })(await openedBackup()),
+    ).rejects.toThrow("busy");
+    expect((await createActivityStore(target.db).list()).map((a) => a.id)).toEqual([activity().id]);
+    expect(target.files.exists(REPLACED_DB)).toBe(false);
+    expect(target.files.exists(RESTORING_DB)).toBe(false);
+  });
+
+  it("reports the lost key when the key state cannot be read", async () => {
+    const { deps, kept } = lostKeyDeps({
+      keyState: async () => {
+        throw new Error("keystore busy");
+      },
+    });
+    await expect(createDatabaseReplacer(deps)(await openedBackup())).rejects.toThrow(
+      expect.objectContaining({ name: "KeyLostError" }),
+    );
+    expect(kept).toEqual([]);
+  });
+
   it("keeps no new key when the device key still works", async () => {
     const kept: string[] = [];
     await createDatabaseReplacer(
