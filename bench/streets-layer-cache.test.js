@@ -105,6 +105,18 @@ function source(held, net) {
     await layer._download();
     assert.deepEqual(state.said.map(([text]) => text), ["Getting the street map, 1 of 3…", "Getting the street map, 2 of 3…", "Getting the street map, 3 of 3…", ""]);
   }
+  { // the pieces already on the device are in the failure text's count too
+    const view = { s: 51.0, w: 13.7, n: 51.025, e: 13.775 };
+    let calls = 0;
+    const src = source(new Set([StreetIndex.tilesCovering(view)[0].x + ":" + StreetIndex.tilesCovering(view)[0].y]),
+      async () => { if (++calls === 2) throw Object.assign(new Error("slow"), { reason: "stalled" }); });
+    const { layer, state } = fakeLayer(src.fn, view);
+    await layer._update();
+    state.said.length = 0;
+    await layer._download();
+    assert.deepEqual(state.said.map(([text]) => text).slice(0, 2), ["Getting the street map, 1 of 3…", "Getting the street map, 2 of 3…"]);
+    assert.match(state.said.pop()[0], /^Got 2 of 3 pieces of the street map before the server got too slow\./);
+  }
   { // a wait for a busy server shows in the badge, then the count again
     const src = async (tiles, kind, onTile, opts) => {
       const out = new Map();

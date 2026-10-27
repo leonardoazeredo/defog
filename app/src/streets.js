@@ -157,8 +157,9 @@
   // call to the street source, nearest the centre of the rects first. kind: "run" | "bike" |
   // "car". Each tile is read into the index as it arrives, so a failed run keeps what came and
   // the next run asks only for the rest. opts.onProgress({done, total}) hears the start (done = the
-  // tiles already held, total = every tile under the rects; nothing when all are held) and every tile, and {done, total, waitUntil} when the source waits out a busy server (then
-  // {done, total} again once the wait ends); opts.deadlineMs (default RUN_DEADLINE_MS) stops the run
+  // tiles already held, total = every tile under the rects; nothing when all are held) and every
+  // tile, and {done, total, waitUntil} when the source waits out a busy server (then {done, total}
+  // again once the wait ends); opts.deadlineMs (default RUN_DEADLINE_MS) stops the run
   // before its next request once passed (every tile of a request already answered or still open is
   // read), and refuses a wait that would end past it. opts.stale() true (ignored for cacheOnly) means a
   // newer run replaced this one: it asks nothing further and rejects with cause reason

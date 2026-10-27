@@ -798,6 +798,33 @@ async function testCase(body) {
     assert.deepEqual(await s.ensureRects(r, "run", { onProgress: (p) => reports.push(p) }), { done: 6, total: 6, missing: [] });
     assert.deepEqual([reports, asked.length], [[], 4]);
   });
+  await testCase(async () => { // every way a run can end short counts the held tiles, and takes its reason from the tiles read in that run
+    const r = [{ s: 51.0, w: 13.7, n: 51.05, e: 13.775 }]; // 6 tiles, the first 3 held
+    const answer = { ways: [], groups: {} };
+    const clock = { t: 0 };
+    const index = (fetchStreets) => {
+      const s = new StreetIndex({ newFrac: () => 1, fetchStreets, now: () => clock.t });
+      s._cover(StreetIndex.tilesOf(r).slice(0, 3), "run");
+      return s;
+    };
+    const facts = (e) => [e.done, e.total, e.reason, e.cause.reason];
+    const fail = (s, opts) => s.ensureRects(r, "run", opts).then(() => assert.fail("expected a rejection"), (e) => e);
+    // the source leaves every asked tile out of its answer
+    assert.deepEqual(facts(await fail(index(async () => new Map()))), [3, 6, "server", "server"]);
+    // it answers two of three and leaves one out
+    assert.deepEqual(facts(await fail(index(async (tiles, kind, onTile) => { tiles.slice(0, 2).forEach((t) => onTile(t, answer)); return new Map(); }))),
+      [5, 6, "streets-partial", "server"]);
+    // replaced before it asked anything
+    const replaced = await fail(index(async () => assert.fail("no request")), { stale: () => true });
+    assert.deepEqual(facts(replaced), [3, 6, "superseded", "superseded"]);
+    assert.ok(StreetIndex.isDownloadError(replaced));
+    // the deadline passes after the first tile of three
+    const late = async (tiles, kind, onTile) => { clock.t = 50000; onTile(tiles[0], answer); };
+    assert.deepEqual(facts(await fail(index(late), { deadlineMs: 45000 })), [4, 6, "streets-partial", "stalled"]);
+    // an offline source with nothing read: no tile arrived, so no "streets-partial" however many are held
+    assert.deepEqual(facts(await fail(index(async () => { throw Object.assign(new Error("x"), { reason: "offline" }); }))), [3, 6, "offline", "offline"]);
+    assert.deepEqual(await new StreetIndex({ newFrac: () => 1 }).ensureRects([], "run"), { done: 0, total: 0, missing: [] });
+  });
   await testCase(async () => { // a busy wait reports the held tiles in its count too
     const clock = { t: 0 };
     const r = [{ s: 51.0, w: 13.7, n: 51.025, e: 13.75 }]; // 2 tiles
