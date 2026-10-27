@@ -8,6 +8,7 @@ flows:
   - export.yaml
   - about.yaml
   - help-links.yaml
+  - offorigin-links.yaml
   - history-release.yaml
 # Flows share app state (import leaves a saved fog the later ones rely on), so order matters.
 executionOrder:
@@ -20,4 +21,5 @@ executionOrder:
     - export
     - about
     - help-links
+    - offorigin-links
     - history-release

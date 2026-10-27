@@ -1,4 +1,7 @@
+import { ORIGIN } from "../src/bridge/protocol.js";
 import type { Send } from "./bridge.js";
+
+const PAGE_ORIGIN = new URL(ORIGIN).origin;
 
 export function installLinks(win: Window, doc: Document, send: Send): void {
   win.open = (url?: string | URL, _target?: string, _features?: string): null => {
@@ -9,16 +12,27 @@ export function installLinks(win: Window, doc: Document, send: Send): void {
     return null;
   };
 
-  doc.addEventListener(
-    "click",
-    (ev) => {
-      const a = (ev.target as Element).closest<HTMLAnchorElement>("a[target='_blank']");
-      if (a == null) return;
-      const href = a.href;
-      if (!/^https?:\/\//.test(href)) return;
+  // Stopping the click here keeps the WebView from starting a navigation at all: onShouldStartLoadWithRequest answers on the
+  // JS thread and the native side lets the load through when the answer is late (#138). Capture phase, because Leaflet's
+  // controls stop propagation on their own containers.
+  const intercept = (ev: Event): void => {
+    if (!(ev.target instanceof Element)) return;
+    const a = ev.target.closest("a[href]");
+    if (a == null) return;
+    let url: URL;
+    try {
+      url = new URL(a.getAttribute("href") ?? "", doc.baseURI);
+    } catch {
       ev.preventDefault();
-      send({ v: 1, type: "openExternal", url: href });
-    },
-    true,
-  );
+      return;
+    }
+    if (url.origin === PAGE_ORIGIN) return;
+    ev.preventDefault();
+    if (url.protocol === "https:" || url.protocol === "http:") {
+      send({ v: 1, type: "openExternal", url: url.href });
+    }
+  };
+  doc.addEventListener("click", intercept, true);
+  // A middle-click fires auxclick and not click, so the click listener alone would miss it.
+  doc.addEventListener("auxclick", intercept, true);
 }
