@@ -59,9 +59,8 @@ arrives. When a server answers that it is busy, the app sends nothing new and as
 together count once, and the app gives up when the server is still busy after the third wait with
 no answer between. As the main instance's usage policy asks, the phone app's web view identifies the
 app to the server by its User-Agent and Referer. That server also caps each app's and each network
-address's daily use, and answers 406 once
-the share is used up: the app then leaves that server alone for an hour, longer if the server says
-so. They only see bounding boxes, the same class of information the basemap tile servers already
+address's daily use, and answers 406 once the share is used up: the app then leaves that server
+alone for an hour, longer if the server says so. They only see bounding boxes, the same class of information the basemap tile servers already
 get, and the streets are compared against your fog entirely on your device; and **"Maps ↗"** opens
 your waypoints in Google Maps. The street map it fetches is kept as a street cache in your
 browser's storage (IndexedDB, as plain data, never uploaded and left out of backups), so planning in
