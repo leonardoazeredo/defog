@@ -8,7 +8,12 @@ export interface SqlTx {
 }
 
 export interface SqlDriver extends SqlTx {
-  /** Commits when `fn` resolves and rolls back when it throws. Transactions never overlap. */
+  /**
+   * Commits when `fn` resolves and rolls back when it throws. Transactions never overlap, and
+   * plain queries on the Expo driver wait for an open one (the test driver runs them at once). So
+   * `fn` must query only through its `tx`: a call on the driver itself from inside `fn` would
+   * wait for the transaction it is part of.
+   */
   transaction<T>(fn: (tx: SqlTx) => Promise<T>): Promise<T>;
   /**
    * Writes a full copy of this database to `path`. `key` follows SQLCipher: a passphrase is

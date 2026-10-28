@@ -104,12 +104,23 @@ export async function createExpoSqliteDriver(opts: ExpoSqliteDriverOptions): Pro
   }
 
   let tail: Promise<unknown> = Promise.resolve();
+  // Queries, transactions and exports wait in this one line: a plain query on the main connection
+  // fails with "database is locked" while a transaction is open on its own connection. The
+  // callback's own queries use `wrap(txn)` and skip the line; a call on this driver from inside a
+  // callback would wait forever on the transaction it is part of, and nothing detects or prevents that.
+  const enqueue = <T>(run: () => Promise<T>): Promise<T> => {
+    const next = tail.then(run, run);
+    tail = next.catch(() => undefined);
+    return next;
+  };
+  const plain = wrap(db);
   return {
-    ...wrap(db),
+    exec: (sql) => enqueue(() => plain.exec(sql)),
+    run: (sql, params) => enqueue(() => plain.run(sql, params)),
+    all: <T>(sql: string, params?: SqlValue[]) => enqueue(() => plain.all<T>(sql, params)),
     transaction<T>(fn: (tx: SqlTx) => Promise<T>): Promise<T> {
       const run = async (): Promise<T> => {
         let result: { value: T } | undefined;
-        // The transaction runs on its own connection, so a plain query on the main one can fail with "database is locked" meanwhile.
         await db.withExclusiveTransactionAsync(async (txn) => {
           // The exclusive transaction opens its own connection, which starts unkeyed, so key it before the callback runs.
           await txn.execAsync(keyPragma);
@@ -118,16 +129,9 @@ export async function createExpoSqliteDriver(opts: ExpoSqliteDriverOptions): Pro
         if (!result) throw new Error("transaction did not run");
         return result.value;
       };
-      const next = tail.then(run, run);
-      tail = next.catch(() => undefined);
-      return next;
+      return enqueue(run);
     },
-    exportTo(path, key) {
-      const run = () => copyOut(db, "main", "backup", path, key);
-      const next = tail.then(run, run);
-      tail = next.catch(() => undefined);
-      return next;
-    },
+    exportTo: (path, key) => enqueue(() => copyOut(db, "main", "backup", path, key)),
     async close() {
       await tail;
       await db.closeAsync();

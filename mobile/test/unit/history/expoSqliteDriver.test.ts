@@ -252,3 +252,119 @@ describe("expo sqlite driver export", () => {
     await expect(open("/cache/b.db", null)).rejects.toThrow("disk I/O error");
   });
 });
+
+// A main connection that refuses any call while an exclusive transaction is open, as the real
+// one can ("database is locked"); the transaction's own connection never refuses.
+function lockingDb(events: string[], gate: { open: boolean }): ExpoDb {
+  const refuse = (what: string) => {
+    if (gate.open) throw new Error(`database is locked: ${what}`);
+    events.push(what);
+  };
+  return {
+    async execAsync(sql) {
+      refuse(sql);
+    },
+    async runAsync(sql) {
+      refuse(sql);
+      return { changes: 1 };
+    },
+    async getAllAsync<T>(sql: string) {
+      refuse(sql);
+      return [{}] as T[];
+    },
+    async closeAsync() {},
+    async withExclusiveTransactionAsync(task) {
+      gate.open = true;
+      events.push("begin");
+      try {
+        await task({
+          async execAsync(sql) {
+            events.push(`tx ${sql}`);
+          },
+          async runAsync(sql) {
+            events.push(`tx ${sql}`);
+            return { changes: 1 };
+          },
+          async getAllAsync<T>(sql: string) {
+            events.push(`tx ${sql}`);
+            return [] as T[];
+          },
+          async closeAsync() {},
+          async withExclusiveTransactionAsync() {},
+        });
+      } finally {
+        gate.open = false;
+        events.push("commit");
+      }
+    },
+  };
+}
+
+describe("expo sqlite driver plain queries beside a transaction", () => {
+  async function setup() {
+    const events: string[] = [];
+    const gate = { open: false };
+    const db = await createExpoSqliteDriver({
+      name: "x.db",
+      keyHex: KEY,
+      open: async () => lockingDb(events, gate),
+    });
+    events.length = 0;
+    return { db, events };
+  }
+
+  it("holds run, all and exec until the open transaction has committed", async () => {
+    const { db, events } = await setup();
+    const tx = db.transaction(async (t) => {
+      await t.run("INSERT 1");
+      await new Promise((r) => setTimeout(r, 10));
+      await t.run("INSERT 2");
+    });
+    await Promise.all([tx, db.run("RUN"), db.all("ALL"), db.exec("EXEC")]);
+    expect(events).toEqual([
+      "begin",
+      `tx ${PRAGMA}`,
+      "tx INSERT 1",
+      "tx INSERT 2",
+      "commit",
+      "RUN",
+      "ALL",
+      "EXEC",
+    ]);
+  });
+
+  it("lets a plain query issued first finish before the transaction begins", async () => {
+    const { db, events } = await setup();
+    await Promise.all([db.run("RUN"), db.transaction(async () => {})]);
+    expect(events.slice(0, 2)).toEqual(["RUN", "begin"]);
+  });
+
+  it("keeps serving plain queries after a transaction fails", async () => {
+    const { db, events } = await setup();
+    const failing = db.transaction(async () => {
+      throw new Error("boom");
+    });
+    const after = db.all("AFTER");
+    await expect(failing).rejects.toThrow("boom");
+    await after;
+    expect(events.at(-1)).toBe("AFTER");
+  });
+
+  it("runs the callback's own queries on the transaction connection, not the queue", async () => {
+    const { db, events } = await setup();
+    await db.transaction(async (tx) => {
+      await tx.exec("A");
+      await tx.all("B");
+      await tx.run("C");
+    });
+    expect(events).toEqual(["begin", `tx ${PRAGMA}`, "tx A", "tx B", "tx C", "commit"]);
+  });
+
+  it("waits for queued plain queries before closing", async () => {
+    const { db, events } = await setup();
+    const run = db.run("LAST");
+    await db.close();
+    await run;
+    expect(events).toContain("LAST");
+  });
+});
