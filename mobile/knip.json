@@ -7,6 +7,6 @@
     "test/**/*.ts"
   ],
   "project": ["src/**", "modules/watch-link/**/*.ts", "web-adapter/**", "scripts/**", "test/**"],
-  "ignoreDependencies": ["expo-updates", "expo-system-ui", "@noble/hashes"],
+  "ignoreDependencies": ["expo-updates", "expo-system-ui"],
   "ignoreBinaries": ["maestro", "plutil"]
 }

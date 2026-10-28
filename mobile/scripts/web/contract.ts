@@ -141,7 +141,7 @@ export async function runContractCheck(
       }
 
       const loadedMsg = await waitForType("loaded", 30_000);
-      if (!loadedMsg || loadedMsg.type !== "loaded") {
+      if (loadedMsg?.type !== "loaded") {
         failures.push(`fixture load reported ${JSON.stringify(loadedMsg ?? "nothing")}`);
       } else if (!loadedMsg.ok || loadedMsg.tiles !== fixture.tiles) {
         failures.push(`fixture load reported ${JSON.stringify(loadedMsg)}`);
