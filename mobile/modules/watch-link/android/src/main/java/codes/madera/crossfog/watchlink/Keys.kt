@@ -13,26 +13,58 @@ import javax.crypto.AEADBadTagException
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 
-/** The database key was created once but its wrapped file or Keystore key is gone or unreadable. */
-class KeyLostException(message: String, cause: Throwable? = null) : Exception(message, cause)
+/**
+ * The database key was created once but its wrapped file or Keystore key is gone or unreadable.
+ * `permanent` is set only for a failure no later read can fix (a bad tag, an invalidated Keystore
+ * key, a key of the wrong length): of the keys whose two halves are present, only such a key may be
+ * replaced by a restore or a reset.
+ */
+class KeyLostException(
+  message: String,
+  cause: Throwable? = null,
+  val permanent: Boolean = false,
+) : Exception(message, cause)
 
-enum class KeyState(val wire: String) { FRESH("fresh"), EXISTING("existing"), LOST("lost") }
+/**
+ * FRESH: neither the Keystore key nor the file. LOST: exactly one of them. UNREADABLE: both, but
+ * the key can never be read (bad tag, invalidated Keystore key, wrong length). EXISTING: both, and
+ * a read just now did not fail for good (a later one may still fail, e.g. on a busy Keystore).
+ */
+enum class KeyState(val wire: String) {
+  FRESH("fresh"),
+  EXISTING("existing"),
+  LOST("lost"),
+  UNREADABLE("unreadable"),
+}
 
 /**
  * Keys that must stay reachable from Kotlin while JS is not running, so they live here and not in
- * expo-secure-store. JS touches only the database key, through WatchLinkModule: it reads it, and
- * hands in a new one in place of a lost one.
+ * expo-secure-store. JS touches only the database key, through WatchLinkModule: it reads it, hands
+ * in a new one in place of a lost or unreadable one, and drops such a key when no database exists.
  */
-class Keys(context: Context) {
+class Keys(
+  context: Context,
+  // expo-sqlite's default directory; the history database lives there as crossfog.db.
+  private val sqliteDir: File = File(context.filesDir, "SQLite"),
+) {
   // noBackupFilesDir is outside Auto Backup and device transfer; a restored file would be undecryptable.
   internal val databaseKeyFile = File(File(context.noBackupFilesDir, "keys"), "db.key.v1")
 
   private val keyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
 
   fun keyState(): KeyState = synchronized(LOCK) {
+    when (val present = presence()) {
+      KeyState.EXISTING -> stateOfPresentKey { readDatabaseKey().fill(0) }
+      else -> present
+    }
+  }
+
+  // Only the committed file counts: AtomicFile's `db.key.v1.new` left by a kill before its rename
+  // was never a usable key.
+  private fun presence(): KeyState {
     val alias = keyStore.containsAlias(KEK_ALIAS)
     val file = databaseKeyFile.exists()
-    when {
+    return when {
       !alias && !file -> KeyState.FRESH
       alias && file -> KeyState.EXISTING
       else -> KeyState.LOST
@@ -40,16 +72,16 @@ class Keys(context: Context) {
   }
 
   fun databaseKey(): ByteArray = synchronized(LOCK) {
-    when (keyState()) {
+    when (presence()) {
       KeyState.FRESH -> createDatabaseKey()
-      KeyState.EXISTING -> readDatabaseKey()
       KeyState.LOST -> throw KeyLostException("database key file and Keystore key do not match")
+      else -> readDatabaseKey()
     }
   }
 
   /**
-   * Keeps `dek` as the database key in place of a key that is lost. Refuses any other state:
-   * replacing a key that still works would make the database it protects unreadable. The caller
+   * Keeps `dek` as the database key in place of a key that is lost or unreadable. Refuses any other
+   * state: replacing a key that still works would make the database it protects unreadable. The caller
    * builds the new database with `dek` first, so a failed build never costs the old key. The old
    * Keystore key and file go before `dek` is stored, so a failure in between leaves no usable key:
    * the state reads as lost or fresh, never existing, and openHistory treats both as a lost key while
@@ -57,14 +89,36 @@ class Keys(context: Context) {
    */
   fun replaceLostDatabaseKey(dek: ByteArray): Unit = synchronized(LOCK) {
     require(dek.size == DATABASE_KEY_BYTES) { "database key has the wrong length" }
-    check(keyState() == KeyState.LOST) { "the database key is not lost" }
+    check(keyState().replaceable) { "the database key is neither lost nor unreadable" }
+    discardDatabaseKey()
+    storeDatabaseKey(dek)
+  }
+
+  /**
+   * Drops a lost or unreadable database key so the next `databaseKey()` mints a new one. Refuses
+   * while a database file exists, which only the old key may open, and refuses a key that still
+   * works or may work on a later read. A fresh state is accepted and only loses a stray `.new` file.
+   * Throws when the Keystore key cannot be deleted, since the next read would then still be lost.
+   */
+  fun resetKeys(): Unit = synchronized(LOCK) {
+    check(DATABASE_FILES.none { File(sqliteDir, it).exists() }) { "a database file exists" }
+    val state = keyState()
+    check(state.replaceable || state == KeyState.FRESH) {
+      "the database key is neither lost nor unreadable"
+    }
+    discardDatabaseKey()
+    check(presence() == KeyState.FRESH) { "the old database key could not be dropped" }
+  }
+
+  private fun discardDatabaseKey() {
     try {
       keyStore.deleteEntry(KEK_ALIAS)
     } catch (e: Exception) {
-      // A failed delete is tolerated: storeDatabaseKey generates under the same alias next and fails loudly if that cannot work.
+      // Tolerated here: replaceLostDatabaseKey generates under the same alias next, which fails
+      // loudly if that cannot work, and resetKeys checks that nothing is left.
     }
     databaseKeyFile.delete()
-    storeDatabaseKey(dek)
+    File(databaseKeyFile.path + ".new").delete()
   }
 
   fun stagingKey(): SecretKey =
@@ -112,17 +166,7 @@ class Keys(context: Context) {
 
   private fun readDatabaseKey(): ByteArray {
     val kek = readKekOrLost { existingKey(KEK_ALIAS) }
-    // Besides readKekOrLost and the length check, only the failures caught below mean the key is lost;
-    // anything else (a busy Keystore, an unreadable file) propagates because it may succeed on retry.
-    val dek = try {
-      KeyWrap(kek, KEK_ALIAS).unwrap(databaseKeyFile.readBytes())
-    } catch (e: AEADBadTagException) {
-      throw KeyLostException("database key file does not match the Keystore key", e)
-    } catch (e: KeyPermanentlyInvalidatedException) {
-      throw KeyLostException("Keystore key was invalidated", e)
-    }
-    if (dek.size != DATABASE_KEY_BYTES) throw KeyLostException("database key has the wrong length")
-    return dek
+    return unwrapDatabaseKey(kek, KEK_ALIAS, databaseKeyFile.readBytes())
   }
 
   private fun existingKey(alias: String): SecretKey? = keyStore.getKey(alias, null) as SecretKey?
@@ -150,17 +194,57 @@ class Keys(context: Context) {
     private const val PROVIDER = "AndroidKeyStore"
     const val KEK_ALIAS = "crossfog.kek.v1"
     const val STAGING_ALIAS = "crossfog.staging.v1"
-    private const val DATABASE_KEY_BYTES = 32
+    const val DATABASE_KEY_BYTES = 32
+    // The live file and the copy a restore keeps until the new one opens (src/backup/replace.ts).
+    private val DATABASE_FILES = listOf("crossfog.db", "crossfog.replaced.db")
   }
+}
+
+private val KeyState.replaceable get() = this == KeyState.LOST || this == KeyState.UNREADABLE
+
+/**
+ * The state of a key whose file and Keystore key are both present, from one `read` of it. Only a
+ * failure for good is UNREADABLE; anything that may pass on a later read (a repeated
+ * UnrecoverableKeyException, a busy Keystore) stays EXISTING, so it never lets the key be replaced.
+ */
+internal fun stateOfPresentKey(read: () -> Unit): KeyState =
+  try {
+    read()
+    KeyState.EXISTING
+  } catch (e: KeyLostException) {
+    if (e.permanent) KeyState.UNREADABLE else KeyState.EXISTING
+  } catch (e: Exception) {
+    KeyState.EXISTING
+  }
+
+/**
+ * The database key in `blob`, or a permanent KeyLostException when it can never unwrap under `kek`.
+ * Only the failures caught below and the length check mean the key can never unwrap; anything else
+ * (a busy Keystore) propagates because it may succeed on retry.
+ */
+internal fun unwrapDatabaseKey(kek: SecretKey, alias: String, blob: ByteArray): ByteArray {
+  val dek = try {
+    KeyWrap(kek, alias).unwrap(blob)
+  } catch (e: AEADBadTagException) {
+    throw KeyLostException("database key file does not match the Keystore key", e, permanent = true)
+  } catch (e: KeyPermanentlyInvalidatedException) {
+    throw KeyLostException("Keystore key was invalidated", e, permanent = true)
+  }
+  if (dek.size != Keys.DATABASE_KEY_BYTES) {
+    dek.fill(0)
+    throw KeyLostException("database key has the wrong length", permanent = true)
+  }
+  return dek
 }
 
 private const val KEK_RETRY_PAUSE_MS = 200L
 
 /**
  * The key-encryption key `read` returns, or KeyLostException. UnrecoverableKeyException may also
- * be transient, so that failure is read once more after `pause` before the key counts as lost: a
- * lost key lets a restore replace it, and replacing one that still works would make the database
- * unreadable. Any other failure propagates unchanged.
+ * be transient, so that failure is read once more after `pause` before it is reported as
+ * KeyLostException. That exception is never permanent, so `keyState()` still reads EXISTING and
+ * nothing replaces the key: replacing one that still works would make the database unreadable.
+ * Only `unwrapDatabaseKey` marks a failure permanent. Any other failure propagates unchanged.
  */
 internal fun readKekOrLost(
   pause: () -> Unit = { Thread.sleep(KEK_RETRY_PAUSE_MS) },

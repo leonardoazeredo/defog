@@ -43,8 +43,8 @@ class WatchLinkModule : Module() {
       }
     }
 
-    // Only for a restore from the lost state, where the old database cannot be read by any key; JS
-    // calls it once the database built with this key is in place.
+    // Only for a restore from the lost or unreadable state, where the old database cannot be read by
+    // any key; JS calls it once the database built with this key is in place.
     AsyncFunction("replaceLostDatabaseKey") { keyHex: String ->
       val dek = databaseKeyFromHex(keyHex)
       try {
@@ -53,6 +53,16 @@ class WatchLinkModule : Module() {
         throw CodedException(INVALID_STATE, e.message, e)
       } finally {
         dek.fill(0)
+      }
+    }
+
+    // Only when no database file exists and the key is lost or unreadable (or already fresh, which
+    // drops nothing that works); Keys refuses otherwise.
+    AsyncFunction("resetKeys") {
+      try {
+        keys.resetKeys()
+      } catch (e: IllegalStateException) {
+        throw CodedException(INVALID_STATE, e.message, e)
       }
     }
 

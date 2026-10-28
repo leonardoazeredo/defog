@@ -7,7 +7,7 @@ export class KeyLostError extends Error {
   override name = "KeyLostError";
 }
 
-const KEY_STATES: readonly string[] = ["fresh", "existing", "lost"];
+const KEY_STATES: readonly string[] = ["fresh", "existing", "lost", "unreadable"];
 
 export async function getDatabaseKeyHex(): Promise<string> {
   let hex: string;
@@ -28,9 +28,20 @@ function checkedKeyHex(hex: string): string {
   return hex;
 }
 
-/** Keeps `keyHex` as the database key in place of a lost one; the native side refuses unless the key state reads `lost`. */
+/**
+ * Keeps `keyHex` as the database key in place of a lost or unreadable one; the native side refuses
+ * unless the key state reads `lost` or `unreadable`.
+ */
 export async function replaceLostDatabaseKeyHex(keyHex: string): Promise<void> {
   await WatchLink.replaceLostDatabaseKey(checkedKeyHex(keyHex));
+}
+
+/**
+ * Drops a lost or unreadable database key so the next read mints a new one; the native side refuses
+ * while the live database or a restore's replaced copy exists, or the key state reads `existing`.
+ */
+export async function resetKeys(): Promise<void> {
+  await WatchLink.resetKeys();
 }
 
 /** The system save-as picker; null when the user backs out. */

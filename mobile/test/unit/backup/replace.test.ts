@@ -84,6 +84,25 @@ describe("database replacer", () => {
     expect((await createActivityStore(target.db).list()).map((a) => a.id)).toEqual([activity().id]);
   });
 
+  it("restores over a key that is present but fails for good, keeping the new key after the swap", async () => {
+    const at: Array<{ live: boolean; replaced: boolean; restoring: boolean }> = [];
+    const { deps, kept } = lostKeyDeps({
+      keyState: async () => "unreadable" as const,
+      replaceLostDatabaseKey: async (keyHex) => {
+        at.push({
+          live: target.files.exists(LIVE_DB),
+          replaced: target.files.exists(REPLACED_DB),
+          restoring: target.files.exists(RESTORING_DB),
+        });
+        kept.push(keyHex);
+      },
+    });
+    await createDatabaseReplacer(deps)(await openedBackup());
+    expect(kept).toEqual(["cd".repeat(32)]);
+    expect(at).toEqual([{ live: true, replaced: true, restoring: false }]);
+    expect((await createActivityStore(target.db).list()).map((a) => a.id)).toEqual([activity().id]);
+  });
+
   it("keeps the new key only once the new file is in place", async () => {
     const at: Array<{ live: boolean; replaced: boolean; restoring: boolean }> = [];
     const { deps } = lostKeyDeps({

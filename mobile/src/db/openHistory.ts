@@ -3,20 +3,32 @@ import type { SqlDriver } from "./driver.js";
 export type HistoryDatabase = { kind: "ready"; db: SqlDriver } | { kind: "keyLost" };
 
 export interface OpenHistoryDeps {
-  keyState(): Promise<"fresh" | "existing" | "lost">;
+  keyState(): Promise<"fresh" | "existing" | "lost" | "unreadable">;
   getDatabaseKeyHex(): Promise<string>;
-  /** Whether a database file is already on disk. */
+  /** Whether a database file (the live one or a restore's replaced copy) is already on disk. */
   databaseExists(): boolean;
+  /**
+   * Drops a lost or unreadable database key so the next read mints one; native refuses while the
+   * live database or a restore's replaced copy exists.
+   */
+  resetKeys(): Promise<void>;
   openDriver(keyHex: string): Promise<SqlDriver>;
   migrate(db: SqlDriver): Promise<number>;
   isKeyLostError(e: unknown): boolean;
 }
 
-// A missing key next to an existing database must never fall through to creating an empty one:
-// the owner would see a blank history and could overwrite what a backup can still restore.
+// A lost or unreadable key next to an existing database must never fall through to creating an
+// empty one: the owner would see a blank history and could overwrite what a backup can still restore.
 export async function openHistory(deps: OpenHistoryDeps): Promise<HistoryDatabase> {
   const state = await deps.keyState();
-  if (state === "lost" || (state === "fresh" && deps.databaseExists())) return { kind: "keyLost" };
+  if (state === "lost" || state === "unreadable") {
+    if (deps.databaseExists()) return { kind: "keyLost" };
+    // With no database file the key protects nothing, so it is dropped and the next read mints a
+    // new one, rather than asking for a restore on every start.
+    await deps.resetKeys();
+  } else if (state === "fresh" && deps.databaseExists()) {
+    return { kind: "keyLost" };
+  }
 
   let keyHex: string;
   try {

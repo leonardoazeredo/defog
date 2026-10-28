@@ -4,6 +4,7 @@ const native = {
   getDatabaseKeyHex: vi.fn(),
   keyState: vi.fn(),
   replaceLostDatabaseKey: vi.fn(),
+  resetKeys: vi.fn(),
   createDocument: vi.fn(),
   copyToUri: vi.fn(),
   displayNameOf: vi.fn(),
@@ -21,6 +22,7 @@ const {
   getDatabaseKeyHex,
   keyState,
   replaceLostDatabaseKeyHex,
+  resetKeys,
   createDocument,
   copyToUri,
   displayNameOf,
@@ -74,7 +76,7 @@ describe("getDatabaseKeyHex", () => {
 });
 
 describe("keyState", () => {
-  it.each(["fresh", "existing", "lost"])("returns %s", async (state) => {
+  it.each(["fresh", "existing", "lost", "unreadable"])("returns %s", async (state) => {
     native.keyState.mockResolvedValue(state);
     await expect(keyState()).resolves.toBe(state);
   });
@@ -88,6 +90,20 @@ describe("keyState", () => {
   it("rejects a state it does not know", async () => {
     native.keyState.mockResolvedValue("maybe");
     await expect(keyState()).rejects.toThrow("unknown key state");
+  });
+});
+
+describe("resetKeys", () => {
+  it("forwards to the native reset", async () => {
+    native.resetKeys.mockResolvedValue(undefined);
+    await resetKeys();
+    expect(native.resetKeys).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it("passes a native refusal through unchanged", async () => {
+    const refusal = Object.assign(new Error("a database exists"), { code: "ERR_INVALID_STATE" });
+    native.resetKeys.mockRejectedValue(refusal);
+    await expect(resetKeys()).rejects.toBe(refusal);
   });
 });
 
