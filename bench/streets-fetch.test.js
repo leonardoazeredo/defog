@@ -1342,8 +1342,8 @@ async function testCase(body) {
     assert.equal(s.ways.length, 1, "the way is held once");
     assert.equal(s.segCount, once.segCount, "and its segments are counted once");
   });
-  await testCase(async () => { // a 429 with a Retry-After while a third block waits for a slot: the waiting post is not sent into the hold, the
-    // run waits the Retry-After out once none is open, and asks the blocks again
+  await testCase(async () => { // a 429 with a Retry-After while a third street block waits for a slot: the waiting post is not sent into the hold, the
+    // run waits the Retry-After out once none is open, and asks the street blocks again
     const clock = fakeClock();
     global.Overpass._now = clock.now;
     const srv = { asked: [], pending: [] };
@@ -1358,7 +1358,7 @@ async function testCase(body) {
     const s = new StreetIndex({ newFrac: () => 1, now: clock.now, sleep: clock.sleep });
     const run = within(s.ensureRects(twelve, "run").then((r) => r, (e) => e));
     await settle();
-    assert.equal(srv.asked.length, 2, "overpass-api.de takes two at once; the third block waits for a slot");
+    assert.equal(srv.asked.length, 2, "overpass-api.de takes two at once; the third street block waits for a slot");
     await reply(0, 429);
     assert.equal(srv.asked.length, 2, "the waiting post gets the slot but the endpoint is held: not sent");
     assert.deepEqual(clock.sleeps, [], "the other request is still open, so no wait yet");
@@ -1417,7 +1417,7 @@ async function testCase(body) {
     await srv.reply(0);
     await srv.reply(0);
     const err = await run;
-    assert.equal(srv.asked.length, 2, "the third block is never asked");
+    assert.equal(srv.asked.length, 2, "the third street block is never asked");
     assert.equal(srv.pending.length, 0);
     assert.deepEqual([err.reason, err.cause.reason, err.done, err.total], ["streets-partial", "stalled", 8, 12], "both open requests' tiles are kept");
   });
