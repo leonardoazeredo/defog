@@ -6,10 +6,16 @@ import { createBackupFlow } from "../../../src/backup/backup.js";
 import { createDatabaseReplacer } from "../../../src/backup/replace.js";
 import { createRestoreFlow, type RestoreDeps } from "../../../src/backup/restore.js";
 import type { PassphraseAnswer } from "../../../src/backup/types.js";
+import { SCHEMA_VERSION } from "../../../src/db/schema.js";
 import { createActivityStore } from "../../../src/history/activityStore.js";
 import { createRouteStore } from "../../../src/history/routeStore.js";
 import { createHarness, type Harness, ZIP_BYTES } from "../../support/backupHarness.js";
-import { copyNodeBackup, openNodeBackup } from "../../support/nodeSqliteDriver.js";
+import {
+  copyNodeBackup,
+  createNodeSqliteDriver,
+  openNodeBackup,
+} from "../../support/nodeSqliteDriver.js";
+import { createV1Database } from "../../support/schemaV1.js";
 import { activity, route } from "../history/fixtures.js";
 
 const SETTINGS = '{"f2m_units":"imperial"}';
@@ -139,6 +145,27 @@ describe("restore flow", () => {
     });
     expect(await r.run()).toBe("notABackup");
     expect(r.confirm).not.toHaveBeenCalled();
+  });
+
+  it("restores a backup from schema 1, migrating its GPX text on open", async () => {
+    const gpx = '<gpx><trk><trkseg><trkpt lat="48.1" lon="11.5"/></trkseg></trk></gpx>';
+    const r = restore({
+      copyFromUri: async (_u, dest) => {
+        const old = createNodeSqliteDriver(dest);
+        await createV1Database(old, [{ id: activity().id, gpx }]);
+        await old.run("INSERT INTO blobs (kind, name, bytes) VALUES ('import', 'Sync.zip', ?)", [
+          ZIP_BYTES,
+        ]);
+        await old.close();
+        return { size: 8192, head: PLAIN };
+      },
+    });
+    expect(await r.run()).toBe("restored");
+    const [v] = await target.db.all<{ user_version: number }>("PRAGMA user_version");
+    expect(v?.user_version).toBe(SCHEMA_VERSION);
+    expect(await ids(target)).toEqual([activity().id]);
+    expect((await createActivityStore(target.db).get(activity().id))?.gpx).toBe(gpx);
+    expect((await target.fogStore.current())?.name).toBe("Sync.zip");
   });
 
   it("calls a backup from a newer schema not a backup", async () => {

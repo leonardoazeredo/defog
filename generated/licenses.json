@@ -1405,6 +1405,11 @@
       "license": "MIT"
     },
     {
+      "name": "fflate",
+      "version": "0.8.3",
+      "license": "MIT"
+    },
+    {
       "name": "fill-range",
       "version": "7.1.1",
       "license": "MIT"

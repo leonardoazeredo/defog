@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBackupFlow } from "../../../src/backup/backup.js";
 import { BackupError, type PassphraseAnswer } from "../../../src/backup/types.js";
 import { NotADatabaseError } from "../../../src/db/driver.js";
+import { SCHEMA_VERSION } from "../../../src/db/schema.js";
 import { createHarness, type Harness, ZIP_BYTES } from "../../support/backupHarness.js";
 import { copyNodeBackup, openNodeBackup } from "../../support/nodeSqliteDriver.js";
 
@@ -62,7 +63,7 @@ describe("backup flow", () => {
     const b = await openNodeBackup(saved[0] as string, "correct horse");
     expect(
       (await b.all<{ user_version: number }>("PRAGMA backup.user_version"))[0]?.user_version,
-    ).toBe(1);
+    ).toBe(SCHEMA_VERSION);
     expect(await count(b, "activities")).toBe(1);
     expect(await count(b, "routes")).toBe(1);
     const blobs = await b.all<{ kind: string; name: string; bytes: Uint8Array }>(
