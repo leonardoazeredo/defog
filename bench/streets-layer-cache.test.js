@@ -14,22 +14,23 @@ const BIG = { s: 50.0, w: 13.0, n: 51.0, e: 14.0 };      // past MAX_TILES
 const INTERNAL = "Something went wrong while showing the street map. Reload the page and try again.";
 const tick = () => new Promise((r) => setImmediate(r));
 
-// A layer over a real StreetIndex; `say` records [text, action label or null], and the last action.
+// A layer built by its constructor over a real StreetIndex and a stub map, so every private field starts as the
+// constructor sets it; only what touches Leaflet or the screen is replaced. `say` records [text, action label or
+// null], and the last action.
+global.L.canvas = global.L.canvas || (() => ({}));
 function fakeLayer(fetchStreets, view = TWO) {
-  const layer = Object.create(StreetsInFogLayer.prototype);
   const state = { said: [], drawn: 0, action: null };
   const streets = new StreetIndex({ newFrac: () => 1, fetchStreets });
+  const map = { on: () => {}, off: () => {}, removeLayer: () => {}, removeControl: () => {}, getZoom: () => 14, getPane: () => ({ style: {} }), createPane: () => {} };
+  const layer = new StreetsInFogLayer(map, { streets, isNew: () => true });
   const line = () => ({ setLatLngs: () => {}, addTo: () => {}, setStyle: () => {} });
   Object.assign(layer, {
-    enabled: true, look: "light", color: "#4fd6e6", opacity: 1, _busy: false, _dirty: false, _fetching: false, _failure: null, _missingRects: [], _known: 0, _tooBig: false, _view: 0, _pass: 0, _judged: new Map(),
+    enabled: true, // setEnabled(true) would add the lines to a real map
     _visibleTiles: () => tilesOf(view),
     _say: (text, action) => { state.said.push([text, action ? action.label : null]); state.action = action || null; },
     _classifyNew: async () => {}, _draw: () => { state.drawn++; },
-    dim: line(), halo: line(), core: line(), badge: { addTo: () => {} },
-    map: { on: () => {}, off: () => {}, removeLayer: () => {}, removeControl: () => {}, getZoom: () => 14 },
-    streets
+    dim: line(), halo: line(), core: line(), badge: { addTo: () => {} }
   });
-  layer._followIndex();
   return { layer, state, streets };
 }
 // Counts the normal (not cache-only) ensureRects runs, the downloads.
@@ -397,7 +398,6 @@ function source(held, net) {
     assert.ok(state.said.slice(at).every(([t]) => /Zoom in/.test(t)), "no progress over the zoom-in text");
   }
   { // painting is capped by the index's memory: a 48-tile view paints from the cache, a larger one asks to zoom in
-    assert.equal(StreetsInFogLayer.MAX_TILES, 48);
     const view = (b) => ({ getBounds: () => ({ getSouth: () => b.s, getWest: () => b.w, getNorth: () => b.n, getEast: () => b.e }) });
     const ok = fakeLayer(source(new Set(), async () => {}).fn);
     delete ok.layer._visibleTiles;
@@ -511,6 +511,24 @@ function source(held, net) {
     const said = state.said.length;
     progress({ done: 1, total: 2 });
     assert.equal(state.said.length, said, "nothing is said in the new view");
+  }
+  { // a download turned stale by a move whose source then fails with a plain busy error: no failure kept, nothing worded or logged for it
+    const keys = StreetIndex.tilesCovering(TWO).map((t) => t.x + ":" + t.y);
+    let fail;
+    const gate = new Promise((_, rej) => { fail = () => rej(Object.assign(new Error("overpass HTTP 502"), { reason: "busy" })); });
+    const src = source(new Set([keys[0]]), () => gate);
+    const { layer, state } = fakeLayer(src.fn);
+    await layer._update();
+    const running = layer._download();
+    await tick();
+    layer._view++;
+    state.said.length = 0;
+    const warned = [], warn = console.warn;
+    console.warn = (...a) => warned.push(a);
+    try { fail(); await running; } finally { console.warn = warn; }
+    assert.equal(layer._failure, null, "the failure belongs to a view that is gone");
+    assert.ok(!state.said.some(([t]) => /busy|try again|servers/i.test(t)), "nothing about the failed download is shown");
+    assert.deepEqual(warned, [], "and nothing is logged for it");
   }
   console.log("streets-layer-cache.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });

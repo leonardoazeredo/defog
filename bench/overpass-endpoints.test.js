@@ -247,6 +247,34 @@ const realFetch = global.fetch;
     g.pending.shift().answer();
     assert.deepEqual(await Promise.all(more), [{ from: N }, { from: M }, { from: N }]);
   }
+  { // the posts a hold skipped gave their slots back: once the hold is over both overpass-api.de slots are free again
+    reset({ key: null, order: null });
+    const f = heldFetch();
+    const posts = [1, 2, 3, 4].map((i) => Overpass.post("data=" + i));
+    const failed = Promise.all(posts.map((p, i) => (i === 1 ? null : rejection(p))));
+    await settle();
+    f.pending.shift().answer({ ok: false, status: 429, headers: headers(), json: async () => null });
+    await settle();
+    await failed;
+    f.pending.shift().answer();
+    await posts[1];
+    calls = []; t += 30_001;
+    const again = [1, 2, 3].map((i) => Overpass.post("data=" + i));
+    await settle();
+    assert.equal(calls.length, 2, "two slots, both free, not a leaked one fewer");
+    f.pending.shift().answer(); f.pending.shift().answer();
+    await settle();
+    f.pending.shift().answer();
+    assert.equal((await Promise.all(again)).length, 3);
+  }
+  { // NextGIS fails with a 500 and the run turns stale during that very fetch: overpass-api.de is not asked
+    reset({ order: null });
+    let stale = false;
+    global.fetch = routed({ [N]: () => { stale = true; return status(500)(); }, [M]: answer });
+    const e = await Overpass.post("data=1", { stale: () => stale }).then(() => assert.fail("expected a rejection"), (x) => x);
+    assert.equal(e.reason, "superseded");
+    assert.deepEqual(calls, [N], "the fallback is not sent for a replaced run");
+  }
   { // 11d. requests open together that stall together are one stall, not three in a row: a 30 s hold
     reset({ order: null });
     global.fetch = routed({ [N]: silent, [M]: answer });
@@ -873,5 +901,16 @@ const realFetch = global.fetch;
   delete global.crossfogNextgisKey;
   global.fetch = realFetch;
   finished = true;
+  { // the page has what main.js looks up for the endpoint choice: a renamed id would make main.js throw on load
+    const fs = require("fs"), path = require("path");
+    const html = fs.readFileSync(path.join(__dirname, "..", "app", "index.html"), "utf8");
+    const main = fs.readFileSync(path.join(__dirname, "..", "app", "src", "main.js"), "utf8");
+    const used = [...new Set([...main.matchAll(/\$\("(overpass\w*)"\)/g)].map((m) => m[1]))];
+    assert.ok(used.includes("overpass") && used.includes("overpassNextgis"));
+    for (const id of used) assert.ok(html.includes('id="' + id + '"'), id + " exists in index.html");
+    const select = html.match(/<select id="overpass"[\s\S]*?<\/select>/);
+    assert.ok(select, "the endpoint <select>");
+    assert.deepEqual([...select[0].matchAll(/<option value="(\w+)"/g)].map((m) => m[1]).sort(), ["main", "nextgis"]);
+  }
   console.log("overpass-endpoints.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });

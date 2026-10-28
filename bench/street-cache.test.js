@@ -412,5 +412,70 @@ const T = (x, y) => ({ x, y });
     assert.equal(old.get("2:1").groups.tag, "bike");
     assert.deepEqual(warned, ["[streets] offline: serving 1 expired tile(s) from the cache (offline)"], "the fallback says so: a count and the reason, no tile data");
   }
+  { // the tile whose onTile stops the run is stored first: the put runs before the delivery
+    const { network } = fakeNetwork();
+    const store = TileStore.memory({ maxEntries: 10 });
+    const stop = new Error("stop");
+    const err = await StreetCache.create({ store, network, now: () => 0 })
+      .fetchStreets([T(1, 1), T(2, 1)], "run", () => { throw stop; }).then(() => null, (e) => e);
+    assert.equal(err, stop);
+    assert.deepEqual(await store.keys(), ["2:run:1:1"], "the tile that triggered the stop is kept");
+  }
+  { // a source that calls onTile and also returns its Map: each tile is delivered once, stored once, and counted once by the index
+    const { network } = fakeNetwork();
+    const store = TileStore.memory({ maxEntries: 10 });
+    const puts = [];
+    const put = store.put;
+    store.put = (k, v) => { puts.push(k); return put.call(store, k, v); };
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: StreetCache.create({ store, network, now: () => 0 }).fetchStreets });
+    const reports = [];
+    const rect = [{ s: 51, w: 13.7, n: 51.02, e: 13.76 }];
+    const got = await s.ensureRects(rect, "run", { onProgress: (p) => reports.push(p.done) });
+    assert.equal(s.tiles.size, got.total);
+    assert.equal(s.version, s.tiles.size, "one version bump per tile");
+    assert.deepEqual(reports, Array.from({ length: got.total + 1 }, (_, i) => i), "done never above total, each tile once");
+    assert.equal(new Set(puts).size, puts.length, "no tile stored twice");
+    assert.equal(puts.length, got.total);
+  }
+  { // the first put rejects: the other tiles are still delivered, and no further put is tried
+    const base = fakeNetwork();
+    // tiles arrive one turn apart, as they do off the network: the first put has failed by the next tile
+    const network = async (tiles, kind, onTile) => {
+      for (const t of tiles) { await new Promise((r) => setImmediate(r)); await base.network([t], kind, onTile); }
+      return new Map();
+    };
+    const store = TileStore.memory({ maxEntries: 10 });
+    let puts = 0;
+    store.put = async () => { puts++; throw new Error("quota"); };
+    const seen = [];
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      const got = await StreetCache.create({ store, network, now: () => 0 })
+        .fetchStreets([T(1, 1), T(2, 1), T(3, 1)], "run", (t) => seen.push(t.x));
+      assert.deepEqual(seen, [1, 2, 3]);
+      assert.deepEqual([...got.keys()].sort(), ["1:1", "2:1", "3:1"]);
+    } finally { console.warn = warn; }
+    assert.equal(puts, 1, "storeDown: no put after the first failed");
+  }
+  { // the cache name prefix is the tile grid's version: changing TILE_DEG (or the prefix) without the other fails here
+    assert.equal(StreetIndex.TILE_DEG, 0.025, "TILE_DEG changed: bump the \"2:\" prefix of the cache names in streetCache.js and update this pair");
+    const { network } = fakeNetwork();
+    const store = TileStore.memory({ maxEntries: 10 });
+    await StreetCache.create({ store, network, now: () => 0 }).fetchStreets([T(1, 1)], "run");
+    assert.deepEqual(await store.keys(), ["2:run:1:1"], "the prefix that goes with a 0.025 grid");
+  }
+  { // STREET_REASONS (streets.js) and OUTAGE_REASONS (streetCache.js) cannot be read from outside and streetCache.js loads first:
+    // the outage list is the street reasons minus superseded, plus streets-partial
+    const fs = require("fs"), path = require("path");
+    const listOf = (file, name) => {
+      const text = fs.readFileSync(path.join(__dirname, "..", "app", "src", file), "utf8");
+      const m = text.match(new RegExp("const " + name + " = new Set\\(\\[([^\\]]*)\\]\\)"));
+      assert.ok(m, name + " not found in " + file);
+      return m[1].split(",").map((x) => x.trim().replace(/"/g, "")).filter(Boolean);
+    };
+    const street = listOf("streets.js", "STREET_REASONS"), outage = listOf("streetCache.js", "OUTAGE_REASONS");
+    assert.deepEqual(outage.slice().sort(), street.filter((r) => r !== "superseded").concat("streets-partial").sort());
+  }
   console.log("street-cache.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });
