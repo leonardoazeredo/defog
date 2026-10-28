@@ -697,6 +697,19 @@ describe("limits and ranges", () => {
   const track = (over: object, p: object = point) =>
     JSON.stringify({ v: 1, type: "track", activityId, index: 0, total: 1, points: [p], ...over });
 
+  it("bounds the route a track carries at the same point cap as a sent route", () => {
+    const coords = (n: number) => Array.from({ length: n }, () => [0, 0]);
+    expect(parseNativeToWeb(track({ route: { coords: coords(100_000) } }))).not.toBeNull();
+    expect(parseNativeToWeb(track({ route: { coords: coords(100_001) } }))).toBeNull();
+  });
+
+  it("accepts an export chunk of exactly 1 MiB decoded and no more", () => {
+    // 1 MiB is 349,525 groups of 3 bytes plus 1 byte, so the last group is padded with "==".
+    const full = `${"AAAA".repeat(349_525)}AA==`;
+    expect(parseWebToNative(exportChunk({ data: full }))).not.toBeNull();
+    expect(parseWebToNative(exportChunk({ data: `${"AAAA".repeat(349_525)}AAA=` }))).toBeNull();
+  });
+
   it.each([
     ["a travel mode over 32 characters", { travelMode: "x".repeat(33) }],
     ["a negative target distance", { targetDistanceM: -1 }],

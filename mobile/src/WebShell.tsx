@@ -262,7 +262,7 @@ export function WebShell(): React.JSX.Element {
 
   const linkHandlers = createLinkHandlers({
     initialLoadDone: () => initialLoadDone.current,
-    open: Linking.openURL,
+    open: (u: string) => Linking.openURL(u),
     notify,
   });
 

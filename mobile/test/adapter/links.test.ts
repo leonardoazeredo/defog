@@ -170,6 +170,17 @@ it("leaves a fragment-only change of the current document and a blob download al
   expect(sent).toEqual([]);
 });
 
+it("intercepts the click a focused link gets from the Enter key", () => {
+  const sent = install();
+  pageAt(ORIGIN, '<a href="https://example.org/key">x</a>');
+  const a = document.querySelector("a");
+  if (a == null) throw new Error("no link rendered");
+  a.focus();
+  // Chromium turns Enter on a focused link into this same synthetic click.
+  a.click();
+  expect(sent).toEqual([{ v: 1, type: "openExternal", url: "https://example.org/key" }]);
+});
+
 // The WebView lets a navigation through when onShouldStartLoadWithRequest answers late (#138), so a same-origin click that
 // would load anything has to be stopped here, not by decideNavigation's "block".
 it("stops a same-origin link that changes the path or the query without opening anything", () => {
