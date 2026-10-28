@@ -106,6 +106,9 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
   // The stamp is taken when a track is asked for: a list that changes the activity meanwhile must not stamp the old track as current.
   const requested = new Map<string, RevealStamp>();
   const partial = new Map<string, PartialTrack>();
+  // The panel's own copy of the chunks, joined as they arrive: it must not wait for the queue (on a first start without a cache the list and other activities' reveals are queued ahead of the track job, so it would wait for all of them).
+  const panelPartial = new Map<string, PartialTrack>();
+  let listed = new Set<string>();
   // No timer: a list only marks the requested ids that got no chunk since the previous list (`silent`); the next list
   // forgets the ones still without a chunk and asks again. A chunk resets the count for its own id only, as chunks of
   // other tracks (the panel's) say nothing about this one.
@@ -157,6 +160,26 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
   function forgetRequest(id: string): void {
     requested.delete(id);
     partial.delete(id);
+    panelPartial.delete(id);
+  }
+
+  // Runs outside the queue, so the opened card gets its track as soon as the last chunk is in.
+  function joinForPanel(chunk: TrackChunk): void {
+    const { activityId, index, total, points } = chunk;
+    // Chunks of an unlisted id would sit in panelPartial with nothing to clear them.
+    if (!listed.has(activityId)) return;
+    let got = panelPartial.get(activityId);
+    if (got == null || got.total !== total) {
+      got = { total, chunks: new Map() };
+      panelPartial.set(activityId, got);
+    }
+    got.chunks.set(index, points);
+    if (chunk.route != null) got.route = chunk.route;
+    if (got.chunks.size < total) return;
+    panelPartial.delete(activityId);
+    const track: TrackPoint[] = [];
+    for (let i = 0; i < total; i++) track.push(...(got.chunks.get(i) ?? []));
+    showInPanel(() => page.history?.setTrack(activityId, track, got.route));
   }
 
   function sameStamp(a: RevealStamp, b: RevealStamp): boolean {
@@ -233,7 +256,7 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
   async function applyTrack(chunk: TrackChunk): Promise<void> {
     const { activityId, index, total, points } = chunk;
     chunked.add(activityId);
-    // The panel asks for tracks the fog never requests (a reveal is cached), so every list member's chunks are joined.
+    // A chunk for an id the list dropped is ignored; the panel joins its own copy in joinForPanel.
     if (!wanted.has(activityId)) return;
 
     let got = partial.get(activityId);
@@ -249,7 +272,6 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
     const track: TrackPoint[] = [];
     for (let i = 0; i < total; i++) track.push(...(got.chunks.get(i) ?? []));
 
-    showInPanel(() => page.history?.setTrack(activityId, track, got.route));
     const stamp = requested.get(activityId);
     if (stamp == null) return;
     requested.delete(activityId);
@@ -269,11 +291,16 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
 
   return {
     onActivities: ({ items }) => {
+      listed = new Set(items.map((item) => item.id));
+      for (const id of [...panelPartial.keys()]) if (!listed.has(id)) panelPartial.delete(id);
       // Straight to the panel: it should not wait behind the cache.
       showInPanel(() => page.history?.setActivities(items));
       enqueue(() => applyList(items));
     },
-    onTrack: (chunk) => enqueue(() => applyTrack(chunk)),
+    onTrack: (chunk) => {
+      joinForPanel(chunk);
+      enqueue(() => applyTrack(chunk));
+    },
     // Not asked here: an immediate retry of a failing read would loop, and a notFound id leaves the next list anyway.
     onTrackUnavailable: ({ activityId }) => enqueue(async () => forgetRequest(activityId)),
     settled: () => tail,

@@ -468,7 +468,7 @@
     const reason = why && why.reason, tail = " This is a straight line for now.";
     return reason === "streets-fetch" ? StreetMessages.describe(why.download, Date.now()) + tail
       : reason === "no-street-data" ? "No streets this travel mode can use were found around here." + tail
-      : reason === "off-network" ? `Pin ${why.point + 1} is more than ${fmtDist(0.6)} from any street this mode can use. Move it closer to a street.` + tail
+      : reason === "off-network" ? `Pin ${why.point + 1} is more than ${fmtDist(LocalRouter.SNAP_M / 1000)} from any street this mode can use. Move it closer to a street.` + tail
       : reason === "one-way" ? "One-way streets block every way between two of the pins for this mode." + tail
       : reason === "too-far" ? "Two pins are more than " + fmtDist(30) + " apart: the street map between them is too big to download. Place pins closer together." + tail
       : reason === "internal" ? "Something went wrong while routing. Reload the page and try again." + tail
@@ -481,6 +481,8 @@
     doc: document, map,
     getUnits: () => units,
     getRecord: () => route.routeRecord(),
+    hasRoute: () => route.hasRoute(),
+    revision: () => route.revision,
     phone: () => window.crossfog || null,
     onShown: () => sidebar.classList.remove("open") // mobile: the sheet would cover the drawn track
   });
@@ -640,10 +642,10 @@
     let token;
     try {
       const flat = Estimates.estimate(coords, profile, []);
-      token = route.setFixedRoute(wps, coords, { km: flat.distanceM / 1000, seconds: flat.seconds, ascent: null, descent: null }, { refining: true });
+      token = route.setFixedRoute(wps, coords, Estimates.routeStats(flat), { refining: true });
       const heights = await elevation.elevationAt(coords);
       const est = Estimates.estimate(coords, profile, heights);
-      if (est.elevationKnown) route.refineFixedRoute(token, est.coords, { km: est.distanceM / 1000, seconds: est.seconds, ascent: est.ascentM, descent: est.descentM });
+      if (est.elevationKnown) route.refineFixedRoute(token, est.coords, Estimates.routeStats(est));
     } catch (e) {
       console.warn("[route] adopting a suggestion failed", e && e.name); // the class only: no positions in a log
       if (token === undefined) clearRouteInfo("Couldn't open this route in the editor.");

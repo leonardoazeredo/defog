@@ -22,6 +22,7 @@ const MAX_MEAN_ASCENT_ERR_M = 8;
 const worst = {};
 let used = 0;
 let unusable = 0;
+let corrupt = 0;
 let wellMatched = 0;
 let ascentErrSum = 0;
 let loErrSum = 0;
@@ -31,7 +32,7 @@ for (const f of fs.readdirSync(DIR).filter((n) => n.endsWith(".json")).sort()) {
   try {
     const j = JSON.parse(fs.readFileSync(path.join(DIR, f), "utf8"));
     feature = j && j.ok && j.body && Array.isArray(j.body.features) ? j.body.features[0] : null;
-  } catch (e) { feature = null; }
+  } catch (e) { corrupt++; continue; } // not counted as merely unusable: a cache of broken files must not pass as skipped
   const profile = feature && profileOf(feature);
   if (!feature || !profile || !Estimates.MODES[profile] || !hasElevation(feature)) { unusable++; continue; }
 
@@ -55,6 +56,7 @@ for (const f of fs.readdirSync(DIR).filter((n) => n.endsWith(".json")).sort()) {
   used++;
 }
 
+assert.equal(corrupt, 0, `${corrupt} cache files are not JSON`);
 if (used === 0) {
   console.log(`estimates-cache.test.js ok (skipped: no usable answers, ${unusable} without elevation or profile)`);
   process.exit(0);

@@ -872,14 +872,14 @@
 
   // Recompute length (and ascent/descent, where the coordinates carry elevation)
   // after geometry surgery. The length stays this plain sum because ranking is tuned on it;
-  // the climb is the filtered one the route editor shows (the filter ignores the travel mode; "shortest" only fills the argument).
+  // the climb is the filtered one the route editor shows.
   function statsFromCoords(coords) {
     const { kx, ky } = metresPerDeg(coords[0][1]);
     const hasZ = coords[0].length > 2;
     let len = 0;
     for (let i = 1; i < coords.length; i++)
       len += Math.hypot((coords[i][0] - coords[i - 1][0]) * kx, (coords[i][1] - coords[i - 1][1]) * ky);
-    const climb = hasZ ? global.Estimates.estimate(coords, "shortest", coords.map((c) => c[2])) : null;
+    const climb = hasZ ? global.Estimates.climb(coords.map((c) => c[2])) : null;
     return { coords, lenM: Math.round(len), ascent: climb ? climb.ascentM : undefined, descent: climb ? climb.descentM : undefined };
   }
 

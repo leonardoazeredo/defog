@@ -19,6 +19,7 @@
   // crypto.randomUUID needs a secure context; the phone app's page may not have one.
   function newUuid() {
     const c = global.crypto;
+    if (!c) throw new Error("no crypto in this page");
     if (c.randomUUID) return c.randomUUID();
     const b = c.getRandomValues(new Uint8Array(16));
     b[6] = (b[6] & 15) | 64; b[8] = (b[8] & 63) | 128;
@@ -41,8 +42,9 @@
     this.wps = [];            // { marker, latlng, _ri }
     this.routeCoords = [];    // [[lon,lat,ele], ...] from the last successful route
     this.stats = null;        // {km, seconds, ascent, descent} of routeCoords; null while they are not a routed line
-    this.routeId = null;      // identifies the route to the phone app and the watch; minted by routeRecord, new per route
+    this.routeId = null;      // identifies the route to the phone app and the watch; minted when a route is first applied, new per route
     this.routeCreatedAt = null;
+    this.revision = 0;        // moves whenever what routeRecord would return can have changed; readers compare it instead of the GPX
     // One-colour base line (waypoint-only / drag preview / no-fog fallback), plus two
     // fog-aware overlays: solid red where the route breaks new ground, dashed ("hatched")
     // red where you've already defogged.
@@ -170,6 +172,7 @@
     if (token !== this._reqId) return false;
     if (this._refiningToken === token) {
       this._refiningToken = null;
+      this._touch();
       this._emit(Object.assign({ points: this.wps.length }, this.stats));
     }
     return true;
@@ -203,7 +206,17 @@
   };
 
   // A different route, not an edit of this one: the next record gets a new id.
-  RouteTool.prototype._newRoute = function () { this.routeId = null; this.routeCreatedAt = null; };
+  RouteTool.prototype._newRoute = function () { this.routeId = null; this.routeCreatedAt = null; this._touch(); };
+
+  RouteTool.prototype._touch = function () { this.revision++; };
+
+  // The id and creation time belong to the route, so they are set when its line first exists and an edit keeps them;
+  // a page without crypto draws the route all the same, it just has nothing to send.
+  RouteTool.prototype._mintId = function () {
+    if (this.routeId) return;
+    try { this.routeId = newUuid(); this.routeCreatedAt = new Date().toISOString(); }
+    catch (e) { console.error("[route] could not mint a route id", e && e.name); }
+  };
 
   RouteTool.prototype._clearSegs = function () { this.segNew.setLatLngs([]); this.segOld.setLatLngs([]); };
 
@@ -277,6 +290,8 @@
     if (oe && !isTouch) L.DomEvent.stop(oe); // stop the mousedown so the map doesn't start panning
     this._suppressClick = true;
     const wp = this._insertAt(this._insertionIndex(latlng), latlng);
+    this.stats = null; // the pins changed: routeCoords is the old route until the drop's reply
+    this._touch();
     this._emitWps();
     const map = this.map;
     this._clearSegs(); // show the single base line while dragging; segments redraw on release
@@ -316,6 +331,7 @@
   RouteTool.prototype._recalc = async function () {
     const reqId = ++this._reqId; // also for fewer than two pins: a reply in flight must not redraw the old route
     this.stats = null; // until the reply, routeCoords is the old route and not the pins' route
+    this._touch();
     if (this.wps.length < 2) {
       this.routeCoords = [];
       this._clearSegs();
@@ -340,6 +356,7 @@
     if (reqId !== this._reqId) return; // superseded
     console.debug("[route]", Math.round(performance.now() - t0) + " ms"); // timing only: positions never reach a log
     if (!res || res.error) {
+      this._touch();
       this.routeCoords = this.wps.map((w) => [w.latlng.lng, w.latlng.lat]);
       this._clearSegs();
       this.line.setLatLngs(this.wps.map((w) => w.latlng));
@@ -353,6 +370,8 @@
   RouteTool.prototype._applyRoute = function (coords, stats) {
     this.routeCoords = coords;
     this.stats = stats;
+    this._touch();
+    this._mintId();
     this._renderLine(coords);
     this._indexWaypoints();
     this._emit(Object.assign({ points: this.wps.length }, stats));
@@ -401,15 +420,20 @@ ${pts}
 </gpx>`;
   };
 
+  // Whether routeRecord has a route to give, without building its GPX: what enables the Send button.
+  RouteTool.prototype.hasRoute = function () {
+    const s = this.stats;
+    if (this._refiningToken === this._reqId) return false; // heights pending: see setFixedRoute
+    return !!(s && Number.isFinite(s.km) && this.routeId && this.wps.length >= 2 && this.routeCoords.length >= 2);
+  };
+
   // The route as the phone app's `sendRoute` carries it, or null when there is no routed line to send
   // (nothing drawn, a request in flight, a straight-line fallback after a failure). The id and the
-  // creation time are minted the first time a record is asked for and kept through edits, so a re-send replaces the
+  // creation time were set when the route was applied and survive edits, so a re-send replaces the
   // route the watch has; clear or a different route starts over.
   RouteTool.prototype.routeRecord = function () {
+    if (!this.hasRoute()) return null;
     const s = this.stats;
-    if (this._refiningToken === this._reqId) return null; // heights pending: see setFixedRoute
-    if (!s || !Number.isFinite(s.km) || this.wps.length < 2 || this.routeCoords.length < 2) return null;
-    if (!this.routeId) { this.routeId = newUuid(); this.routeCreatedAt = new Date().toISOString(); }
     const num = (v) => (Number.isFinite(v) ? v : null);
     const pins = this.wps.map((w) => ({ lat: clampLat(w.latlng.lat), lng: wrapLng(w.latlng.lng) }));
     const closed = this.wps[0].latlng.distanceTo(this.wps[this.wps.length - 1].latlng) < LOOP_CLOSE_M;

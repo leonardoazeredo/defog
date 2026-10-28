@@ -128,6 +128,7 @@
       const layers = [];
       const route = open.route && open.route.coords && open.route.coords.length >= 2 ? open.route.coords : null;
       // the followed route first, so the walked track draws over it
+      // the colour is --accent's value: Leaflet writes it as an SVG attribute, where a CSS variable is not reliable
       if (route) layers.push(global.L.polyline(route.map((c) => [c[1], c[0]]), { pane: "routes", color: "#3b4ad9", weight: 4, opacity: 0.7, dashArray: "6 8", interactive: false }));
       layers.push(global.L.polyline(open.points.map((p) => [p.lat, p.lon]), { pane: "routes", color: "#ff2d55", weight: 4, opacity: 0.95, interactive: false }));
       layers.forEach((l) => l.addTo(map));
@@ -258,12 +259,13 @@
   // ----- Send to watch -------------------------------------------------------------
   const STATUS_TEXT = { waiting: "Waiting for watch", onWatch: "On the watch", failed: "Could not send" };
 
-  // opts: { button, chip, getRecord() -> RouteRecord | null, send(record), canSend() }
-  // The chip speaks for the route as it was when sent: an edit or a clear blanks it, and a status for
-  // any other route is ignored.
+  // opts: { button, chip, getRecord() -> RouteRecord | null, hasRoute() -> boolean, revision() -> number, send(record), canSend() }
+  // hasRoute is the cheap "is there something to send" (getRecord builds the whole GPX); revision moves
+  // whenever the route may have changed. The chip speaks for the route as it was when sent: an edit or a
+  // clear blanks it, and a status for any other route is ignored.
   function createSendControl(opts) {
     const btn = opts.button, chip = opts.chip;
-    let sent = null; // { id, gpx } of the record last sent
+    let sent = null; // { id, revision } of the record last sent
     let state = null; // waiting | onWatch | failed, for `sent`
     let paired = null;
     let replyTimer = null;
@@ -273,16 +275,20 @@
       try { return opts.getRecord(); }
       catch (e) { console.error("crossfog: could not build the route record"); return null; }
     }
-    function currentIs(rec) { return rec != null && sent != null && rec.id === sent.id && rec.gpx === sent.gpx; }
+    function hasRoute() {
+      try { return !!opts.hasRoute(); }
+      catch (e) { console.error("crossfog: could not check the route"); return false; }
+    }
+    function currentIs() { return sent != null && hasRoute() && opts.revision() === sent.revision; }
     function paint() {
-      btn.disabled = !(opts.canSend() && record() != null);
+      btn.disabled = !(opts.canSend() && hasRoute());
       chip.textContent = state ? STATUS_TEXT[state] : paired === false ? "Not paired" : "";
     }
 
     btn.addEventListener("click", () => {
       const rec = record();
       if (!rec || !opts.canSend()) return;
-      sent = { id: rec.id, gpx: rec.gpx };
+      sent = { id: rec.id, revision: opts.revision() };
       state = null;
       if (replyTimer) global.clearTimeout(replyTimer);
       replyTimer = null;
@@ -291,7 +297,7 @@
         // No answer at all means the phone never took the route; a "waiting" answer is not timed out, as the watch may connect much later.
         replyTimer = global.setTimeout(() => {
           replyTimer = null;
-          if (state === null && currentIs(record())) { state = "failed"; paint(); }
+          if (state === null && currentIs()) { state = "failed"; paint(); }
         }, REPLY_TIMEOUT_MS);
       } catch (e) {
         console.error("crossfog: could not hand the route to the phone", e instanceof Error ? e.name : typeof e);
@@ -303,11 +309,11 @@
     return {
       // The route changed (or went away).
       update() {
-        if (state && !currentIs(record())) { sent = null; state = null; }
+        if (state && !currentIs()) { sent = null; state = null; }
         paint();
       },
       routeStatus(msg) {
-        if (!sent || msg.routeId !== sent.id || !STATUS_TEXT[msg.state] || !currentIs(record())) return;
+        if (!sent || msg.routeId !== sent.id || !STATUS_TEXT[msg.state] || !currentIs()) return;
         state = msg.state;
         paint();
       },
@@ -320,7 +326,7 @@
 
   // Finds the tab's elements and connects them to the phone. `phone()` returns window.crossfog or null:
   // that object is installed after this file has run, so it is looked up at each use.
-  // opts: { doc, map, getUnits(), getRecord(), phone(), onShown() }
+  // opts: { doc, map, getUnits(), getRecord(), hasRoute(), revision(), phone(), onShown() }
   function install(opts) {
     const doc = opts.doc, phone = opts.phone;
     const panel = create({
@@ -330,7 +336,7 @@
     });
     const send = createSendControl({
       button: doc.getElementById("sendWatch"), chip: doc.getElementById("sendStatus"),
-      getRecord: opts.getRecord,
+      getRecord: opts.getRecord, hasRoute: opts.hasRoute, revision: opts.revision,
       canSend: () => phone() != null,
       send: (record) => phone().sendRoute(record)
     });

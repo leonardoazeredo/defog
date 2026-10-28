@@ -274,5 +274,6 @@
     return { coords, lenM, legs };
   };
 
+  LocalRouter.SNAP_M = SNAP_M; // main.js words the off-network hint with it
   global.LocalRouter = LocalRouter;
 })(window);

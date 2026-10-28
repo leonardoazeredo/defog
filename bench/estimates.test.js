@@ -102,23 +102,71 @@ assert.ok(ascentMatches[10] >= files.length - 1, `10 m filter matches ${ascentMa
   assert.ok(upBike > flatBike * 1.5, `uphill ${upBike} vs flat ${flatBike}`);
 }
 
-// a mode with no model still gets distance and heights, no time
+// a mode with no model still gets distance and heights, no time; a mode that is no name at all is a caller bug
 {
   const coords = [[13.4, 52.5], [13.41, 52.5]];
   const unmodelled = Estimates.estimate(coords, "hovercraft", [10, 12]);
   assert.equal(unmodelled.seconds, null);
   assert.ok(unmodelled.distanceM > 600);
-  assert.equal(unmodelled.ascentM, 2);
+  assert.equal(Estimates.estimate(coords, "toString", [10, 12]).seconds, null, "inherited names are not modes");
+  assert.throws(() => Estimates.estimate(coords, undefined, [10, 12]), TypeError);
+  assert.throws(() => Estimates.estimate(coords, 7, [10, 12]), TypeError);
+  for (const m of Object.keys(Estimates.MODES)) assert.ok(Number.isFinite(Estimates.estimate(coords, m, [10, 12]).seconds), m);
 }
 
 // degenerate input
 {
   assert.throws(() => Estimates.estimate([[13.4, 52.5], [NaN, 52.5]], "trekking", [1, 2]), TypeError);
   assert.throws(() => Estimates.estimate([[13.4, 52.5], null], "trekking", [1, 2]), TypeError);
-  assert.equal(Estimates.estimate([[13.4, 52.5], [13.41, 52.5]], "toString", [1, 2]).seconds, null, "inherited names are not modes");
+  assert.throws(() => Estimates.estimate("not a list", "trekking", []), TypeError, "coords must be an array");
+  assert.throws(() => Estimates.estimate([[13.4, 52.5], [13.41, 52.5]], "trekking", [1]), TypeError, "one height per point");
+  assert.throws(() => Estimates.estimate([[13.4, 52.5], [13.41, 52.5]], "trekking", "12"), TypeError, "heights must be an array");
+  for (const bad of [0, -1, NaN, Infinity, "5"]) {
+    assert.throws(() => Estimates.estimate([[13.4, 52.5], [13.41, 52.5]], "trekking", [1, 2], { ascentFilterM: bad }), TypeError, `filter ${bad}`);
+  }
+  assert.ok(Estimates.estimate([[13.4, 52.5], [13.41, 52.5]], "trekking", [1, 2], { ascentFilterM: 5 }), "a positive filter is fine");
+  assert.ok(Estimates.estimate([[13.4, 52.5], [13.41, 52.5]], "trekking", null), "no heights at all is allowed");
   const one = Estimates.estimate([[13.4, 52.5]], "trekking", [10]);
   assert.deepEqual([one.distanceM, one.seconds, one.ascentM, one.descentM], [0, 0, 0, 0]);
   assert.deepEqual(Estimates.estimate([], "trekking", []).coords, []);
+}
+
+// distance away from the fixtures' latitudes (51-56) and the longitude scale
+{
+  const at = (lat) => Estimates.distanceM([10, lat], [10 + 0.01, lat]);
+  // one hundredth of a degree of longitude is 1113.2 m * cos(lat)
+  for (const lat of [0, 30, 60, 80]) {
+    const want = 1113.195 * Math.cos(lat * Math.PI / 180);
+    assert.ok(Math.abs(at(lat) - want) <= Math.max(1, want * 0.005), `lat ${lat}: ${at(lat)} vs ${want.toFixed(1)}`);
+  }
+  assert.ok(Math.abs(Estimates.distanceM([-70, -33.5], [-70, -33.5 + 0.01]) - 1111) <= 2, "southern hemisphere, a hundredth of a degree of latitude");
+  assert.equal(Estimates.distanceM([10, 30], [10.01, 30]), Estimates.distanceM([-10.01, 30], [-10, 30]), "the scale does not depend on the longitude");
+}
+
+// a long steep descent on a bike: gravity speeds it up and the descent filter keeps its figure
+{
+  const coords = Array.from({ length: 21 }, (_, i) => [13.4 + i * 0.001, 52.5]);
+  const down = coords.map((_, i) => 400 - i * 8); // about 7 % grade
+  const flat = Estimates.estimate(coords, "trekking", coords.map(() => 400)).seconds;
+  const r = Estimates.estimate(coords, "trekking", down);
+  assert.ok(r.seconds < flat, `downhill ${r.seconds} s vs flat ${flat} s`);
+  assert.equal(r.ascentM, 0);
+  assert.equal(r.descentM, 160, "a steady 160 m drop counts fully");
+}
+
+// the pieces the route editor and suggestions share
+{
+  assert.deepEqual(Estimates.climb([0, 3, 0, 3, 0]), { ascentM: 3, descentM: 0 }, "the filtered climb without a travel mode");
+  assert.deepEqual(Estimates.climb([30, 0, 0, 0, 30], { ascentFilterM: 10 }), { ascentM: 20, descentM: 30 });
+  assert.deepEqual(Estimates.climb([]), { ascentM: 0, descentM: 0 });
+  const coords = [[13.4, 52.5], [13.401, 52.5], [13.402, 52.5]];
+  const withHeights = Estimates.estimate(coords, "trekking", [10, 12, 15]);
+  const s = Estimates.routeStats(withHeights);
+  assert.deepEqual(s, { km: withHeights.distanceM / 1000, seconds: withHeights.seconds, ascent: 5, descent: 0 });
+  const noHeights = Estimates.routeStats(Estimates.estimate(coords, "trekking", []));
+  assert.equal(noHeights.ascent, null, "no height arrived: the climb is unknown, not 0");
+  assert.equal(noHeights.descent, null);
+  assert.ok(noHeights.km > 0 && noHeights.seconds > 0);
 }
 
 console.log(`largest deviations over ${checked} fixtures: distance ${worst.distPct.toFixed(3)} %, ascent ${worst.ascentDiffM} m, foot time ${worst.footTimePct.toFixed(2)} %, bike time ${worst.bikeTimePct.toFixed(2)} %`);

@@ -29,6 +29,8 @@ interface Route {
   _applyRoute(coords: number[][], stats: object): void;
   clear(): void;
   routeRecord(): { id: string; gpx: string } | null;
+  hasRoute(): boolean;
+  revision: number;
 }
 interface Panel {
   setActivities(items: ActivitySummary[]): void;
@@ -105,6 +107,8 @@ beforeEach(() => {
     map,
     getUnits: () => "metric",
     getRecord: () => route.routeRecord(),
+    hasRoute: () => route.hasRoute(),
+    revision: () => route.revision,
     phone: () => window.crossfog ?? null,
     onShown: shown,
   }));
@@ -473,14 +477,28 @@ describe("Send to watch", () => {
     expect(chip()).toBe("");
   });
 
-  it("keeps the button off and does not throw when the record cannot be built", () => {
+  it("keeps the button off and does not throw when the page has no crypto for a route id", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const real = Object.getOwnPropertyDescriptor(window, "crypto");
+    Object.defineProperty(window, "crypto", { value: undefined, configurable: true });
+    try {
+      expect(() => route.setFixedRoute(PINS(), COORDS, STATS)).not.toThrow();
+      expect(() => send.update()).not.toThrow();
+      expect(sendBtn().disabled).toBe(true);
+    } finally {
+      if (real) Object.defineProperty(window, "crypto", real);
+    }
+  });
+
+  it("does not throw when the record cannot be built at the tap", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     route.setFixedRoute(PINS(), COORDS, STATS);
+    send.update();
     route.routeRecord = () => {
-      throw new Error("no crypto");
+      throw new Error("boom");
     };
-    expect(() => send.update()).not.toThrow();
-    expect(sendBtn().disabled).toBe(true);
+    expect(() => click(sendBtn())).not.toThrow();
+    expect(sent.some((m) => m.type === "sendRoute")).toBe(false);
   });
 
   it("says Could not send when handing the route to the phone throws", () => {

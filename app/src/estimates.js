@@ -118,16 +118,43 @@
     return total;
   }
 
-  // coords: [[lon, lat]]; elevation: metres per point, null where unknown.
-  // opts.ascentFilterM overrides the default buffer.
-  // A travel mode without a model gets distance and heights but `seconds: null`.
+  // The filtered climb of a height profile, for callers that have heights and no travel mode.
+  function climb(heights, opts) {
+    const filterM = filterOf(opts);
+    const h = fillHeights(heights.length, heights);
+    return { ascentM: filteredClimb(h, filterM), descentM: filteredClimb(h.map((x) => -x), filterM) };
+  }
+
+  // The filter buffer must be a positive finite number: 0 forgets every descent at once, and NaN never caps the held-back descent, so it cancels all later climbs.
+  function filterOf(opts) {
+    const f = opts && opts.ascentFilterM !== undefined ? opts.ascentFilterM : DEFAULT_ASCENT_FILTER_M;
+    if (typeof f !== "number" || !Number.isFinite(f) || f <= 0) throw new TypeError("estimate: ascentFilterM must be a positive number");
+    return f;
+  }
+
+  // The {km, seconds, ascent, descent} the route editor shows. With no real height the climb is null:
+  // a profile of zeros would claim flat ground.
+  function routeStats(est) {
+    const known = est.elevationKnown > 0;
+    return { km: est.distanceM / 1000, seconds: est.seconds, ascent: known ? est.ascentM : null, descent: known ? est.descentM : null };
+  }
+
+  // coords: [[lon, lat]]; elevation: metres per point (one per point, or empty), null where unknown, or omitted.
+  // opts.ascentFilterM overrides the default buffer. A travel mode that is not a string throws; a name with
+  // no model (a saved mode that was removed) gets distance and heights but `seconds: null`.
   function estimate(coords, travelMode, elevation, opts) {
-    const pts = Array.isArray(coords) ? coords : [];
+    if (!Array.isArray(coords)) throw new TypeError("estimate: coords must be an array");
+    if (elevation != null && (!Array.isArray(elevation) || (elevation.length && elevation.length !== coords.length))) {
+      throw new TypeError("estimate: elevation needs one entry per point");
+    }
+    const pts = coords;
     // one NaN would turn every total into NaN, which serialises as null and reads as "no model"
     if (!pts.every((p) => p && Number.isFinite(p[0]) && Number.isFinite(p[1]))) throw new TypeError("estimate: every point needs a finite lon and lat");
+    if (typeof travelMode !== "string") throw new TypeError("estimate: travelMode must be a string");
+    const mode = Object.hasOwn(MODES, travelMode) ? MODES[travelMode] : null;
+    const filterM = filterOf(opts);
     const heights = fillHeights(pts.length, elevation);
     const known = pts.reduce((n, _, i) => n + (Number.isFinite(elevation && elevation[i]) ? 1 : 0), 0);
-    const filterM = (opts && opts.ascentFilterM) ?? DEFAULT_ASCENT_FILTER_M;
     const links = [];
     let distance = 0;
     for (let i = 1; i < pts.length; i++) {
@@ -135,17 +162,17 @@
       links.push(d);
       distance += d;
     }
-    const mode = Object.hasOwn(MODES, travelMode) ? MODES[travelMode] : null;
+    const c = climb(heights, { ascentFilterM: filterM });
     return {
       coords: pts.map((p, i) => [p[0], p[1], heights[i]]),
       distanceM: distance,
       seconds: mode ? Math.round(travelSeconds(links, heights, mode)) : null,
-      ascentM: filteredClimb(heights, filterM),
-      descentM: filteredClimb(heights.map((h) => -h), filterM),
+      ascentM: c.ascentM,
+      descentM: c.descentM,
       // callers cannot otherwise tell flat ground from heights that never arrived
       elevationKnown: known,
     };
   }
 
-  global.Estimates = { estimate, distanceM, MODES };
+  global.Estimates = { estimate, climb, routeStats, distanceM, MODES };
 })(window);

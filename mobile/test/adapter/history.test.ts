@@ -657,6 +657,29 @@ describe("the history panel", () => {
     expect(gotRoute).toEqual(route);
   });
 
+  it("hands the panel a track while the fog is still busy with the list", async () => {
+    const cache = await openFogCache(idb, true);
+    let release: () => void = () => {};
+    const stuck = new Promise<void>((r) => {
+      release = r;
+    });
+    const slow: FogCache = {
+      ...cache,
+      getReveal: async (id) => {
+        await stuck;
+        return cache.getReveal(id);
+      },
+    };
+    const { lists, sync, history } = await setup({ cache: slow });
+    lists(WALKER);
+    sendTrack(sync, WALKER, walk(0, 300), 10, (i) => i.reverse());
+    expect(history.setTrack).toHaveBeenCalledTimes(1);
+    expect(history.setTrack.mock.calls[0]?.[1]).toEqual(walk(0, 300));
+    release();
+    await sync.settled();
+    expect(history.setTrack).toHaveBeenCalledTimes(1);
+  });
+
   it("gets a track the fog did not ask for, and leaves the fog alone", async () => {
     const first = await setup();
     first.lists(WALKER);

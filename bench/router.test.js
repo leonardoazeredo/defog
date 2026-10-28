@@ -114,4 +114,5 @@ const A = pt(0, 0), B = pt(1000, 0);
   const r = router(straight).route([A, pt(500, 0), B]);
   assert.ok(r.coords.every((c, i) => i === 0 || c[0] !== r.coords[i - 1][0] || c[1] !== r.coords[i - 1][1]), "repeated vertex");
 }
+assert.equal(LocalRouter.SNAP_M, 600, "main.js words the off-network hint with it");
 console.log("router.test.js ok");
