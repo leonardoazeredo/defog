@@ -1,5 +1,5 @@
-const fs = require("fs");
-const path = require("path");
+const fs = require("node:fs");
+const path = require("node:path");
 const { withInfoPlist, withDangerousMod } = require("expo/config-plugins");
 
 // iOS 27+ traps at launch without UIScene lifecycle adoption. Register Expo's scene delegate,

@@ -33,7 +33,12 @@ function setup(save: "saved" | "cancelled" = "saved") {
     return save === "saved" ? { name: "Saved.zip" } : null;
   });
   const notify = vi.fn();
-  const flow = createExportFlow({ fs, saveAs, notify, now: () => Date.UTC(2026, 9, 22, 12) });
+  const flow = createExportFlow({
+    fs,
+    saveAs,
+    notify,
+    now: () => new Date(2026, 9, 22, 12).getTime(),
+  });
   return { fs, saveAs, notify, flow, saved };
 }
 

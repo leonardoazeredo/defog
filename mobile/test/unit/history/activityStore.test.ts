@@ -28,7 +28,7 @@ describe.each(impls)("activity store (%s)", (_name, make) => {
     const s = await make();
     await s.add(activity({ gpx: "first" }));
     expect(await s.add(activity({ gpx: "second" }))).toEqual({ stored: false });
-    expect((await s.get(activity().id))?.gpx).toBe("first");
+    expect(await s.gpx(activity().id)).toBe("first");
     expect(await s.list()).toHaveLength(1);
   });
 
@@ -56,15 +56,20 @@ describe.each(impls)("activity store (%s)", (_name, make) => {
     expect(list[0]).not.toHaveProperty("routeId");
   });
 
-  it("gives back the full record with its track", async () => {
+  it("gives back the record with its track, and the GPX only from gpx()", async () => {
     const s = await make();
     const a = activity({ routeId: "22222222-2222-4222-8222-222222222222" });
     await s.add(a);
-    expect(await s.get(a.id)).toEqual(a);
+    const { gpx, ...detail } = a;
+    expect(await s.get(a.id)).toEqual(detail);
+    expect(await s.gpx(a.id)).toBe(gpx);
   });
 
   it("returns null for an unknown id", async () => {
-    expect(await (await make()).get("33333333-3333-4333-8333-333333333333")).toBeNull();
+    const s = await make();
+    const unknown = "33333333-3333-4333-8333-333333333333";
+    expect(await s.get(unknown)).toBeNull();
+    expect(await s.gpx(unknown)).toBeNull();
   });
 
   it("deletes once, then reports nothing to delete", async () => {
@@ -94,6 +99,17 @@ describe("activity store (sqlite) at rest", () => {
     expect(row?.gpx_deflated).toBeInstanceOf(Uint8Array);
     expect(row?.gpx_deflated.length).toBeLessThan(gpx.length / 4);
     expect(new TextDecoder().decode(row?.gpx_deflated)).not.toContain("<gpx>");
-    expect((await createActivityStore(db).get(activity().id))?.gpx).toBe(gpx);
+    expect(await createActivityStore(db).gpx(activity().id)).toBe(gpx);
+    expect(await createActivityStore(db).get(activity().id)).not.toHaveProperty("gpx");
+  });
+
+  it("still returns the track when the stored GPX cannot be inflated", async () => {
+    const db = createNodeSqliteDriver(":memory:");
+    await migrate(db);
+    await createActivityStore(db).add(activity());
+    await db.run("UPDATE activities SET gpx_deflated = ?", [new Uint8Array([1, 2, 3])]);
+    const detail = await createActivityStore(db).get(activity().id);
+    expect(detail?.track).toEqual(activity().track);
+    await expect(createActivityStore(db).gpx(activity().id)).rejects.toThrow();
   });
 });

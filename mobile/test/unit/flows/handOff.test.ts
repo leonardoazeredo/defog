@@ -51,7 +51,7 @@ describe("hand-off", () => {
       encoderVersion: "enc-1",
       stats: { durationS: 3, steps: 9 },
     });
-    expect(stored?.gpx).toBe(gpx("2026-03-01T10:00:00Z"));
+    expect(await activities.gpx(A)).toBe(gpx("2026-03-01T10:00:00Z"));
     expect(stored?.track).toHaveLength(2);
     expect(await link.pendingActivities()).toEqual([]);
     expect(link.released()).toEqual([A]);

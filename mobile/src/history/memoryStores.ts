@@ -30,7 +30,12 @@ export function createMemoryActivityStore(): ActivityStore {
     },
     async get(id) {
       const a = byId.get(id);
-      return a ? copy(a) : null;
+      if (!a) return null;
+      const { gpx: _gpx, ...detail }: Activity = a;
+      return copy(detail);
+    },
+    async gpx(id) {
+      return byId.get(id)?.gpx ?? null;
     },
     async delete(id) {
       return byId.delete(id);

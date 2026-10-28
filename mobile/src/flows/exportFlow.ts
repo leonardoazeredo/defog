@@ -1,6 +1,7 @@
 import { decodeBase64 } from "../bridge/base64.js";
 import type { ExportChunk } from "../bridge/protocol.js";
 import { COPY } from "../copy.js";
+import { localDate } from "../localDate.js";
 import { writeZip } from "../platform/zipWriter.js";
 
 /** Files under the cache directory, by path relative to it; parents are created on write. */
@@ -45,9 +46,7 @@ interface Export {
 }
 
 function exportName(now: number): string {
-  const d = new Date(now);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `fog-of-world-export-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}.zip`;
+  return `fog-of-world-export-${localDate(now)}.zip`;
 }
 
 export function createExportFlow(deps: ExportFlowDeps): ExportFlow {

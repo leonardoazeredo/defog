@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { RouteRecord } from "../bridge/protocol.js";
+import { localDateTime } from "../localDate.js";
 import * as native from "../platform/watchLinkModule.js";
 import {
   activityOfferSchema,
@@ -20,17 +21,8 @@ const eventSchemas: { [E in keyof WatchLinkEvents]: z.ZodType<WatchLinkEvents[E]
 // day the rider lived it, while createdAt stays UTC on the wire. `timeZone` lets a test pin a zone
 // without touching the process TZ; production omits it and gets device-local time.
 export function routeName(route: RouteRecord, timeZone?: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date(route.createdAt));
-  const at = (type: string) => parts.find((p) => p.type === type)?.value;
-  return `Route ${at("year")}-${at("month")}-${at("day")} ${at("hour")}:${at("minute")}`;
+  const { date, time } = localDateTime(Date.parse(route.createdAt), timeZone);
+  return `Route ${date} ${time}`;
 }
 
 export function createNativeWatchLink(): WatchLink {

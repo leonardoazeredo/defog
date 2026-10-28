@@ -1,5 +1,6 @@
 import type { AttachedBackup } from "../db/driver.js";
 import { SCHEMA_VERSION } from "../db/schema.js";
+import { localDate } from "../localDate.js";
 
 export const BLOB_IMPORT = "import";
 export const BLOB_SETTINGS = "page_settings";
@@ -12,9 +13,7 @@ const PAGE_BYTES = 512;
 const PLAIN_HEADER_HEX = "53514c69746520666f726d6174203300";
 
 export function backupName(now: number): string {
-  const d = new Date(now);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `crossfog-backup-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}.db`;
+  return `crossfog-backup-${localDate(now)}.db`;
 }
 
 export type BackupFileKind = "plain" | "maybeEncrypted" | "notABackup";

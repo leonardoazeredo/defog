@@ -34,6 +34,7 @@ function swappableActivities(): { store: ActivityStore; swap(): void } {
       add: (a) => current.add(a),
       list: () => current.list(),
       get: (id) => current.get(id),
+      gpx: (id) => current.gpx(id),
       delete: (id) => current.delete(id),
     },
     swap() {
