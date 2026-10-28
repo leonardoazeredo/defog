@@ -219,5 +219,29 @@ function fresh(opts) { return new RouteTool(global.fakeMap(), opts || {}); }
   await new Promise((r) => setImmediate(r));
   assert.equal(tool.routeRecord(), null, "a straight-line fallback is not a route to send");
 
+  // an edit while heights are pending: its own reply releases Send, and the heights for the replaced route are ignored
+  const flatStats = { km: 0.7, seconds: 520, ascent: null, descent: null };
+  const edited = fresh({ routeWaypoints: async () => ({ coords: C, stats }) });
+  const oldToken = edited.setFixedRoute(pins, C, flatStats, { refining: true });
+  assert.equal(edited.routeRecord(), null, "heights pending: nothing to send");
+  edited.reverse();
+  assert.equal(edited.routeRecord(), null, "routing the edit: nothing to send");
+  await new Promise((r) => setImmediate(r));
+  assert.ok(edited.routeRecord(), "the edit's reply releases Send without the old heights");
+  assert.equal(edited.refineFixedRoute(oldToken, C, { km: 9, seconds: 1, ascent: 1, descent: 1 }), false, "late heights for the replaced route are ignored");
+  assert.equal(edited.routeRecord().stats.distanceM, 700, "the edited route keeps its own stats");
+
+  // the heights wait has a deadline: one that never ends gives the fallback, so the route can settle
+  const { Elevation } = global;
+  const timed = fresh();
+  const timedToken = timed.setFixedRoute(pins, C, flatStats, { refining: true });
+  const heights = await Elevation.within(new Promise(() => {}), 10, []);
+  assert.deepEqual(heights, [], "a wait that runs out gives the fallback");
+  timed.settleFixedRoute(timedToken);
+  assert.ok(timed.routeRecord(), "the settle releases Send");
+  const lateHeights = new Promise((r) => setTimeout(() => r([120, 121, 119]), 20));
+  assert.deepEqual(await Elevation.within(lateHeights, 1000, []), [120, 121, 119], "heights in time are returned");
+  assert.deepEqual(await Elevation.within(new Promise((r) => setTimeout(() => r([1, 2, 3]), 20)), 5, []), [], "heights after the deadline are not");
+
   console.log("route-record.test.js ok");
 });
