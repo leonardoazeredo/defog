@@ -232,6 +232,52 @@ describe("the Fog of World export flow", () => {
     expect(notify).toHaveBeenCalledExactlyOnceWith(COPY.fogExportSaved("Saved.zip"));
   });
 
+  it("does not turn a saved export into a failed one when telling the page throws", async () => {
+    const fs = createMemoryExportFs();
+    const notify = vi.fn();
+    const statuses: string[] = [];
+    const flow = createExportFlow({
+      fs,
+      saveAs: async () => ({ name: "Saved.zip" }),
+      notify,
+      status: (_id, state) => {
+        statuses.push(state);
+        if (state === "saved") throw new Error("bridge gone");
+      },
+      setTimer: fakeTimers().set,
+      now: () => 0,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    for (const c of CHUNKS) await flow.onChunk(c);
+    warn.mockRestore();
+    expect(statuses).toEqual(["saving", "saved"]);
+    expect(notify).toHaveBeenCalledExactlyOnceWith(COPY.fogExportSaved("Saved.zip"));
+    expect(fs.files.size).toBe(0);
+  });
+
+  it("still removes a failed export's parts, and resolves, when telling the page throws", async () => {
+    const fs = createMemoryExportFs();
+    const flow = createExportFlow({
+      fs,
+      saveAs: async () => null,
+      notify: () => {
+        throw new Error("no toast");
+      },
+      status: () => {
+        throw new Error("bridge gone");
+      },
+      setTimer: fakeTimers().set,
+      now: () => 0,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await flow.onChunk(CHUNKS[0] as ExportChunk);
+    await expect(flow.onChunk(chunk("aaaa", 0, 9, A))).resolves.toBeUndefined();
+    const lines = warn.mock.calls.map((c) => c.join(" "));
+    warn.mockRestore();
+    expect(fs.files.size).toBe(0);
+    expect(lines).toContain("crossfog: export could not report the outcome Error");
+  });
+
   it("never rejects from the startup sweep", async () => {
     const { flow, fs } = setup();
     fs.removeExportDirs = async () => {
@@ -302,6 +348,7 @@ describe("the Fog of World export flow", () => {
     await flow.onChunk(CHUNKS[0] as ExportChunk);
     await flow.onChunk(CHUNKS[1] as ExportChunk);
     expect(fs.files.size).toBeGreaterThan(0);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     expect(timers.fire()).toEqual([60_000]);
     await flow.onChunk(CHUNKS[2] as ExportChunk);
     await flow.onChunk(CHUNKS[3] as ExportChunk);
@@ -309,6 +356,8 @@ describe("the Fog of World export flow", () => {
     expect(saveAs).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledExactlyOnceWith(COPY.fogExportFailed);
     expect(statuses).toEqual([["e1", "failed"]]);
+    expect(warn.mock.calls.map((c) => c.join(" "))).toEqual(["crossfog: export idle, dropped"]);
+    warn.mockRestore();
   });
 
   it("does not expire an export whose last chunks are still queued", async () => {

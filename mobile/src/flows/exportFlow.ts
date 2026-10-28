@@ -11,7 +11,7 @@ export interface ExportFs {
   read(path: string): Promise<Uint8Array>;
   /** Removes a file or a directory with everything in it; a path that is not there is fine. */
   remove(path: string): Promise<void>;
-  /** Removes every `export-*` entry of the cache. Tries every one, then rejects if any could not be removed. */
+  /** Removes every `export-*` entry of the cache. Tries every one, then rejects with the first failure. */
   removeExportDirs(): Promise<void>;
   /** A file system path (no scheme) for a path inside the cache. */
   absolute(path: string): string;
@@ -99,6 +99,15 @@ export function createExportFlow(deps: ExportFlowDeps): ExportFlow {
     warnClass("export", "cleanup failed", e);
   }
 
+  // The page and the toast only hear of the outcome; a throw from either must not change it.
+  function tell(fn: () => void): void {
+    try {
+      fn();
+    } catch (e) {
+      warnClass("export", "could not report the outcome", e);
+    }
+  }
+
   function close(id: string): void {
     open.get(id)?.cancelExpiry();
     open.delete(id);
@@ -108,8 +117,8 @@ export function createExportFlow(deps: ExportFlowDeps): ExportFlow {
 
   async function fail(id: string): Promise<void> {
     close(id);
-    deps.status(id, "failed");
-    deps.notify(COPY.fogExportFailed);
+    tell(() => deps.status(id, "failed"));
+    tell(() => deps.notify(COPY.fogExportFailed));
     await deps.fs.remove(dir(id)).catch(logCleanupFailure);
   }
 
@@ -120,7 +129,10 @@ export function createExportFlow(deps: ExportFlowDeps): ExportFlow {
     let live = true;
     const cancel = setTimer(() => {
       void enqueue(async () => {
-        if (live && open.get(id) === state) await fail(id);
+        if (!live || open.get(id) !== state) return;
+        // A fixed line, so a report can tell a timeout from a failed write.
+        console.warn("crossfog: export idle, dropped");
+        await fail(id);
       });
     }, EXPORT_IDLE_MS);
     state.cancelExpiry = () => {
@@ -153,10 +165,10 @@ export function createExportFlow(deps: ExportFlowDeps): ExportFlow {
     const zipPath = `${dir(id)}/Sync.zip`;
     await deps.fs.write(zipPath, writeZip(entries));
     stage = "saving";
-    deps.status(id, "saving");
+    tell(() => deps.status(id, "saving"));
     const saved = await deps.saveAs(deps.fs.absolute(zipPath), exportName(deps.now()), ZIP_MIME);
-    deps.status(id, saved === null ? "cancelled" : "saved");
-    if (saved !== null) deps.notify(COPY.fogExportSaved(saved.name));
+    tell(() => deps.status(id, saved === null ? "cancelled" : "saved"));
+    if (saved !== null) tell(() => deps.notify(COPY.fogExportSaved(saved.name)));
   }
 
   async function handle(c: ExportChunk): Promise<void> {

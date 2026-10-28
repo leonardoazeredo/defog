@@ -7,7 +7,7 @@ import type { DroppedMessage, NativeToWeb } from "./protocol.js";
 export function reportDropped(
   drop: DroppedMessage,
   send: (msg: NativeToWeb) => void,
-  abandonExport: (exportId: string) => void = () => {},
+  abandonExport: (exportId: string) => void,
 ): void {
   // Type and key paths only: the values are routes and positions, which must not reach logs.
   console.warn("crossfog: dropped invalid message", drop.type ?? "unknown", drop.paths.join(" "));

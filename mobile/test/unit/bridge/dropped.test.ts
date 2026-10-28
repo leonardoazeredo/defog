@@ -128,7 +128,11 @@ describe("reportDropped", () => {
   it("logs the type and the paths, never a value", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const bad = { ...route, coords: [[11.5, SECRET_LAT, "high"], [11.51]] };
-    reportDropped(dropOf(JSON.stringify({ v: 1, type: "sendRoute", route: bad })), () => {});
+    reportDropped(
+      dropOf(JSON.stringify({ v: 1, type: "sendRoute", route: bad })),
+      () => {},
+      () => {},
+    );
     expect(warn).toHaveBeenCalledTimes(1);
     const line = warn.mock.calls[0]?.join(" ") ?? "";
     expect(line).toContain("sendRoute");
@@ -141,8 +145,10 @@ describe("reportDropped", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const sent: NativeToWeb[] = [];
     const bad = { ...route, stats: { ...route.stats, distanceM: -1 } };
-    reportDropped(dropOf(JSON.stringify({ v: 1, type: "sendRoute", route: bad })), (m) =>
-      sent.push(m),
+    reportDropped(
+      dropOf(JSON.stringify({ v: 1, type: "sendRoute", route: bad })),
+      (m) => sent.push(m),
+      () => {},
     );
     expect(sent).toEqual([{ v: 1, type: "routeStatus", routeId, state: "failed" }]);
     for (const m of sent) expect(parseNativeToWeb(encode(m))).toEqual(m);
@@ -173,8 +179,14 @@ describe("reportDropped", () => {
   it("answers nothing when there is no route id to answer", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const send = vi.fn();
-    reportDropped(dropOf(JSON.stringify({ v: 1, type: "needTrack", activityId: "x" })), send);
-    reportDropped(dropOf("{not json"), send);
+    const abandon = vi.fn();
+    reportDropped(
+      dropOf(JSON.stringify({ v: 1, type: "needTrack", activityId: "x" })),
+      send,
+      abandon,
+    );
+    reportDropped(dropOf("{not json"), send, abandon);
     expect(send).not.toHaveBeenCalled();
+    expect(abandon).not.toHaveBeenCalled();
   });
 });

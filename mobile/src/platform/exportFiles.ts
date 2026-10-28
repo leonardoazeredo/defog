@@ -43,17 +43,17 @@ export function createExportFs(): ExportFs {
       if (file.exists) file.delete();
     },
     async removeExportDirs() {
-      let failed = 0;
+      let failure: { error: unknown } | null = null;
       for (const item of new Directory(Paths.cache).list()) {
         if (!baseName(item.uri).startsWith(EXPORT_DIR_PREFIX)) continue;
         // One entry that will not go must not leave the rest, which hold plaintext tiles.
         try {
           item.delete();
-        } catch {
-          failed++;
+        } catch (e) {
+          failure ??= { error: e };
         }
       }
-      if (failed > 0) throw new Error(`${failed} cache entries not removed`);
+      if (failure !== null) throw failure.error;
     },
     absolute: (path) => decodeURIComponent(fileAt(path).uri.replace(/^file:\/\//, "")),
   };
