@@ -53,7 +53,8 @@ vi.mock("../../../src/platform/expoSqliteDriver.js", () => ({
   },
 }));
 let migrateFile: (contents: string) => Promise<number>;
-vi.mock("../../../src/db/schema.js", () => ({
+vi.mock("../../../src/db/schema.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/db/schema.js")>()),
   migrate: (db: SqlDriver & { contents: string }) => migrateFile(db.contents),
 }));
 
@@ -67,6 +68,7 @@ const driver = (): SqlDriver => ({
 });
 // Built from the module graph the code under test loaded, so its `instanceof` holds.
 let NotADb: typeof NotADatabaseError;
+let NewerSchemaError: typeof import("../../../src/db/schema.js").NewerSchemaError;
 const wrongKey = () => new NotADb("file is not a database");
 
 async function createDatabase() {
@@ -74,6 +76,7 @@ async function createDatabase() {
   // imported modules, as a new process would.
   vi.resetModules();
   ({ NotADatabaseError: NotADb } = await import("../../../src/db/driver.js"));
+  ({ NewerSchemaError } = await import("../../../src/db/schema.js"));
   return (await import("../../../src/platform/database.js")).createDatabase();
 }
 
@@ -181,18 +184,26 @@ describe("createDatabase after a restore that stopped before the replaced copy w
     "out of memory",
     "attempt to write a readonly database",
     "SQLITE_PROTOCOL",
-  ])("keeps both files when the migration fails with %s", async (message) => {
-    migrateFile = async () => {
-      throw new Error(message);
-    };
-    await expect(createDatabase()).rejects.toThrow(message);
-    expect(disk.get(LIVE_DB)).toBe("restored");
-    expect(disk.get(REPLACED_DB)).toBe("old");
-  });
+    "an activity vanished while its GPX was deflated",
+    "Cannot read properties of undefined",
+  ])(
+    "keeps both files when the migration fails for a reason that is no proof (%s)",
+    async (message) => {
+      migrateFile = async () => {
+        throw new Error(message);
+      };
+      await expect(createDatabase()).rejects.toThrow(message);
+      expect(disk.get(LIVE_DB)).toBe("restored");
+      expect(disk.get(REPLACED_DB)).toBe("old");
+    },
+  );
 
-  it("puts the replaced copy back when the restored file does not migrate", async () => {
+  it.each([
+    ["is from a newer app", () => new NewerSchemaError(9)],
+    ["is corrupt", () => new Error("database disk image is malformed")],
+  ])("puts the replaced copy back when the restored file %s", async (_, error) => {
     migrateFile = async (contents) => {
-      if (contents === "restored") throw new Error("database is from a newer app (schema 9)");
+      if (contents === "restored") throw error();
       return 1;
     };
     expect((await createDatabase()).kind).toBe("ready");
