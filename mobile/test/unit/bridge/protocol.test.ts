@@ -426,6 +426,19 @@ describe("protocol", () => {
         data: "A".repeat(1_398_108),
       }),
     ],
+    [
+      "exportBinary data of many megabytes (must drop, not throw)",
+      JSON.stringify({
+        v: 1,
+        type: "exportBinary",
+        exportId: "e",
+        name: "abcdef123456",
+        index: 0,
+        total: 1,
+        files: 1,
+        data: "A".repeat(8_000_000),
+      }),
+    ],
     ...[
       ["a path in the name", { name: "../abcdef123456" }],
       ["a dot in the name", { name: "ab.tile" }],

@@ -6,9 +6,11 @@ const fingerprint = z.string().regex(/^[0-9a-f]{64}$/);
 const shortName = z.string().min(1).max(255);
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/);
 // Unpadded or ragged input would make the decoded size depend on the decoder, so the byte cap below could not be exact.
+// A flat character class plus a length check: a repeated-group regex overflows the stack on multi-megabyte input.
 const base64Data = z
   .string()
-  .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/);
+  .regex(/^[A-Za-z0-9+/]*={0,2}$/)
+  .refine((s) => s.length % 4 === 0, "base64 must be padded to a multiple of 4");
 
 function base64Bytes(s: string): number {
   const pad = s.endsWith("==") ? 2 : s.endsWith("=") ? 1 : 0;
