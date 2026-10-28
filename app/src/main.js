@@ -641,10 +641,10 @@
     }));
   }
 
+  const HEIGHTS_WAIT_MS = 60000;
   // The editor shows the previewed line at once, with a distance and time but no climb; heights
   // arrive later and refine it unless the route was edited meanwhile; Send waits for them, so the watch never gets the flat line.
   // The wait is bounded: heights that come after it are dropped, and the flat route settles.
-  const HEIGHTS_WAIT_MS = 60000;
   async function adoptRoute({ wps, coords }) {
     let token;
     try {

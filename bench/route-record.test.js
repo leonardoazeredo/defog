@@ -246,7 +246,10 @@ function fresh(opts) { return new RouteTool(global.fakeMap(), opts || {}); }
   // adoptRoute lives in main.js, which Node cannot load, so read its source: a heights request that never answers would hold Send forever
   const fs = require("node:fs");
   const mainJs = fs.readFileSync(require("node:path").join(__dirname, "..", "app", "src", "main.js"), "utf8");
-  const body = mainJs.slice(mainJs.indexOf("async function adoptRoute"), mainJs.indexOf("function setSeg"));
+  const start = mainJs.indexOf("async function adoptRoute");
+  const end = mainJs.indexOf("function setSeg");
+  assert.ok(start >= 0 && end > start, "the adoptRoute slice is found");
+  const body = mainJs.slice(start, end);
   assert.match(body, /Elevation\.within\(elevation\.elevationAt\(coords\), HEIGHTS_WAIT_MS, \[\]\)/, "the heights wait is bounded");
   assert.match(body, /finally \{[\s\S]*route\.settleFixedRoute\(token\)/, "the route settles in the finally");
 
