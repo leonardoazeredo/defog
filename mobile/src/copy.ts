@@ -45,6 +45,8 @@ export const COPY = {
   passphraseLabel: "Passphrase",
   passphraseConfirmLabel: "Repeat the passphrase",
   passphraseTooShort: "Use at least 8 characters.",
+  passphraseRawKey:
+    "Choose a different passphrase. This one is read as a raw key, not as a passphrase.",
   passphraseMismatch: "The two passphrases differ.",
   noEncryption: "No encryption",
   save: "Save",

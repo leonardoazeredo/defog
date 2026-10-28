@@ -206,22 +206,56 @@ it("ignores clicks that are not on a link", () => {
   expect(sent).toEqual([]);
 });
 
-// Only a link click is intercepted here. A form submit or a location assignment would reach the WebView as a navigation that
-// navigationPolicy alone can stop, and its answer can arrive late (#138). So the page must never make one; fail here when
-// that changes.
-it("app/ has no form and assigns no location, so only a link click can leave the page", () => {
+// Only a link click is intercepted here. A form submit, a location assignment or a meta refresh would reach the WebView as a
+// navigation that navigationPolicy alone can stop, and its answer can arrive late (#138). So nothing the page loads may
+// make one; fail here when that changes. index.html, src/ and vendor/ are scanned: a vendored library could navigate on
+// its own. The patterns are plain text matches, so an unrelated `.submit(` or `location =` in vendored code is also a hit.
+const NAVIGATION_PATTERNS: [string, RegExp][] = [
+  ["a <form>", /<form[\s>]/i],
+  [
+    "a location assignment",
+    /\blocation(\.(href|assign|replace))?\s*=[^=]|\blocation\.(assign|replace)\(/,
+  ],
+  ["a meta refresh", /<meta[^>]*http-equiv\s*=\s*["']?refresh/i],
+  ["a formaction", /\bformaction\b/i],
+  [".submit()", /\.submit\s*\(/],
+];
+
+// file (relative to app/) -> pattern label -> why that hit cannot leave the origin.
+const ALLOWED: Record<string, Record<string, string>> = {};
+
+function appFiles(dir: string, prefix: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory()
+      ? appFiles(resolve(dir, e.name), `${prefix}${e.name}/`)
+      : /\.(js|html)$/.test(e.name)
+        ? [`${prefix}${e.name}`]
+        : [],
+  );
+}
+
+it("index.html, src/ and vendor/ cannot navigate except by a link click", () => {
   const root = resolve(import.meta.dirname, "../../../app");
-  const files = [
-    resolve(root, "index.html"),
-    ...readdirSync(resolve(root, "src"))
-      .filter((f) => f.endsWith(".js"))
-      .map((f) => resolve(root, "src", f)),
-  ];
+  const files = appFiles(root, "").filter((f) => f === "index.html" || /^(src|vendor)\//.test(f));
+  expect(files).toContain("index.html");
+  expect(files.some((f) => f.startsWith("vendor/"))).toBe(true);
   for (const f of files) {
-    const src = readFileSync(f, "utf8");
-    expect(src, f).not.toMatch(/<form[\s>]/i);
-    expect(src, f).not.toMatch(
-      /\blocation(\.(href|assign|replace))?\s*=[^=]|\blocation\.(assign|replace)\(/,
-    );
+    const src = readFileSync(resolve(root, f), "utf8");
+    for (const [label, re] of NAVIGATION_PATTERNS) {
+      if (ALLOWED[f]?.[label]) continue;
+      expect(src, `${f} has ${label}`).not.toMatch(re);
+    }
   }
+});
+
+it("each navigation pattern matches its own sample", () => {
+  const samples: Record<string, string> = {
+    "a <form>": "<form action=x>",
+    "a location assignment": "location.href = 'x'",
+    "a meta refresh": '<meta http-equiv="refresh" content="0;url=x">',
+    "a formaction": '<button formaction="x">',
+    ".submit()": "f.submit()",
+  };
+  for (const [label, re] of NAVIGATION_PATTERNS)
+    expect(re.test(samples[label] ?? ""), label).toBe(true);
 });
