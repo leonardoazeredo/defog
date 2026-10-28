@@ -24,7 +24,7 @@ class StagingStore(
   fun stage(id: String, bytes: ByteArray) {
     requireId(id)
     if (!dir.isDirectory) {
-      check(dir.mkdirs()) { "cannot create the staging directory" }
+      if (!dir.mkdirs()) throw IOException("cannot create the staging directory")
       // The new directory's own entry lives in its parent; without this a power loss after the
       // first stage can take the whole directory, and the watch has already deleted its copy.
       syncDir(dir.parentFile!!)
@@ -46,20 +46,24 @@ class StagingStore(
   fun list(): List<String> =
     dir.listFiles().orEmpty()
       .map { it.name }
-      .filter { it.endsWith(BIN) && ID.matches(it.removeSuffix(BIN)) }
+      .filter { it.endsWith(BIN) && UUID_ID.matches(it.removeSuffix(BIN)) }
       .map { it.removeSuffix(BIN) }
       .sorted()
 
-  /** Null for an absent, oversized or unauthenticated item; an unreadable file still throws. */
+  /**
+   * Null only for an absent item. An oversized or unauthenticated one throws UnreadableItemException,
+   * so a caller can tell an item it may never read from one that is not there.
+   */
   @Synchronized
   fun read(id: String): ByteArray? {
     requireId(id)
     val file = File(dir, "$id$BIN")
-    if (!file.exists() || file.length() > MAX_FRAME_BYTES + OVERHEAD_BYTES) return null
+    if (!file.exists()) return null
+    if (file.length() > MAX_FRAME_BYTES + OVERHEAD_BYTES) throw UnreadableItemException()
     return try {
       KeyWrap(key, id).unwrap(file.readBytes())
     } catch (e: AEADBadTagException) {
-      null
+      throw UnreadableItemException(e)
     }
   }
 
@@ -73,15 +77,28 @@ class StagingStore(
     }
   }
 
-  private fun requireId(id: String) = require(ID.matches(id)) { "invalid staging id" }
+  private fun requireId(id: String) = require(UUID_ID.matches(id)) { "invalid staging id" }
 
   private companion object {
     const val BIN = ".bin"
     // IV (12) and GCM tag (16), see KeyWrap.
     const val OVERHEAD_BYTES = 28
-    // The id becomes a file name and arrives from watch frames and from JS. The RFC form; it matches
-    // zod's uuid() except that the nil and max UUIDs are rejected here. A looser match would stage
-    // items that pendingActivities then skips.
-    val ID = Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}")
   }
 }
+
+/**
+ * A staged item that is there but can never be read under this key: too large, tampered with, moved
+ * to another id, or sealed under a staging key that was since replaced. An IOException, so
+ * `readStagedActivities` counts it like a file it cannot read.
+ */
+class UnreadableItemException(cause: Throwable? = null) :
+  IOException("the staged item cannot be read", cause)
+
+/**
+ * The id becomes a file name and arrives from watch frames and from JS. The RFC form; it matches
+ * zod 4's uuid() except that the nil and max UUIDs are rejected. Frames checks the same form, so a
+ * frame it accepts is never one this store refuses, and a looser match would stage items that
+ * pendingActivities then skips.
+ */
+internal val UUID_ID =
+  Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}")

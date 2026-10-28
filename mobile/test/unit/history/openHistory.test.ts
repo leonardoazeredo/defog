@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import type { SqlDriver } from "../../../src/db/driver.js";
-import { type OpenHistoryDeps, openHistory } from "../../../src/db/openHistory.js";
+import { NotADatabaseError, type SqlDriver } from "../../../src/db/driver.js";
+import { checkedKeyHex } from "../../../src/db/keyHex.js";
+import {
+  type OpenHistoryDeps,
+  openHistory,
+  wrongKeyAsKeyLost,
+} from "../../../src/db/openHistory.js";
 
 const driver = (): SqlDriver => ({
   exec: vi.fn(),
@@ -15,7 +20,7 @@ function deps(over: Partial<OpenHistoryDeps> = {}): OpenHistoryDeps {
   const db = driver();
   return {
     keyState: async () => "existing",
-    getDatabaseKeyHex: async () => "ab".repeat(32),
+    getDatabaseKeyHex: async () => checkedKeyHex("ab".repeat(32)),
     databaseExists: () => true,
     resetKeys: vi.fn(async () => {}),
     openDriver: vi.fn(async () => db),
@@ -47,7 +52,7 @@ describe("openHistory", () => {
   });
 
   it("reports a lost key state without asking for the key", async () => {
-    const get = vi.fn(async () => "ab".repeat(32));
+    const get = vi.fn(async () => checkedKeyHex("ab".repeat(32)));
     const d = deps({ keyState: async () => "lost", getDatabaseKeyHex: get });
     expect((await openHistory(d)).kind).toBe("keyLost");
     expect(get).not.toHaveBeenCalled();
@@ -65,7 +70,7 @@ describe("openHistory", () => {
         }),
         getDatabaseKeyHex: async () => {
           order.push("key");
-          return "ab".repeat(32);
+          return checkedKeyHex("ab".repeat(32));
         },
       });
       expect((await openHistory(d)).kind).toBe("ready");
@@ -75,7 +80,7 @@ describe("openHistory", () => {
   }
 
   it("reports an unreadable key without asking for it while a database file exists", async () => {
-    const get = vi.fn(async () => "ab".repeat(32));
+    const get = vi.fn(async () => checkedKeyHex("ab".repeat(32)));
     const d = deps({ keyState: async () => "unreadable", getDatabaseKeyHex: get });
     expect((await openHistory(d)).kind).toBe("keyLost");
     expect(get).not.toHaveBeenCalled();
@@ -136,5 +141,47 @@ describe("openHistory", () => {
     });
     await expect(openHistory(d)).rejects.toThrow("bad");
     expect(db.close).toHaveBeenCalled();
+  });
+
+  it("rejects with the migration's error, not the close's, when both fail", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const db = driver();
+    db.close = vi.fn(async () => {
+      throw new TypeError("closed twice");
+    });
+    const d = deps({
+      openDriver: async () => db,
+      migrate: async () => {
+        throw new Error("bad");
+      },
+    });
+    await expect(openHistory(d)).rejects.toThrow("bad");
+    expect(warn).toHaveBeenCalledWith(expect.any(String), "TypeError");
+    warn.mockRestore();
+  });
+
+  it("opens a database file that exists while keyState reads existing", async () => {
+    const d = deps({ databaseExists: () => true });
+    expect((await openHistory(d)).kind).toBe("ready");
+    expect(d.resetKeys).not.toHaveBeenCalled();
+  });
+
+  it("opens with no database file while keyState reads existing", async () => {
+    const d = deps({ databaseExists: () => false });
+    expect((await openHistory(d)).kind).toBe("ready");
+    expect(d.resetKeys).not.toHaveBeenCalled();
+  });
+});
+
+describe("wrongKeyAsKeyLost", () => {
+  it("reads a key that does not open the file as a lost key", () => {
+    expect(wrongKeyAsKeyLost(new NotADatabaseError("file is not a database"))).toEqual({
+      kind: "keyLost",
+    });
+  });
+
+  it("passes any other failure on", () => {
+    const e = new Error("disk full");
+    expect(() => wrongKeyAsKeyLost(e)).toThrow(e);
   });
 });

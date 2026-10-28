@@ -1,4 +1,5 @@
 import WatchLink, { type KeyState, type WatchLinkNativeEvents } from "../../modules/watch-link";
+import { checkedKeyHex, type DatabaseKeyHex } from "../db/keyHex.js";
 
 export type { KeyState, WatchLinkNativeEvents };
 
@@ -7,33 +8,45 @@ export class KeyLostError extends Error {
   override name = "KeyLostError";
 }
 
+/**
+ * The native side could not reach the key (a busy Keystore, a failed read or write); unlike
+ * `KeyLostError` it says nothing about whether the key is still there.
+ */
+export class KeyUnavailableError extends Error {
+  override name = "KeyUnavailableError";
+}
+
+// The two codes from `ModuleFailures.kt` that keyCall maps; any other passes through.
+const ERR_KEY_LOST = "ERR_KEY_LOST";
+const ERR_KEY_UNAVAILABLE = "ERR_KEY_UNAVAILABLE";
+
 const KEY_STATES: readonly string[] = ["fresh", "existing", "lost", "unreadable"];
 
-export async function getDatabaseKeyHex(): Promise<string> {
-  let hex: string;
+async function keyCall<T>(call: () => Promise<T>): Promise<T> {
   try {
-    hex = await WatchLink.getDatabaseKeyHex();
+    return await call();
   } catch (e) {
-    if (e instanceof Error && (e as { code?: unknown }).code === "ERR_KEY_LOST") {
-      throw new KeyLostError("database key is lost", { cause: e });
+    const code = e instanceof Error ? (e as { code?: unknown }).code : undefined;
+    if (code === ERR_KEY_LOST) throw new KeyLostError("database key is lost", { cause: e });
+    if (code === ERR_KEY_UNAVAILABLE) {
+      throw new KeyUnavailableError("cannot reach the database key", { cause: e });
     }
     throw e;
   }
-  return checkedKeyHex(hex);
 }
 
-function checkedKeyHex(hex: string): string {
-  // The key is spliced into PRAGMA key with no bound parameter, so anything but 64 lowercase hex digits is refused rather than reaching SQL: a key read from native, and a generated one before native keeps it.
-  if (!/^[0-9a-f]{64}$/.test(hex)) throw new Error("malformed database key");
-  return hex;
+export async function getDatabaseKeyHex(): Promise<DatabaseKeyHex> {
+  return checkedKeyHex(await keyCall(() => WatchLink.getDatabaseKeyHex()));
 }
 
 /**
  * Keeps `keyHex` as the database key in place of a lost or unreadable one; the native side refuses
- * unless the key state reads `lost` or `unreadable`.
+ * unless `keyState` reads `lost` or `unreadable`. The key is checked again because a cast can get
+ * any string past the type.
  */
-export async function replaceLostDatabaseKeyHex(keyHex: string): Promise<void> {
-  await WatchLink.replaceLostDatabaseKey(checkedKeyHex(keyHex));
+export async function replaceLostDatabaseKey(keyHex: DatabaseKeyHex): Promise<void> {
+  const checked = checkedKeyHex(keyHex);
+  await keyCall(() => WatchLink.replaceLostDatabaseKey(checked));
 }
 
 /**
@@ -41,7 +54,7 @@ export async function replaceLostDatabaseKeyHex(keyHex: string): Promise<void> {
  * while the live database or a restore's replaced copy exists, or the key state reads `existing`.
  */
 export async function resetKeys(): Promise<void> {
-  await WatchLink.resetKeys();
+  await keyCall(() => WatchLink.resetKeys());
 }
 
 /** The system save-as picker; null when the user backs out. */
@@ -76,7 +89,7 @@ export async function copyFromUri(
 }
 
 export async function keyState(): Promise<KeyState> {
-  const state = await WatchLink.keyState();
+  const state = await keyCall(() => WatchLink.keyState());
   if (!KEY_STATES.includes(state)) throw new Error("watch link returned an unknown key state");
   return state;
 }

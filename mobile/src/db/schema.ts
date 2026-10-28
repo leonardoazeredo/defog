@@ -80,7 +80,7 @@ export async function migrate(db: SqlDriver): Promise<number> {
     const [row] = await tx.all<{ user_version: number }>("PRAGMA user_version");
     const current = row?.user_version ?? 0;
     if (current > MIGRATIONS.length) {
-      throw new Error(`database is from a newer app (schema ${current})`);
+      throw new Error(`database is from a newer app (schema ${current}); update the app`);
     }
     for (let v = current; v < MIGRATIONS.length; v++) {
       const step = MIGRATIONS[v] as Migration;

@@ -14,6 +14,7 @@ import { type DatabaseFiles, LIVE_DB, type ReplaceDeps } from "../../src/backup/
 import type { Scratch } from "../../src/backup/types.js";
 import type { SqlDriver } from "../../src/db/driver.js";
 import { createGate, type Gate } from "../../src/db/gate.js";
+import { checkedKeyHex } from "../../src/db/keyHex.js";
 import { migrate } from "../../src/db/schema.js";
 import { createFogStore, type FogStore } from "../../src/fog/store.js";
 import { createActivityStore } from "../../src/history/activityStore.js";
@@ -94,9 +95,9 @@ export async function createHarness(opts: { free?: number } = {}): Promise<Harne
           db = createNodeSqliteDriver(join(sqliteDir, LIVE_DB));
           await migrate(db);
         },
-        databaseKeyHex: async () => "ab".repeat(32),
+        databaseKeyHex: async () => checkedKeyHex("ab".repeat(32)),
         keyState: async () => "existing" as const,
-        newDatabaseKeyHex: () => "cd".repeat(32),
+        newDatabaseKeyHex: () => checkedKeyHex("cd".repeat(32)),
         replaceLostDatabaseKey: async () => {},
         isKeyLost: (e) => e instanceof Error && e.name === "KeyLostError",
         openFile: async (name) => createNodeSqliteDriver(join(sqliteDir, name)),

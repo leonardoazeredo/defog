@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { NotADatabaseError } from "../../../src/db/driver.js";
+import { checkedKeyHex, type DatabaseKeyHex } from "../../../src/db/keyHex.js";
 import {
   createExpoSqliteDriver,
   createOpenBackup,
   type ExpoDb,
 } from "../../../src/platform/expoSqliteDriver.js";
 
-const KEY = "ab".repeat(32);
+const KEY = checkedKeyHex("ab".repeat(32));
 const PRAGMA = `PRAGMA key = "x'${KEY}'"`;
 
 // Records each statement per connection, in order, so a test can see what each connection ran first.
@@ -74,7 +75,8 @@ describe("expo sqlite driver", () => {
     await expect(
       createExpoSqliteDriver({
         name: "x.db",
-        keyHex: `${KEY}"; DROP`,
+        // Only a cast gets an unchecked string past the type; the driver checks it again.
+        keyHex: KEY.concat(`"; DROP`) as DatabaseKeyHex,
         open: async () => fakeDb(log),
       }),
     ).rejects.toThrow(/64 hex/);
@@ -153,10 +155,29 @@ describe("expo sqlite driver", () => {
       };
       return db;
     };
-    await expect(
-      createExpoSqliteDriver({ name: "x.db", keyHex: KEY, open: wrongKey }),
-    ).rejects.toThrow("file is not a database");
+    const err = await createExpoSqliteDriver({ name: "x.db", keyHex: KEY, open: wrongKey }).catch(
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(NotADatabaseError);
+    expect(err.message).toBe("file is not a database");
+    expect(err.cause.message).toBe("file is not a database");
     expect(log[0]?.at(-1)).toBe("close");
+  });
+
+  it("passes on as itself a failure that is not a wrong key", async () => {
+    const log: string[][] = [];
+    const busy = new Error("database is locked");
+    const locked = async () => {
+      const db = fakeDb(log);
+      db.getAllAsync = async <T>(sql: string) => {
+        if (sql.startsWith("SELECT")) throw busy;
+        return [{}] as T[];
+      };
+      return db;
+    };
+    await expect(createExpoSqliteDriver({ name: "x.db", keyHex: KEY, open: locked })).rejects.toBe(
+      busy,
+    );
   });
 });
 

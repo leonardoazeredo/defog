@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { migrate } from "../../../src/db/schema.js";
 import { createMemoryRouteStore } from "../../../src/history/memoryStores.js";
 import { createRouteStore } from "../../../src/history/routeStore.js";
-import type { RouteStore } from "../../../src/history/types.js";
+import { type RouteStore, UnknownRouteError } from "../../../src/history/types.js";
 import { createNodeSqliteDriver } from "../../support/nodeSqliteDriver.js";
 import { route } from "./fixtures.js";
 
@@ -64,7 +64,10 @@ describe.each(impls)("route store (%s)", (_name, make) => {
   });
 
   it("refuses to mark an unknown route sent", async () => {
-    await expect((await make()).markSent(route().id)).rejects.toThrow(/unknown route/);
+    const err = await (await make()).markSent(route().id).catch((e) => e);
+    expect(err).toBeInstanceOf(UnknownRouteError);
+    expect(err.message).toBe("unknown route");
+    expect(err.id).toBe(route().id);
   });
 
   it("clears sentAt when the route is saved again", async () => {

@@ -6,6 +6,7 @@ import {
   type SqlTx,
   type SqlValue,
 } from "../db/driver.js";
+import type { DatabaseKeyHex } from "../db/keyHex.js";
 
 /** The slice of expo-sqlite's `SQLiteDatabase` the driver uses; a transaction connection has the same one. */
 export interface ExpoDb {
@@ -18,7 +19,7 @@ export interface ExpoDb {
 
 export interface ExpoSqliteDriverOptions {
   name: string;
-  keyHex: string;
+  keyHex: DatabaseKeyHex;
   open?: (name: string) => Promise<ExpoDb>;
 }
 
@@ -99,7 +100,15 @@ export async function createExpoSqliteDriver(opts: ExpoSqliteDriverOptions): Pro
     await db.getAllAsync("SELECT count(*) FROM sqlite_master", []);
     await db.execAsync("PRAGMA journal_mode = WAL");
   } catch (e) {
-    await db.closeAsync().catch(() => undefined);
+    await db.closeAsync().catch((closeError: unknown) => {
+      console.warn(
+        "crossfog: database close failed",
+        closeError instanceof Error ? closeError.name : "unknown",
+      );
+    });
+    if (e instanceof Error && /not a database/i.test(e.message)) {
+      throw new NotADatabaseError("file is not a database", { cause: e });
+    }
     throw e;
   }
 

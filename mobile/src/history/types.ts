@@ -14,8 +14,22 @@ export type ActivityDetail = Omit<Activity, "gpx">;
 
 export type StoredRoute = RouteRecord & { sentAt?: string };
 
-/** What a list shows; the geometry and the file stay behind `get`. */
-export type RouteSummary = Omit<StoredRoute, "waypoints" | "coords" | "gpx">;
+/**
+ * What a list shows; the geometry and the file stay behind `get`. Picked, not omitted, so a field
+ * added to RouteRecord stays out of lists until it is named here.
+ */
+export type RouteSummary = Pick<
+  StoredRoute,
+  "id" | "createdAt" | "mode" | "travelMode" | "targetDistanceM" | "stats" | "sentAt"
+>;
+
+/** `markSent` for an id the store does not hold; the id is a property, never in the message. */
+export class UnknownRouteError extends Error {
+  override name = "UnknownRouteError";
+  constructor(readonly id: string) {
+    super("unknown route");
+  }
+}
 
 export interface ActivityStore {
   /** Idempotent by id: a known id changes nothing and reports `stored: false`. */

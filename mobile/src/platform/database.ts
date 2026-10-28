@@ -7,7 +7,7 @@ import {
   recoverInterruptedReplace,
 } from "../backup/replace.js";
 import { createGate } from "../db/gate.js";
-import { type HistoryDatabase, openHistory } from "../db/openHistory.js";
+import { type HistoryDatabase, openHistory, wrongKeyAsKeyLost } from "../db/openHistory.js";
 import { migrate } from "../db/schema.js";
 import { createDatabaseFiles } from "./backupPlatform.js";
 import { createExpoSqliteDriver } from "./expoSqliteDriver.js";
@@ -39,16 +39,24 @@ export function createDatabase(): Promise<HistoryDatabase> {
         migrate,
         isKeyLostError: (e) => e instanceof KeyLostError,
       });
-    if (recovered) return open();
-    // First open of the process: a replaced copy still beside the live file means a restore did not finish,
-    // so it is kept until the live file has opened and migrated, and comes back if opening throws (a key-lost result leaves it beside the live file).
+    if (recovered) return open().catch(wrongKeyAsKeyLost);
+    // First open of the process: a replaced copy still beside the live file means a restore did not
+    // finish, so it is kept until the live file has opened and migrated. If the live file's open
+    // returns key-lost, the copy stays beside it. If that open throws anything (a busy Keystore
+    // included), the live file and its sidecars are deleted and the copy is moved back onto the
+    // live path and opened instead, so the old file still gets its chance; a file that will not
+    // open with the key (NotADatabaseError: a wrong key or no database) then reads as key-lost.
+    // With no copy, such a file reads as key-lost at once and any other throw rejects as itself.
     let history: HistoryDatabase;
     try {
       history = await open();
     } catch (e) {
-      if (!files.exists(REPLACED_DB)) throw e;
-      putBackReplacedCopy(files);
-      history = await open();
+      if (!files.exists(REPLACED_DB)) {
+        history = wrongKeyAsKeyLost(e);
+      } else {
+        putBackReplacedCopy(files);
+        history = await open().catch(wrongKeyAsKeyLost);
+      }
     }
     recovered = true;
     if (history.kind === "ready") discardReplacedCopy(files);
