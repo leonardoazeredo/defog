@@ -100,8 +100,38 @@ function fresh(opts) { return new RouteTool(global.fakeMap(), opts || {}); }
   assert.deepEqual(rec.coords.map((c) => c[0]), [-170, -169]);
 }
 
-// no record while the line is only a guess: routing in flight, or failed
+// heights still on the way: no record to send until they land, are given up on, or the route is cleared
 (async () => {
+  const flat = { km: 0.7, seconds: 520, ascent: null, descent: null };
+  let changes = 0;
+  const tool = fresh({ onChange: () => { changes++; } });
+  const token = tool.setFixedRoute(pins, C, flat, { refining: true });
+  assert.equal(tool.routeRecord(), null, "the flat route is not sent while its heights are pending");
+  assert.equal(tool.refineFixedRoute(token, C, stats), true);
+  assert.ok(tool.routeRecord(), "refined route can be sent");
+  assert.equal(tool.routeRecord().stats.ascentM, 3.5);
+
+  const t2 = fresh({ onChange: () => { changes++; } });
+  const tok2 = t2.setFixedRoute(pins, C, flat, { refining: true });
+  const before = changes;
+  assert.equal(t2.settleFixedRoute(tok2), true, "heights never came: settle with the flat route");
+  assert.ok(t2.routeRecord(), "settled route can be sent");
+  assert.ok(changes > before, "settling tells the send control");
+  assert.equal(t2.settleFixedRoute(tok2 + 1), false, "a stale token settles nothing");
+
+  const t3 = fresh();
+  const tok3 = t3.setFixedRoute(pins, C, flat, { refining: true });
+  t3.clear();
+  assert.equal(t3.settleFixedRoute(tok3), false);
+  assert.equal(t3.routeRecord(), null, "cleared");
+  const t5 = fresh({ onChange: () => { throw new Error("boom"); } });
+  assert.throws(() => t5.setFixedRoute(pins, C, flat, { refining: true }));
+  assert.ok(t5.routeRecord(), "a failed hand-over leaves no pending block behind");
+  const t4 = fresh();
+  t4.setFixedRoute(pins, C, flat); // no heights expected: sendable at once
+  assert.ok(t4.routeRecord());
+})().then(async () => {
+  // no record while the line is only a guess: routing in flight, or failed
   const tool = fresh();
   let release;
   tool.routeWaypoints = () => new Promise((r) => { release = r; });
@@ -118,4 +148,4 @@ function fresh(opts) { return new RouteTool(global.fakeMap(), opts || {}); }
   assert.equal(tool.routeRecord(), null, "a straight-line fallback is not a route to send");
 
   console.log("route-record.test.js ok");
-})();
+});
