@@ -25,7 +25,7 @@ const cellOf = (tx, ty, bx, by, x, y) => [(tx << 13) + (bx << 6) + x, (ty << 13)
 const pairs = (cells) => Int32Array.from(cells.flat());
 const sameBytes = (a, b) => assert.deepEqual(Array.from(a), Array.from(b));
 
-{ // addCells: the cells show, the total grows by their number, repeats add nothing, the version moves
+{ // addCells: the cells show, the total grows by their number, repeats add nothing, the version moves only when cells were added
   const map = new FogMap();
   const cells = [cellOf(10, 20, 3, 4, 5, 6), cellOf(10, 20, 3, 4, 6, 6), cellOf(11, 20, 0, 0, 0, 0)];
   const v0 = map.version;
@@ -38,7 +38,7 @@ const sameBytes = (a, b) => assert.deepEqual(Array.from(a), Array.from(b));
   const v1 = map.version;
   assert.equal(map.addCells(pairs([cells[1]])), 0, "a cell the overlay already holds");
   assert.equal(map.totalVisited(), 3);
-  assert.ok(map.version > v1, "version moves on every call");
+  assert.equal(map.version, v1, "nothing added, so caches built on the fog stay valid");
   const d = cellOf(10, 20, 3, 4, 7, 6);
   assert.equal(map.addCells(pairs([d, d, cells[1]])), 1, "a repeat inside one call counts once");
   assert.equal(map.totalVisited(), 4);
@@ -60,8 +60,22 @@ const sameBytes = (a, b) => assert.deepEqual(Array.from(a), Array.from(b));
 }
 { // out-of-world cells are ignored, not counted
   const map = new FogMap();
+  const v = map.version;
   assert.equal(map.addCells(pairs([[-1, 0], [0, 4194304], [4194304, 5]])), 0);
   assert.equal(map.totalVisited(), 0);
+  assert.equal(map.version, v);
+  assert.equal(map.latLngBounds(), null, "an ignored cell does not stretch the bounds");
+}
+{ // the world's corner cells and the last cell of a block, tile and world are kept, each on its own bit
+  const map = new FogMap();
+  const W = 4194304;
+  const corners = [[0, 0], [W - 1, 0], [0, W - 1], [W - 1, W - 1], cellOf(3, 3, 0, 0, 63, 0), cellOf(3, 3, 0, 0, 0, 63), cellOf(3, 3, 127, 127, 63, 63)];
+  assert.equal(map.addCells(pairs(corners)), corners.length);
+  for (const [cx, cy] of corners) assert.equal(map.isVisitedCell(cx, cy), true, `${cx},${cy}`);
+  const [lx, ly] = cellOf(3, 3, 127, 127, 63, 63);
+  assert.equal(map.isVisitedCell(lx + 1, ly), false, "the next tile over");
+  assert.equal(map.isVisitedCell(lx - 1, ly), false);
+  assert.equal(map.countVisitedInCellRect(0, 0, W, W), corners.length);
 }
 { // clearOverlay removes the overlay cells and keeps the import
   const map = new FogMap();
@@ -147,6 +161,45 @@ const sameBytes = (a, b) => assert.deepEqual(Array.from(a), Array.from(b));
   const got = Array.from(map.blocks());
   assert.deepEqual(got.map((b) => [b.bx, b.by]), [[2, 1]]);
   sameBytes(got[0].extra, [0, 0, 0]);
+}
+{ // a rect across two blocks and across two tiles counts imported and overlay cells on each side
+  const map = new FogMap();
+  map.addTile(nameOf(idOf(5, 6)), tileBytes([{ bx: 127, by: 0, cells: [[62, 0], [63, 0]] }, { bx: 126, by: 0, cells: [[63, 0]] }]));
+  map.addCells(pairs([cellOf(6, 6, 0, 0, 0, 0), cellOf(6, 6, 0, 0, 1, 0), cellOf(5, 6, 126, 0, 62, 0)]));
+  const [x, y] = cellOf(5, 6, 127, 0, 63, 0);
+  const rect = (x0, x1) => map.countVisitedInCellRect(x0, y, x1, y + 1);
+  assert.equal(rect(x, x + 2), 2, "the last cell of tile 5 and the first of tile 6");
+  assert.equal(rect(x - 1, x + 3), 4, "two cells each side of the tile edge");
+  assert.equal(rect(x - 65, x - 63), 2, "the last two cells of the block before, one overlay, one imported");
+  assert.equal(rect(x - 64, x - 62), 1, "across the block edge: the imported cell before it, nothing after");
+  assert.equal(rect(x - 66, x + 3), 6);
+}
+{ // a tile whose header points past its data is refused, naming the tile, and the map stays as it was
+  const map = new FogMap();
+  const good = tileBytes([{ bx: 0, by: 0, cells: [[0, 0]] }, { bx: 1, by: 0, cells: [[0, 0]] }]);
+  const pastBlocks = good.slice();
+  new DataView(pastBlocks.buffer).setUint16(2, 3, true);
+  for (const [label, data] of [
+    ["shorter than the header", good.subarray(0, HEADER - 2)],
+    ["last block cut short", good.subarray(0, good.length - 1)],
+    ["header index past the blocks", pastBlocks],
+  ]) {
+    assert.throws(() => map.addTile(nameOf(idOf(7, 8)), data), (e) => e instanceof Error && e.message.includes(String(idOf(7, 8))), label);
+    assert.equal(map.tileCount, 0, label);
+    assert.equal(map.tiles.size, 0, label);
+    assert.equal(map.version, 0, label);
+  }
+  assert.equal(map.addTile(nameOf(idOf(7, 8)), good), true);
+  const trailing = new Uint8Array(good.length + 7);
+  trailing.set(good);
+  assert.equal(map.addTile(nameOf(idOf(7, 9)), trailing), true, "bytes after the last block are not an error");
+}
+{ // the same tile loaded twice is one tile: the second copy replaces the first
+  const map = new FogMap();
+  map.addTile(nameOf(idOf(1, 1)), tileBytes([{ bx: 0, by: 0, cells: [[0, 0]] }]));
+  map.addTile(nameOf(idOf(1, 1)), tileBytes([{ bx: 0, by: 0, cells: [[0, 0], [1, 0]] }]));
+  assert.equal(map.tileCount, 1);
+  assert.equal(map.totalVisited(), 2);
 }
 { // addTile moves the version too
   const map = new FogMap();

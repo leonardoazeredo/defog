@@ -70,30 +70,34 @@ function oracle(a, b, lat0, h, pad) {
 }
 
 // a gap reveals nothing between ends further apart than 2 * halfWidthM; both ends still reveal
+for (const [name, dtMs, metres] of [["120 s", 120000, 100], ["60.001 s", 60001, 100], ["151 m", 5000, 151]]) {
+  const lat = 48, lon0 = 11;
+  const far = lon0 + lonShift(lat, metres);
+  const got = toSet(Reveal.reveal(track([[lon0, lat], [far, lat]], dtMs)));
+  assert.ok(got.has(key(cellOf(lon0, lat))), name + " start");
+  assert.ok(got.has(key(cellOf(far, lat))), name + " end");
+  assert.ok(!got.has(key(cellOf((lon0 + far) / 2, lat))), name + " midpoint");
+}
+
+// closer than 2 * halfWidthM the two discs of a gap meet, so the midpoint of a short gap is revealed
+{
+  const lat = 48, lon0 = 11;
+  const near = [[lon0, lat], [lon0 + lonShift(lat, 5), lat]];
+  assert.ok(toSet(Reveal.reveal(track(near, 120000))).has(key(cellOf(lon0 + lonShift(lat, 2.5), lat))));
+}
+
+// maxGapS and maxGapM themselves join: 60 s apart, and 150 m apart (the flat frame gives just under 150 m here, so the limit itself is tested)
 {
   const lat = 48, lon0 = 11;
   const a = [lon0, lat], b = [lon0 + lonShift(lat, 100), lat];
-  const mid = cellOf(lon0 + lonShift(lat, 50), lat);
-  for (const [name, pts] of [
-    ["120 s", track([a, b], 120000)],
-    ["60.001 s", track([a, b], 60001)],
-    ["distance", track([[lon0, lat], [lon0 + lonShift(lat, 151), lat]], 5000)],
-  ]) {
-    const got = toSet(Reveal.reveal(pts));
-    const far = pts[1].lon;
-    assert.ok(got.has(key(cellOf(pts[0].lon, lat))), name + " start");
-    assert.ok(got.has(key(cellOf(far, lat))), name + " end");
-    const midOfPair = cellOf((pts[0].lon + far) / 2, lat);
-    assert.ok(!got.has(key(midOfPair)), name + " midpoint");
-  }
-  // closer than 2 * halfWidthM the two discs meet, so the midpoint of a short gap is revealed
-  const near = [[lon0, lat], [lon0 + lonShift(lat, 5), lat]];
-  assert.ok(toSet(Reveal.reveal(track(near, 120000))).has(key(cellOf(lon0 + lonShift(lat, 2.5), lat))));
-  // the limits themselves join
-  assert.ok(toSet(Reveal.reveal(track([a, b], 60000))).has(key(mid)));
-  const c = [lon0 + lonShift(lat, 148), lat];
-  assert.ok(toSet(Reveal.reveal(track([a, c], 5000))).has(key(cellOf((a[0] + c[0]) / 2, lat))));
-  // a gap in the middle of a longer track splits it into two runs
+  assert.ok(toSet(Reveal.reveal(track([a, b], 60000))).has(key(cellOf(lon0 + lonShift(lat, 50), lat))), "60 s");
+  const c = [lon0 + lonShift(lat, 150), lat];
+  assert.ok(toSet(Reveal.reveal(track([a, c], 5000))).has(key(cellOf((a[0] + c[0]) / 2, lat))), "150 m");
+}
+
+// a gap in the middle of a longer track splits it into two runs
+{
+  const lat = 48, lon0 = 11;
   const p = [0, 50, 100, 400, 450, 500].map((m) => [lon0 + lonShift(lat, m), lat]);
   const t = track(p).map((q, i) => ({ ...q, t: 1e12 + i * 5000 + (i >= 3 ? 300000 : 0) }));
   const got = toSet(Reveal.reveal(t));
@@ -157,13 +161,16 @@ for (const [lon, lat] of [[151.2, -33.9], [-74.0, 40.7], [-151.2, -33.9], [0.000
   assert.deepEqual([...got].sort(), [...want].sort(), `${lon},${lat}`);
 }
 
-// crossing the antimeridian is a gap; the ends still reveal, and the disc wraps around the world edge
+// crossing the antimeridian is a gap; the ends still reveal, and only their discs
 {
-  const t = track([[179.9999, 0], [-179.9999, 0]]);
-  const got = toSet(Reveal.reveal(t));
+  const got = toSet(Reveal.reveal(track([[179.9999, 0], [-179.9999, 0]])));
   assert.ok(got.has(key(cellOf(179.9999, 0))));
   assert.ok(got.has(key(cellOf(-179.9999, 0))));
-  // the ends are 22 m apart, under 2 * halfWidthM, so their discs meet across the seam; the gap rule itself is pinned by the maxGapM override below
+  assert.ok(got.size < 2000);
+}
+
+// a disc at the antimeridian wraps around the world edge
+{
   const seam = toSet(Reveal.reveal(track([[179.99995, 0]])));
   const row = cellOf(179.99995, 0)[1];
   // the cell west of the seam holds the point; cell 0 lies 10.3 m east of it across the seam, inside 12 m
@@ -171,12 +178,14 @@ for (const [lon, lat] of [[151.2, -33.9], [-74.0, 40.7], [-151.2, -33.9], [0.000
   assert.ok(seam.has("0," + row));
   assert.ok(!seam.has("1," + row), "cell 1 is 19.9 m away");
   for (const k of seam) { const [x, y] = k.split(",").map(Number); assert.ok(x >= 0 && x < WORLD_CELLS && y >= 0 && y < WORLD_CELLS); }
-  // the rule holds on its own, not only through the distance limit
+}
+
+// the antimeridian gap holds on its own, not only through the distance limit
+{
   const loose = { ...Reveal.RULES, maxGapM: 1e9 };
   assert.ok(toSet(Reveal.reveal(track([[179.9999, 0], [-179.9999, 0]]), loose)).size < 2000);
   // 2 degrees apart across the seam but 358 apart in longitude: two discs, not a band round the world
   assert.ok(toSet(Reveal.reveal(track([[179, 10], [-179, 10]], 1000))).size < 2000);
-  assert.ok(got.size < 2000);
 }
 
 // the poles: latitudes clamp, nothing throws, cells stay inside the grid
@@ -290,6 +299,28 @@ for (const [lon, lat] of [[151.2, -33.9], [-74.0, 40.7], [-151.2, -33.9], [0.000
   // 90 degrees apart is under the 180 limit, so only the distance limit applies
   const wide = toSet(Reveal.reveal(track([[0, 0], [90, 0]]), { ...Reveal.RULES, maxGapM: 1e9 }));
   assert.ok(wide.has(key(cellOf(45, 0))));
+}
+
+// a long track pushes more keys than the 2^20 that reveal() buffers before it compacts, so the compaction runs; the answer
+// is the same as two halves short enough not to compact, merged, and its size is the swath's area in cells
+{
+  const halfWidthM = 50, stepM = 5, lengthM = 100000;
+  const rules = { ...Reveal.RULES, halfWidthM };
+  const pts = [];
+  // rising 1 km over the 100 km so the swath crosses cell rows and its cell count averages out to its area
+  for (let m = 0; m <= lengthM; m += stepM) pts.push([lonShift(0, m), latShift(m / 100)]);
+  const t = track(pts, 1000);
+  const whole = Reveal.reveal(t, rules);
+  const mid = pts.length >> 1;
+  const merged = new Set([...toSet(Reveal.reveal(t.slice(0, mid + 1), rules)), ...toSet(Reveal.reveal(t.slice(mid), rules))]);
+  assert.deepEqual(toSet(whole), merged);
+  const cellM = 2 * Math.PI * R / WORLD_CELLS;
+  const area = 2 * halfWidthM * Math.hypot(lengthM, lengthM / 100) + Math.PI * halfWidthM * halfWidthM;
+  const cells = whole.length / 2;
+  assert.ok(Math.abs(cells - area / (cellM * cellM)) / (area / (cellM * cellM)) < 0.01, `${cells} cells for ${Math.round(area / (cellM * cellM))}`);
+  // each segment pushes about 90 keys before dedupe: 20000 segments pass the 2^20 threshold, 10000 stay under it
+  const perSegment = (Math.PI * halfWidthM * halfWidthM + 2 * halfWidthM * stepM) / (cellM * cellM);
+  assert.ok((pts.length - 1) * perSegment > 1.5 * (1 << 20) && mid * perSegment < 0.9 * (1 << 20));
 }
 
 // empty and degenerate input

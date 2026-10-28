@@ -12,6 +12,7 @@ const { FogMap, parseTileId, MAP_WIDTH } = global.FogParser;
 const { MD5, FogWriter } = global;
 const pako = require("../app/vendor/pako_deflate.min.js");
 global.pakoDeflate = pako; // what pakoDeflate.js does in the page, so writeSync's default deflate works
+global.pako = require("../app/vendor/pako_inflate.min.js"); // the build the page leaves in window.pako, which writeSync reads its files back with
 const deflate5 = (buf) => pako.deflate(buf, { level: 5 });
 
 const HEADER = 32768, BLOCK = 515;
@@ -37,6 +38,15 @@ const sameBytes = (a, b, msg) => assert.ok(Buffer.compare(Buffer.from(a), Buffer
   }
   assert.equal(FogWriter.tileName(7), MD5.hex("7").slice(0, 4) + "t" + "n");
   assert.equal(FogWriter.tileName(100), MD5.hex("100").slice(0, 4) + "loo" + "ee");
+}
+{ // one-digit ids (the top row's first ten tiles) read back as themselves, not as 0
+  for (const id of [0, 7, 9, 10, 11, 99, 100, 512 * 512 - 1]) assert.equal(parseTileId(FogWriter.tileName(id)), id, `id ${id}`);
+  assert.equal(FogWriter.tileName(0), MD5.hex("0").slice(0, 4) + "o" + "e");
+  assert.equal(FogWriter.tileName(10), MD5.hex("10").slice(0, 4) + "lo" + "ie");
+  for (const bad of [-1, 512 * 512, 1.5, NaN, "12"]) assert.throws(() => FogWriter.tileName(bad), RangeError, String(bad));
+  // too short to hold one digit, or a number outside the world: not a tile
+  for (const name of ["", "abcd", "abcdx", "abcdl"]) assert.equal(parseTileId(name), null, JSON.stringify(name));
+  assert.equal(parseTileId("0000" + "hkhljj" + "xx"), null, "262144 is past the last tile");
 }
 for (const [name, id] of FIXTURES) { // a tile Fog of World wrote comes back byte for byte
   const file = fs.readFileSync(path.join(FIX, name));
@@ -154,6 +164,75 @@ function cellsOf(files) {
   assert.throws(() => FogWriter.writeSync(map), /index|order|pako/i);
   delete global.pakoDeflate;
   try { assert.throws(() => FogWriter.writeSync(map), /pako/i); } finally { global.pakoDeflate = pako; }
+}
+{ // writeTile refuses blocks the format cannot hold, rather than writing a tile Fog of World would misread
+  const bitmap = new Uint8Array(512);
+  bitmap[0] = 0x80;
+  const ok = { bx: 3, by: 4, bitmap, extra: null };
+  assert.equal(FogWriter.writeTile([ok, { ...ok, bx: 4, extra: Uint8Array.of(1, 2, 3) }]).length, HEADER + 2 * BLOCK);
+  for (const [label, block] of [
+    ["short bitmap", { ...ok, bitmap: bitmap.subarray(0, 511) }],
+    ["bx past the tile", { ...ok, bx: 128 }],
+    ["negative by", { ...ok, by: -1 }],
+    ["fractional bx", { ...ok, bx: 1.5 }],
+    ["empty extra", { ...ok, extra: new Uint8Array(0) }],
+    ["short extra", { ...ok, extra: Uint8Array.of(1, 2) }],
+  ]) assert.throws(() => FogWriter.writeTile([block]), RangeError, label);
+  assert.throws(() => FogWriter.writeTile([ok, { ...ok }]), RangeError, "the same block twice");
+}
+{ // a tile stored out of header order is written in header order, every cell and region bit in place
+  const data = new Uint8Array(HEADER + 2 * BLOCK);
+  const dv = new DataView(data.buffer);
+  dv.setUint16((3 * 128 + 7) * 2, 1, true);
+  dv.setUint16(2 * 2, 2, true);
+  data[HEADER] = 0x01;
+  data.set([0x40, 0x00, 0x03], HEADER + 512); // region bits 0x100, one cell
+  data[HEADER + BLOCK + 511] = 0x01;
+  data.set([0x80, 0x40, 0x03], HEADER + BLOCK + 512);
+  const map = new FogMap();
+  map.addTile("0000" + "ll" + "xx", data);
+  const [file] = FogWriter.writeSync(map);
+  const bytes = inflateBytes(file);
+  const out = new DataView(bytes.buffer);
+  assert.equal(out.getUint16(2 * 2, true), 1, "block (2, 0) is stored first now");
+  assert.equal(out.getUint16((3 * 128 + 7) * 2, true), 2);
+  assert.equal(bytes[HEADER + 511], 0x01);
+  assert.equal(E(bytes.subarray(HEADER + 512, HEADER + 515)) >> 14, E([0x80, 0x40, 0x03]) >> 14);
+  assert.equal(bytes[HEADER + BLOCK], 0x01);
+  assert.equal(E(bytes.subarray(HEADER + BLOCK + 512, HEADER + BLOCK + 515)) >> 14, E([0x40, 0x00, 0x03]) >> 14);
+  const back = cellsOf([file]);
+  assert.equal(back.totalVisited(), 2);
+}
+{ // writeSync reads back what it wrote: a deflate that loses, changes or garbles bytes fails the export, naming the tile
+  const map = new FogMap();
+  map.addCells(pairs([cellOf(1, 1, 0, 0, 0, 0)]));
+  const id = String(idOf(1, 1));
+  const named = (e) => e instanceof Error && e.message.includes(`tile ${id}`);
+  assert.throws(() => FogWriter.writeSync(map, { deflate: (b) => deflate5(b.subarray(0, b.length - 1)) }), named, "a byte lost");
+  assert.throws(() => FogWriter.writeSync(map, { deflate: (b) => { const c = b.slice(); c[HEADER] ^= 1; return deflate5(c); } }), named, "a bit flipped");
+  assert.throws(() => FogWriter.writeSync(map, { deflate: () => Uint8Array.of(1, 2, 3) }), named, "not zlib at all");
+  // the check inflates with the pako build the page loads, or opts.inflate
+  assert.equal(FogWriter.writeSync(map, { deflate: deflate5, inflate: (b) => new Uint8Array(zlib.inflateSync(b)) }).length, 1);
+  const parked = global.pako;
+  delete global.pako;
+  try {
+    assert.throws(() => FogWriter.writeSync(map), /pako/i);
+  } finally { global.pako = parked; }
+}
+{ // the MD5 constants are written out, so an engine whose Math.sin rounds differently still names tiles right
+  const vm = require("node:vm");
+  const ctx = vm.createContext({ window: {}, TextEncoder, Math: Object.assign(Object.create(Math), { sin: (x) => Math.sin(x) * (1 + 1e-9) }) });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "app", "src", "md5.js"), "utf8"), ctx);
+  assert.equal(ctx.window.MD5.hex("117660"), crypto.createHash("md5").update("117660").digest("hex"));
+}
+{ // pakoDeflate.js parks the deflate build, and refuses at load when what it finds cannot deflate
+  const vm = require("node:vm");
+  const src = fs.readFileSync(path.join(__dirname, "..", "app", "src", "pakoDeflate.js"), "utf8");
+  const load = (pakoGlobal) => { const win = { pako: pakoGlobal }; vm.runInContext(src, vm.createContext({ window: win })); return win; };
+  assert.equal(load(pako).pakoDeflate, pako);
+  for (const [label, wrong] of [["missing", undefined], ["the inflate build", { inflate: () => null }]]) {
+    assert.throws(() => load(wrong), /pako_deflate/, label);
+  }
 }
 { // both pako builds assign window.pako: unzip.js and main.js need the inflate build to be the one left in place
   const html = fs.readFileSync(path.join(__dirname, "..", "app", "index.html"), "utf8");

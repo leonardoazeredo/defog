@@ -222,7 +222,7 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
       rebuild();
       page.fogChanged();
     } else if (restored.length > 0) {
-      // only the ones restored now: addCells bumps the fog version even when it adds nothing
+      // only the ones restored now: the others' cells are in the overlay already
       let added = 0;
       for (const cells of restored) added += page.fogMap.addCells(cells);
       if (added > 0) page.fogChanged();
