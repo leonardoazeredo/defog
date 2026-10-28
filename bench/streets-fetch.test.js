@@ -886,6 +886,8 @@ async function testCase(body) {
     } });
     const wrapped = await new StreetIndex(handing(StreetIndex.downloadError(1, 1, bug, 1))).ensureRects(rect, "run").then(() => "resolved", (e) => e);
     assert.equal(wrapped, bug, "the bug is the rejection, as itself");
+    const silent = { newFrac: () => 1, fetchStreets: async () => { throw StreetIndex.downloadError(0, 1, bug, 0); } };
+    assert.equal(await new StreetIndex(silent).ensureRects(rect, "run").then(() => "resolved", (e) => e), bug, "also when a tile is missing");
     const logged = [], orig = console.warn;
     console.warn = (...a) => logged.push(a);
     try {

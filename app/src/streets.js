@@ -384,12 +384,12 @@
           if (!cacheOnly && !StreetIndex.isDownloadError(e) && !STREET_REASONS.has(e && e.reason)) throw e;
           if (broke) throw broke;
           if (cacheOnly) throw e;
+          // a bug wrapped in a download error is thrown as itself, whether or not every tile arrived
+          if (StreetIndex.isDownloadError(e) && e.cause && !STREET_REASONS.has(e.cause.reason)) throw e.cause;
           // a deadline raised on an earlier answer while the open requests landed the rest loses
           // nothing: the call is whole. A replaced run still rejects, so its caller does no more work.
           // the source keeps its first stop, so a replacement that came after a failure is told here
           if (tiles.some((t) => !read.has(tid(t))) || (e && e.reason === "superseded")) throw short(stale() ? superseded() : e);
-          // a bug wrapped in a download error would otherwise be dropped with the outages below
-          if (StreetIndex.isDownloadError(e) && e.cause && !STREET_REASONS.has(e.cause.reason)) throw e.cause;
           // nothing this call asked for is missing, so its failure is not the run's to show, but a source that
           // fails after handing every tile is worth seeing; not for a replaced run (never logged). The class
           // and the street reason (download errors are all Error) only, as a message can name a tile

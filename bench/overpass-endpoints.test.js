@@ -384,6 +384,13 @@ const realFetch = global.fetch;
     const e = await rejection(Overpass.post("data=x"));
     assert.equal(e.reason, "server", "every endpoint answered something that is no answer");
   }
+  { // 15d. the parser's SyntaxError quotes the body; none of that text reaches the error a caller reads
+    reset({ key: null });
+    global.fetch = routed({ [M]: () => Promise.resolve({ ok: true, status: 200, headers: headers(), json: async () => { throw new SyntaxError("Unexpected token '<', \"<html>PORTAL-TEXT\" is not valid JSON"); } }) });
+    const e = await rejection(Overpass.post("data=x"));
+    assert.equal(e.reason, "server");
+    assert.ok(!/PORTAL|html/.test(e.message + e.cause.message), e.message);
+  }
   { // 15c. every post throws its own error: a held endpoint's stored error is the cause, so a second post
     //      setting its reason and retryAt cannot change what the first one's caller reads later
     reset({ key: null });

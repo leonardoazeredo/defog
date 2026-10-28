@@ -112,15 +112,18 @@
       // because WebKit rejects with a DOMException named SyntaxError. Anything else is the body
       // stopping (our abort, a dropped connection), and both count as a stall: an endpoint that
       // keeps cutting answers off is as useless as a silent one.
-      return { status: res.status, error: e, kind: !ctrl.signal.aborted && e.name === "SyntaxError" ? "notJson" : "stall" };
+      const syntax = e.name === "SyntaxError";
+      // V8's SyntaxError message quotes the body, which is the server's text and must not reach a
+      // message, after our abort as well as before it
+      return { status: res.status, error: syntax ? new Error("overpass: the answer is not JSON") : e, kind: !ctrl.signal.aborted && syntax ? "notJson" : "stall" };
     } finally {
       Overpass._clearTimeout(timer);
     }
   }
 
-  // Resolves with the JSON of the first endpoint, in order, whose body parses. Rejects with the
-  // error that earned the reason, carrying `reason` and `retryAt`. When the endpoints disagree the
-  // first reason in this list wins, most actionable first. The reasons: blocked, a 406 was seen or an
+  // Resolves with the JSON of the first endpoint, in order, whose body parses. Rejects with a fresh
+  // error that copies the message and name of the error that earned the reason (kept as `cause`),
+  // carrying `reason` and `retryAt`. When the endpoints disagree the first reason in this list wins, most actionable first. The reasons: blocked, a 406 was seen or an
   // endpoint is held after one; busy, 429, 502 or 504; stalled, no answer or a body that stopped;
   // offline, the browser says so, or every fetch failed and no status was seen; server, anything
   // else. The endpoints this post asked speak first: an endpoint skipped as held gives the reason
@@ -190,14 +193,12 @@
     const cause = winner && winner.error;
     const err = cause ? Object.assign(new Error(cause.message), { name: cause.name, cause }) : new Error("overpass: no endpoint to ask");
     err.reason = reason;
-    // a held endpoint's error is thrown again by later posts, so a retry time from an earlier one must go
     const held = urls.map(stateOf).filter((s) => s.until > Overpass._now());
     // a 406 is this network's daily cap and BLOCKED_ADVICE tells the person to try tomorrow, so a
     // blocked retryAt is the block's own end, even when another endpoint's hold ends sooner; the
     // streets layer waits for it
     const until = held.filter((s) => reason !== "blocked" || s.why === "blocked").map((s) => s.until);
     if (held.length === urls.length) err.retryAt = Math.min(...until);
-    else delete err.retryAt;
     throw err;
   }
 
