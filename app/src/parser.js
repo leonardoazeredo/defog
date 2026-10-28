@@ -197,6 +197,9 @@
       return added;
     }
 
+    // an import loaded, or any explored cell from activities: the one test for "there is fog to show or plan on"
+    hasFog() { return this.tileCount > 0 || this.overlay.size > 0; }
+
     clearOverlay() {
       this.overlay = new Map();
       this.bounds = null;

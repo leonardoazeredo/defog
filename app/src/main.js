@@ -93,7 +93,7 @@
   // shown in the streets' own colour while Streets in fog is on.
   const streetsStat = $("streetsStat"), streetsPct = $("streetsPct");
   function updateStreetsStat() {
-    let show = streetsMode() && fogMap.tileCount > 0;
+    let show = streetsMode() && fogMap.hasFog();
     if (show) {
       const s = streetsLayer.statsInView(map.getBounds());
       const total = s.leftM + s.doneM;
@@ -215,7 +215,7 @@
   window.addEventListener("load", updateFowButton);
   function updateDefog() {
     updateFowButton();
-    if (!fogMap.tileCount) { hintEl.style.display = ""; defogEl.style.display = "none"; return; }
+    if (!fogMap.hasFog()) { hintEl.style.display = ""; defogEl.style.display = "none"; return; }
     hintEl.style.display = "none"; defogEl.style.display = "flex";
     // Exact count of defogged cells in the visible Mercator rectangle / total cells in it.
     // (Counting real cells, not a sampled grid, so tiny world-view fractions stay accurate.)
@@ -370,7 +370,7 @@
   // What this route would defog: new area (cells in the clear-corridor) + the share of the
   // route's LENGTH that runs through never-visited ground.
   function computeGain(coords) {
-    if (!fogMap.tileCount || coords.length < 2) return null;
+    if (!fogMap.hasFog() || coords.length < 2) return null;
     const cellM = cellMetersAt(coords[Math.floor(coords.length / 2)][1]);
     const r = Math.max(1, Math.round(DEFOG_HALF_M / cellM));
     const seen = new Set(); let newCells = 0;
@@ -488,7 +488,7 @@
     profile,
     routeWaypoints: RouteLocal.create({ streets, plannerFor: (p) => suggest.plannerFor(p), elevation, estimates: Estimates, streetKind: SuggestTool.streetKind }),
     isNew: cellIsNew,                       // colour the path: new ground vs already defogged
-    fogReady: () => fogMap.tileCount > 0,
+    fogReady: () => fogMap.hasFog(),
     onWaypoints: renderWps,
     onChange: (s) => {
       sendControl.update();
@@ -538,7 +538,7 @@
   });
 
   function syncSug() {
-    const fogLoaded = fogMap.tileCount > 0;
+    const fogLoaded = fogMap.hasFog();
     sugGo.disabled = suggest.pointCount() < suggest.pointsNeeded() || !fogLoaded;
     sugFogHint.style.display = fogLoaded ? "none" : "";
   }
@@ -748,6 +748,7 @@
   // stamp their graph with fogMap.version and rebuild on their own.
   function fogChanged() {
     if (fogLayer) fogLayer.redraw();
+    else if (fogMap.hasFog()) ensureLayer(); // activities alone, no import: the first cells create the layer
     streets.invalidateFrac();
     streetsLayer.invalidateFog();
     updateDefog();
