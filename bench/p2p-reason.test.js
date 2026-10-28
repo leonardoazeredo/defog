@@ -17,7 +17,7 @@ function streetsWith(ways) {
   return s;
 }
 async function run(streets, a, b, profile = "hiking-mountain") {
-  const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => null, streets });
+  const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0, hasFog: () => false }, computeGain: () => null, streets });
   tool.mode = "p2p"; tool.a = pin(...a); tool.b = pin(...b);
   let last = null;
   tool.onResults = (s) => { if (s && !s.loading) last = s; };
@@ -47,7 +47,7 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]]]
     // newer run started), and the failure it ends with is neither emitted nor logged
     const s = streetsWith(street);
     s.tiles.clear();
-    const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => null, streets: s });
+    const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0, hasFog: () => false }, computeGain: () => null, streets: s });
     tool.mode = "p2p"; tool.a = pin(0, 0); tool.b = pin(1000, 0);
     let handed = null;
     s.ensureRects = async (rects, kind, opts) => {
@@ -79,7 +79,7 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]]]
   { // a bug thrown while the run is stale is not shown (a newer run replaced it) but its class is logged
     const s = streetsWith(street);
     s.tiles.clear();
-    const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => null, streets: s });
+    const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0, hasFog: () => false }, computeGain: () => null, streets: s });
     tool.mode = "p2p"; tool.a = pin(0, 0); tool.b = pin(1000, 0);
     s.ensureRects = async () => { tool._runId++; throw new TypeError("cannot read tile 273:1020"); };
     const seen = [], logged = [], orig = console.error;
@@ -96,7 +96,7 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]]]
       for (const t of tiles) onTile(t, { ways: [], groups: {} });
       return new Map();
     } });
-    const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => null, streets: s });
+    const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0, hasFog: () => false }, computeGain: () => null, streets: s });
     tool.mode = "p2p"; tool.a = pin(0, 0); tool.b = pin(1000, 0);
     tool.onResults = (st) => states.push(st);
     await tool.suggest("hiking-mountain", { buffer: 0.15 });
@@ -129,7 +129,7 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]]]
     assert.equal(r.reason, "too-far");
   }
   { // one graph per travel class: walk and shortest share one, each wheeled class has its own
-    const t = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => null, streets: streetsWith(street) });
+    const t = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0, hasFog: () => false }, computeGain: () => null, streets: streetsWith(street) });
     assert.equal(t.plannerFor("shortest"), t.plannerFor("hiking-mountain"));
     assert.notEqual(t.plannerFor("trekking"), t.plannerFor("fastbike"));
     assert.notEqual(t.plannerFor("trekking"), t.plannerFor("hiking-mountain"));
@@ -137,7 +137,7 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]]]
   { // a loop longer than the street download can cover says so, without downloading anything
     const st = streetsWith(street);
     st.ensureRects = async () => { throw new Error("must not download"); };
-    const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => null, streets: st });
+    const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0, hasFog: () => false }, computeGain: () => null, streets: st });
     tool.mode = "loop"; tool.a = pin(0, 0);
     let last = null;
     tool.onResults = (x) => { if (x && !x.loading) last = x; };

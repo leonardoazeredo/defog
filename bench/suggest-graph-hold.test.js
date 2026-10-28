@@ -20,7 +20,7 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]],
 
 (async () => {
   const s = streetsWith(street);
-  const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => ({ area: 1, newPct: 1 }), streets: s });
+  const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0, hasFog: () => false }, computeGain: () => ({ area: 1, newPct: 1 }), streets: s });
   tool.mode = "p2p"; tool.a = pin(0, 0); tool.b = pin(1000, 0);
   const route = global.LocalRouter.prototype.route;
   const seen = [];
@@ -49,7 +49,7 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]],
   assert.equal(after.held, false);
 
   { // a run cancelled while it holds a graph lets go of it
-    const t = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => ({ area: 1, newPct: 1 }), streets: streetsWith(street) });
+    const t = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0, hasFog: () => false }, computeGain: () => ({ area: 1, newPct: 1 }), streets: streetsWith(street) });
     t.mode = "p2p"; t.a = pin(0, 0); t.b = pin(1000, 0);
     let held = null;
     const orig = t._route;
@@ -59,7 +59,7 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]],
   }
   { // an older run that ends while a newer one plans leaves the newer run's graph held
     const st = streetsWith(street);
-    const t = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => ({ area: 1, newPct: 1 }), streets: st });
+    const t = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0, hasFog: () => false }, computeGain: () => ({ area: 1, newPct: 1 }), streets: st });
     t.mode = "p2p"; t.a = pin(0, 0); t.b = pin(1000, 0);
     let openOld, openNew;
     const oldGate = new Promise((r) => { openOld = r; }), newGate = new Promise((r) => { openNew = r; });

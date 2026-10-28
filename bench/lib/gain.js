@@ -32,7 +32,7 @@ function makeGain(fogMap, FogParser) {
   }
 
   function computeGain(coords) {
-    if (!fogMap.tileCount || coords.length < 2) return null;
+    if (!fogMap.hasFog() || coords.length < 2) return null;
     const cellM = cellMetersAt(coords[Math.floor(coords.length / 2)][1]);
     const r = Math.max(1, Math.round(DEFOG_HALF_M / cellM));
     const seen = new Set(); let newCells = 0;

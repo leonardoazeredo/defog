@@ -178,7 +178,7 @@
   // Share of never-visited cells within ~100 m of a point, used to steer candidates
   // away from ground the user has already covered.
   SuggestTool.prototype._newness = function (latlng) {
-    if (!this.fogMap.tileCount) return 1;
+    if (!this.fogMap.hasFog()) return 1;
     const cellM = (40075016.686 / FogParser.WORLD_CELLS) * Math.cos(latlng.lat * Math.PI / 180);
     const r = Math.min(15, Math.max(2, Math.round(100 / cellM)));
     const c = FogParser.lngLatToCell(latlng.lng, latlng.lat);
