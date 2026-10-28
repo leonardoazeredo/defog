@@ -83,5 +83,31 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]],
     await newer;
     assert.equal(t._hold, null);
   }
+  { // loop mode holds its graph too: a street another run merges mid-run reaches the editor, not the loop's graph
+    const st = streetsWith(street.concat([[5, [3, 6], [1000, 0], [1000, 300]], [6, [6, 4], [1000, 300], [0, 300]]]));
+    const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0, hasFog: () => false }, computeGain: () => ({ area: 1, newPct: 1 }), isNew: () => true, streets: st });
+    tool.mode = "loop"; tool.a = pin(0, 0);
+    const held = [];
+    let editor = null, injected = false;
+    const graphFor = tool._graphFor;
+    tool._graphFor = function (...a) {
+      const p = graphFor.apply(this, a);
+      if (p) held.push([p, p.held]);
+      if (p && !injected) {
+        injected = true;
+        st._addWay({ id: 9, nodes: [3, 9], geometry: [ll(1000, 0), ll(1500, 0)] });
+        st.version++;
+        editor = tool.plannerFor("hiking-mountain");
+        editor.build();
+      }
+      return p;
+    };
+    await tool.suggest("hiking-mountain", { distM: 3000, buffer: 0.15 });
+    assert.ok(held.length > 0 && editor, "the loop run planned on a held graph");
+    assert.ok(held.every(([p, isHeld]) => p === held[0][0] && isHeld === true), "one held graph for the whole loop run");
+    assert.notEqual(editor, held[0][0], "the editor is not handed the loop's graph");
+    assert.equal(tool._hold, null, "released when the run ends");
+    assert.equal(held[0][0].held, false);
+  }
   console.log("suggest-graph-hold: ok");
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -147,5 +147,38 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]]]
     assert.equal(last.empty, true);
     assert.equal(last.reason, "too-long");
   }
+  { // the loading state carries waitUntil while a busy server is waited out, and has none on a plain count
+    const s = streetsWith(street);
+    s.tiles.clear();
+    const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0, hasFog: () => false }, computeGain: () => null, streets: s });
+    tool.mode = "p2p"; tool.a = pin(0, 0); tool.b = pin(1000, 0);
+    s.ensureRects = async (rects, kind, opts) => {
+      opts.onProgress({ done: 1, total: 4, waitUntil: 99000 });
+      opts.onProgress({ done: 1, total: 4 });
+      throw StreetIndex.downloadError(1, 4, Object.assign(new Error("x"), { reason: "superseded" }));
+    };
+    const states = [];
+    tool.onResults = (st) => states.push(st);
+    await tool.suggest("hiking-mountain", { buffer: 0.15 });
+    const dl = states.filter((st) => st && st.phase === "streets");
+    assert.deepEqual(dl.map((st) => [st.done, st.total, st.waitUntil]).slice(-2), [[1, 4, 99000], [1, 4, undefined]]);
+    assert.ok(!("waitUntil" in dl[dl.length - 1]), "no waitUntil field on a plain count");
+  }
+  { // a replaced run whose download fails with a plain busy error: neither shown nor logged
+    const s = streetsWith(street);
+    s.tiles.clear();
+    const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0, hasFog: () => false }, computeGain: () => null, streets: s });
+    tool.mode = "p2p"; tool.a = pin(0, 0); tool.b = pin(1000, 0);
+    s.ensureRects = async () => {
+      tool._runId++;
+      throw StreetIndex.downloadError(0, 5, Object.assign(new Error("overpass HTTP 502"), { reason: "busy" }));
+    };
+    const seen = [], logged = [], orig = console.warn;
+    tool.onResults = (r) => seen.push(r);
+    console.warn = (...a) => logged.push(a);
+    try { await tool.suggest("hiking-mountain", { buffer: 0.15 }); } finally { console.warn = orig; }
+    assert.ok(!seen.some((r) => r && r.error), "no error state for a replaced run");
+    assert.deepEqual(logged, []);
+  }
   console.log("p2p-reason.test.js ok");
 })();
