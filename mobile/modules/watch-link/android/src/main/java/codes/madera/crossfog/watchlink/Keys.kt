@@ -109,13 +109,14 @@ class Keys(
    * Drops a lost or unreadable database key so the next `databaseKey()` mints a new one. Refuses
    * while a database file exists, which only the old key may open, and refuses a key that still
    * works or may work on a later read. A fresh state is accepted and only loses a stray `.new` file.
-   * Throws when the Keystore key cannot be deleted, since the next read would then still be lost.
+   * Throws when the Keystore key or its file survives, since the state would then not read fresh;
+   * JS gets that as an unavailable key.
    */
   fun resetKeys(): Unit = synchronized(LOCK) {
     refuseUnless(DATABASE_FILES.none { File(sqliteDir, it).exists() }) { "a database file exists" }
     val state = keyState()
     refuseUnless(state.replaceable || state == KeyState.FRESH) {
-      "the database key is neither lost nor unreadable"
+      "the database key is in the existing state"
     }
     discardDatabaseKey()
     check(presence() == KeyState.FRESH) { "the old database key could not be dropped" }

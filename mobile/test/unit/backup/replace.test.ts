@@ -189,6 +189,38 @@ describe("database replacer", () => {
     expect(kept).toEqual([]);
   });
 
+  it("rethrows a key the native side could not reach, without asking its state or minting one", async () => {
+    const unavailable = Object.assign(new Error("cannot reach the database key"), {
+      name: "KeyUnavailableError",
+    });
+    let askedState = false;
+    let minted = false;
+    const { deps, kept } = lostKeyDeps({
+      databaseKeyHex: async () => {
+        throw unavailable;
+      },
+      keyState: async () => {
+        askedState = true;
+        return "lost" as const;
+      },
+      newDatabaseKeyHex: () => {
+        minted = true;
+        return checkedKeyHex("cd".repeat(32));
+      },
+    });
+    const backup = await openedBackup();
+    let exported = false;
+    backup.exportTo = async () => {
+      exported = true;
+    };
+    await expect(createDatabaseReplacer(deps)(backup)).rejects.toBe(unavailable);
+    expect(askedState).toBe(false);
+    expect(minted).toBe(false);
+    expect(exported).toBe(false);
+    expect(kept).toEqual([]);
+    expect(target.files.exists(LIVE_DB)).toBe(true);
+  });
+
   it("keeps the new key before reopening, which reads it", async () => {
     const order: string[] = [];
     const { deps } = lostKeyDeps();

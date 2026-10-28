@@ -8,6 +8,7 @@ import { checkedKeyHex } from "../../../src/db/keyHex.js";
 const disk = new Map<string, string>();
 const opened: string[] = [];
 let openFile: (contents: string) => Promise<SqlDriver>;
+let readKey: () => Promise<string>;
 
 vi.mock("expo-file-system", () => ({
   Paths: { document: "doc" },
@@ -32,11 +33,17 @@ vi.mock("../../../src/platform/backupPlatform.js", () => ({
     },
   }),
 }));
+// Hoisted so the factory, rerun by each vi.resetModules, hands out the spy the test checks.
+const { resetKeys, KeyUnavailableError } = vi.hoisted(() => ({
+  resetKeys: vi.fn(async () => {}),
+  KeyUnavailableError: class KeyUnavailableError extends Error {},
+}));
 vi.mock("../../../src/platform/watchLinkModule.js", () => ({
   KeyLostError: class extends Error {},
+  KeyUnavailableError,
   keyState: async () => "existing",
-  getDatabaseKeyHex: async () => checkedKeyHex("ab".repeat(32)),
-  resetKeys: async () => {},
+  getDatabaseKeyHex: () => readKey(),
+  resetKeys,
 }));
 vi.mock("../../../src/platform/expoSqliteDriver.js", () => ({
   createExpoSqliteDriver: async ({ name }: { name: string }) => {
@@ -68,6 +75,7 @@ async function createDatabase() {
 }
 
 beforeEach(() => {
+  readKey = async () => checkedKeyHex("ab".repeat(32));
   disk.clear();
   opened.length = 0;
 });
@@ -110,5 +118,18 @@ describe("createDatabase with a key that does not open the file", () => {
       throw new Error("disk full");
     };
     await expect(createDatabase()).rejects.toThrow("disk full");
+  });
+
+  it("rejects, never reporting key-lost, when the native side cannot reach the key", async () => {
+    disk.set(LIVE_DB, "live");
+    resetKeys.mockClear();
+    const unavailable = new KeyUnavailableError();
+    readKey = async () => {
+      throw unavailable;
+    };
+    openFile = async () => driver();
+    await expect(createDatabase()).rejects.toBe(unavailable);
+    expect(disk.get(LIVE_DB)).toBe("live");
+    expect(resetKeys).not.toHaveBeenCalled();
   });
 });

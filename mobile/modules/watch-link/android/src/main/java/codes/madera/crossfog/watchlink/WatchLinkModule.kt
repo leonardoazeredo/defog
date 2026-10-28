@@ -124,7 +124,13 @@ class WatchLinkModule : Module() {
       block()
     } catch (e: Exception) {
       val failure = keyCallFailure(e)
-      throw CodedException(failure.code, failure.message, e)
+      // No cause is attached: a provider exception anywhere in the chain may name the file that
+      // holds the key. Keys' two exceptions are routine outcomes with fixed text, so only other
+      // classes are logged, by class name alone.
+      if (e !is KeyLostException && e !is KeyRefusedException) {
+        Log.w(TAG, "keyCall failed: ${e.javaClass.simpleName}")
+      }
+      throw CodedException(failure.code, failure.message, null)
     }
 
   private inline fun <T> coded(block: () -> T): T =
