@@ -53,6 +53,10 @@
   // are one step, and a busy answer after the third wait ends the run unless an answer lands while
   // the requests open with it are still running, so it ends the same whichever of them lands first
   const BUSY_RETRY_MS = [15000, 30000, 60000];
+  // how often a waiting run checks stale() (a busy wait, whose deadline is checked before it starts) or
+  // stale() and its deadline (a wait for another run's tile): a replaced run must not hold its tiles,
+  // or the "Streets in fog" button, until a busy wait runs out or the other run ends
+  const STALE_POLL_MS = 1000;
   // the reasons a street source fails with (Overpass.post's, "superseded" among them, which the run's
   // own stop also uses); an error with none of them is a bug, which is never worded or wrapped as a
   // failed download. The street cache keeps its own list of outages (OUTAGE_REASONS, without
@@ -66,13 +70,18 @@
     this.fetchStreets = opts.fetchStreets || StreetIndex.overpassFetch;
     this.now = opts.now || Date.now; // the clock the run deadline is measured on
     this.sleep = opts.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    // (fn, ms) -> stop: calls fn every ms until stopped, the clock a waiting run checks stale() on
+    this.every = opts.every || ((fn, ms) => { const id = setInterval(fn, ms); return () => clearInterval(id); });
     this.segs = new Map();       // "gx,gy" -> [{x,y,lon,lat,lenM,frac}]
     this.tiles = new Set();      // fetched coverage, StreetIndex.tileKey(kind, x, y)
     this.staleTiles = new Set(); // expired cached tiles a cache-only read drew from: not coverage, so a normal run fetches them again
     // ways held only because an expired copy brought them: id -> {from: the staleTiles keys of the expired copies that still list it,
     // segs: its scoring segments}. A fresh answer replaces them (see _read); a way any fresh tile brought is not here.
     this.staleWays = new Map();
-    this.onWaysChanged = null;   // called once a read has dropped or replaced ways, for a reader that drew them (the Streets in fog look)
+    // way id -> the kinds whose fresh answer dropped it: an expired copy of such a kind does not add it,
+    // since an expired copy is always older than a fresh one; a fresh answer listing the way removes it
+    this.goneWays = new Map();
+    this.onWaysChanged = null;   // called once a read has dropped or replaced ways, and once a normal run ends if the index version moved while it ran, for a reader that drew them (the Streets in fog look)
     this.wayEpoch = 0;           // bumped when a way leaves the index or is replaced, so a reader that went through `ways` once starts over
     this.wayIds = new Set();     // dedupe across overlapping fetches
     this.classIds = { bike: new Set(), road: new Set(), car: new Set() };
@@ -272,9 +281,14 @@
     for (const pos of under) this._use(pos);
     if (opts && opts.holdAs) this.holds.set(opts.holdAs, under);
     this.runs.add(under);
+    const version = this.version, notify = !(opts && opts.cacheOnly);
     const run = this._ensureRects(rects, kind, opts);
-    // the caller's promise is the run itself, so this adds no step before the caller resumes
-    const end = () => { this.runs.delete(under); };
+    // the caller's promise is the run itself, so this adds no step before the caller resumes; a normal run
+    // tells onWaysChanged once it ends if the index version moved while it ran, so a reader counting held pieces recounts
+    const end = () => {
+      this.runs.delete(under);
+      if (notify && this.version !== version && this.onWaysChanged) Promise.resolve().then(() => this.onWaysChanged());
+    };
     run.then(end, end);
     return run;
   };
@@ -297,7 +311,7 @@
     // tiles read here that were not a fresh street-cache answer (onTile's {cached: true}): what
     // downloadError takes as `arrived`
     let downloaded = 0;
-    let broke = null; // the first bug thrown by code this run drives (reading a tile, onProgress, sleep): what the run rejects with, unless the source has a bug of its own (see fetchSome's catch)
+    let broke = null; // the first bug thrown by code this run drives (reading a tile, onProgress, sleep, stale() while waiting): what the run rejects with, unless the source has a bug of its own (see fetchSome's catch)
     const progress = (waitUntil) => {
       if (!opts.onProgress) return;
       opts.onProgress(waitUntil === undefined ? { done: held + read.size, total } : { done: held + read.size, total, waitUntil });
@@ -317,7 +331,13 @@
       // the run's own superseded throw below is not
       try {
         progress(until);
-        await this.sleep(Math.max(0, until - this.now()));
+        // the wait ends early once the run goes stale (the sleep's own timer still runs out, doing nothing);
+        // a throw from stale() is a bug like sleep's
+        await new Promise((resolve, reject) => {
+          const end = (settle) => (v) => { stop(); settle(v); };
+          const stop = this.every(() => { try { if (stale()) end(resolve)(); } catch (e) { end(reject)(e); } }, STALE_POLL_MS);
+          this.sleep(Math.max(0, until - this.now())).then(end(resolve), end(reject));
+        });
         if (stale()) throw superseded();
         progress();
       } catch (e) {
@@ -417,11 +437,23 @@
       return { shared, ask };
     };
     let settled = false;
-    // Settles once every shared tile is read or given up by the run bringing it. Rejects superseded
-    // at the first one that lands after this run went stale, leaving the other run's request alone: a
-    // run that waits only on shared tiles has no other moment to notice it was replaced.
-    const waitFor = (shared) => new Promise((resolve, reject) => {
+    // Settles once every shared tile is read or given up by the run bringing it. Rejects superseded,
+    // or with the deadline, when a shared tile lands or at a check every STALE_POLL_MS, leaving the other
+    // run's request alone: the run bringing the tile may take minutes, or never deliver.
+    const waitFor = (shared) => new Promise((resolveWait, rejectWait) => {
       let left = shared.length;
+      const resolve = () => { stop(); resolveWait(); };
+      const reject = (e) => { stop(); rejectWait(e); };
+      const stop = this.every(() => {
+        if (settled) return stop();
+        try {
+          if (stale()) reject(short(superseded()));
+          else if (this.now() - started >= deadlineMs) reject(short(deadlinePassed()));
+        } catch (e) {
+          if (!broke) broke = e;
+          reject(e);
+        }
+      }, STALE_POLL_MS);
       for (const { t, entry } of shared) entry.promise.then((via) => {
         if (settled) return;
         const id = tid(t);
@@ -508,18 +540,24 @@
   //  - an expired copy adds no way a fresh tile holds, and no class or one-way flag to one, so it
   //    never overwrites fresher data;
   //  - a fresh answer of kind K replaces what an expired copy of K (and, for run, of bike) brought:
-  //    a bike answer never lists a footway, so it cannot say one is gone.
+  //    a bike answer never lists a footway, so it cannot say one is gone;
+  //  - a way a fresh answer dropped is not brought back by an expired copy of those kinds read later
+  //    (goneWays); a fresh answer listing the way again removes its entry, so two fresh answers that
+  //    disagree keep the way, since neither is known to be the newer.
   StreetIndex.prototype._read = function (answer, from) {
-    const epoch = this.wayEpoch, stale = !!(from && from.stale), key = from && StreetIndex.tileKey(from.kind, from.x, from.y);
-    const pos = from && from.x + ":" + from.y;
+    // a read with no tile could neither replace an expired way nor say which piece holds what it brings
+    if (!from) throw new TypeError("streets: _read needs the tile it reads");
+    const epoch = this.wayEpoch, stale = !!from.stale, key = StreetIndex.tileKey(from.kind, from.x, from.y);
+    const pos = from.x + ":" + from.y;
     // _dropWays below discards each replaced way's entry, so the expired copies that still list it are
     // carried into the rebuilt one: an eviction of this piece then leaves the way to them
     const carry = new Map(), freshHeld = new Set();
     try {
       // evicted before the drop below, so a way this answer lists that an evicted piece held fresh, and
       // expired copies still list, is replaced rather than kept as expired
-      if (from) { this._use(pos); this._makeRoom(); }
-      if (from && !stale) {
+      this._use(pos);
+      this._makeRoom();
+      if (!stale) {
         const mine = (from.kind === "run" ? ["run", "bike"] : [from.kind]).map((k) => StreetIndex.tileKey(k, from.x, from.y));
         const listed = new Set(answer.ways.map((w) => w.id)), out = new Set();
         for (const id of listed) {
@@ -535,8 +573,16 @@
           if (!entry.from.size) out.add(id);
         }
         this._dropWays([...out]);
+        const kinds = from.kind === "run" ? ["run", "bike"] : [from.kind];
+        for (const id of out) {
+          if (listed.has(id)) continue;
+          const gone = this.goneWays.get(id) || new Set();
+          for (const k of kinds) gone.add(k);
+          this.goneWays.set(id, gone);
+        }
+        for (const id of listed) this.goneWays.delete(id);
       }
-      this._addAnswer(answer, stale, key, freshHeld);
+      this._addAnswer(answer, stale, key, freshHeld, from.kind);
       // the evictions above cleared every evicted piece from these lists, so each tile carried is still held
       for (const [id, keys] of carry) {
         const entry = this.wayFrom.get(id);
@@ -550,11 +596,13 @@
   };
 
   // the per-way part of _read; freshHeld collects what an expired copy must not add classes to
-  StreetIndex.prototype._addAnswer = function (answer, stale, key, freshHeld) {
-    const pos = key && key.slice(key.indexOf(":") + 1); // the piece's "x:y"
+  StreetIndex.prototype._addAnswer = function (answer, stale, key, freshHeld, kind) {
+    const pos = key.slice(key.indexOf(":") + 1); // the piece's "x:y"
     for (const w of answer.ways) {
+      const gone = stale && this.goneWays.get(w.id);
+      if (gone && gone.has(kind)) { freshHeld.add(w.id); continue; } // nor its classes, below
       const held = this.staleWays.get(w.id);
-      if (held) { if (stale) held.from.add(key); } // a fresh read with a tile has dropped its listed ways above
+      if (held) { if (stale) held.from.add(key); } // a fresh read has dropped its listed ways above
       else if (stale && !this.wayIds.has(w.id)) {
         // registered before the add so a way that throws midway can still be taken out
         const entry = { from: new Set([key]), segs: [] };
@@ -566,7 +614,7 @@
         this._addWay(w);
       }
       // every piece whose answer lists the way holds it, so an eviction keeps a way another piece still lists
-      if (pos && this.wayIds.has(w.id)) {
+      if (this.wayIds.has(w.id)) {
         this.wayFrom.get(w.id).from.add(key);
         if (!this.pieceWays.has(pos)) this.pieceWays.set(pos, new Set());
         this.pieceWays.get(pos).add(w.id);

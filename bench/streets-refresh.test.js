@@ -219,5 +219,36 @@ const consistent = (s) => {
     assert.deepEqual(s.ways, [{ id: 1, nodes: [1, 2], geometry: [ll(0, 300), ll(400, 300)] }]);
     consistent(s);
   }
+  { // a fresh piece dropped a way: an expired copy of another piece, read later, does not bring it back,
+    // and a fresh answer listing it again does
+    const W = [[100, 100], [300, 100]];
+    const s = index(
+      { "548:2040": answer([way(1, [1, 2], ...W)], { road: [1] }), "549:2040": answer([way(1, [1, 2], ...W)], { road: [1] }) },
+      { "548:2040": answer([]), "549:2040": answer([way(1, [1, 2], ...W)], { bike: [1] }) });
+    await s.ensureRects([west], "run", { cacheOnly: true });
+    assert.deepEqual(wayIdsOf(s), [1]);
+    await s.ensureRects([west], "run");
+    assert.deepEqual(wayIdsOf(s), [], "the fresh piece lacks it");
+    await s.ensureRects([east], "run", { cacheOnly: true });
+    assert.deepEqual(wayIdsOf(s), [], "an older copy read later does not bring it back");
+    assert.equal(s.classIds.road.has(1), false, "nor its classes");
+    consistent(s);
+    await s.ensureRects([east], "run");
+    assert.deepEqual(wayIdsOf(s), [1], "a fresh answer that lists it brings it back");
+    assert.equal(s.usableFor("trekking")(1), true);
+    consistent(s);
+  }
+  { // what a bike answer drops says nothing about a run copy's footways
+    const W = [[100, 100], [300, 100]];
+    const s = index(
+      { "548:2040": answer([way(1, [1, 2], ...W)]), "549:2040": answer([way(1, [1, 2], ...W)]) },
+      { "548:2040": answer([]) });
+    await s.ensureRects([west], "bike", { cacheOnly: true });
+    await s.ensureRects([west], "bike");
+    assert.deepEqual(wayIdsOf(s), [], "the fresh bike piece lacks it");
+    await s.ensureRects([east], "run", { cacheOnly: true });
+    assert.deepEqual(wayIdsOf(s), [1], "an expired run copy still brings a way a bike answer dropped");
+    consistent(s);
+  }
   console.log("streets-refresh.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -106,6 +106,14 @@ function slowSource(clock, stepMs) {
   return { fetchStreets, asked };
 }
 
+// A fake for the StreetIndex `every` option ((fn, ms) -> stop), the timer a waiting run checks
+// stale() (and, waiting for another run's tile, its deadline) on: fire() runs every check now, live
+// counts the checks still set
+function ticker() {
+  const fns = new Set();
+  return { every: (fn) => { fns.add(fn); return () => fns.delete(fn); }, fire: () => [...fns].forEach((fn) => fn()), get live() { return fns.size; } };
+}
+
 // Runs one test case with its own fake fetch. Until the body installs one, fetch refuses, so a case that
 // forgets its fake fails instead of reaching the network. The original fetch is put back afterwards, also
 // when the case throws.
@@ -590,7 +598,7 @@ async function testCase(body) {
     await s.ensureRects([{ s: 51.025, w: 13.725, n: 51.05, e: 13.75 }], "run");
     let reads = 0;
     const read = s._read.bind(s);
-    s._read = (answer) => { reads++; return read(answer); };
+    s._read = (answer, from) => { reads++; return read(answer, from); };
     await s.ensureRects([{ s: 51.0, w: 13.7, n: 51.025, e: 13.75 }, { s: 51.025, w: 13.7, n: 51.05, e: 13.725 }], "run");
     assert.equal(reads, 3);
   });
@@ -1252,6 +1260,60 @@ async function testCase(body) {
       { reason: undefined, done: undefined, total: undefined, retryAt: undefined, cause: undefined });
     assert.deepEqual([StreetIndex.downloadError(0, 4, cause), new TypeError("x"), undefined].map(StreetIndex.isDownloadError),
       [true, false, false], "only a download error is worded as one");
+  });
+  await testCase(async () => { // a run replaced while it sleeps through a busy wait rejects at the next look at stale(), not when the sleep ends
+    const ticks = ticker();
+    let stale = false;
+    const fetchStreets = async (tiles, kind, onTile, opts) => { await opts.wait(opts.now() + 60000); return new Map(); };
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets, now: () => 0, sleep: () => new Promise(() => {}), every: ticks.every });
+    let err = null;
+    const run = s.ensureRects(rect, "run", { stale: () => stale }).then(() => assert.fail("expected a rejection"), (e) => { err = e; return e; });
+    await settle();
+    ticks.fire();
+    await settle();
+    assert.equal(err, null, "not replaced: it sleeps on");
+    stale = true;
+    ticks.fire();
+    assert.ok(StreetIndex.isSuperseded(await within(run)));
+    assert.equal(ticks.live, 0, "the looks stop with the wait");
+  });
+  await testCase(async () => { // a run waiting only on another run's tile notices it was replaced, or its deadline, though that tile never lands
+    for (const end of ["stale", "deadline"]) {
+      const ticks = ticker(), clock = fakeClock();
+      const one = [{ s: 51.0, w: 13.7, n: 51.02, e: 13.72 }];
+      const s = new StreetIndex({ newFrac: () => 1, fetchStreets: () => new Promise(() => {}), now: clock.now, every: ticks.every });
+      let stale = false, err = null;
+      s.ensureRects(one, "run");
+      const second = s.ensureRects(one, "run", { stale: () => stale, deadlineMs: 60000 }).then(() => assert.fail("expected a rejection"), (e) => { err = e; return e; });
+      await settle();
+      clock.t = 30000;
+      ticks.fire();
+      await settle();
+      assert.equal(err, null, end + ": still waiting");
+      if (end === "stale") stale = true; else clock.t = 60000;
+      ticks.fire();
+      const e = await within(second);
+      assert.ok(StreetIndex.isDownloadError(e), end);
+      assert.equal(e.cause.reason, end === "stale" ? "superseded" : "stalled", end);
+      assert.equal(ticks.live, 0, end + ": the looks stop with the wait");
+    }
+  });
+  await testCase(async () => { // a stale() that throws at a look while the run waits rejects as itself, a bug
+    const ticks = ticker();
+    const bug = new TypeError("stale() broke");
+    let armed = false;
+    const one = [{ s: 51.0, w: 13.7, n: 51.02, e: 13.72 }];
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: () => new Promise(() => {}), every: ticks.every });
+    s.ensureRects(one, "run");
+    const second = s.ensureRects(one, "run", { stale: () => { if (armed) throw bug; return false; } }).then(() => assert.fail("expected a rejection"), (e) => e);
+    await settle();
+    armed = true;
+    ticks.fire();
+    assert.equal(await within(second), bug);
+  });
+  await testCase(async () => { // _read needs the tile it reads: without one it throws rather than leave an expired way unreplaced
+    const s = new StreetIndex({ newFrac: () => 1 });
+    assert.throws(() => s._read({ ways: [], groups: {} }), TypeError);
   });
   console.log("streets-fetch.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });

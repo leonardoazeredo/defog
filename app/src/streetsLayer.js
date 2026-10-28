@@ -70,12 +70,14 @@
     this.runs = [];                // stretches still to do: [{ll: [[lat, lng], ...], m, s, w, n, e}]
     this.doneRuns = [];            // stretches already defogged (kept for the "% of streets in fog" readout)
     this._cursor = 0;              // how many of streets.ways have been classified
+    this._judged = new Map();      // way id -> the way object its runs were judged from
     this._wayEpoch = this.streets.wayEpoch; // the index's epoch the runs were made under
+    this._seenVersion = this.streets.version; // the index's version as the last pass started (see _indexChanged)
     this._followIndex();
     this._busy = false; this._dirty = false;
     this._missingRects = [];       // rects of the view's pieces not on the device, what the button downloads
     this._known = 0;               // how many of the view's pieces are on the device, counted done by the button's download
-    this._fetching = false;        // the button's download is running
+    this._fetching = false;        // the view the button's download runs for, or false: one winding down after a move does not hold the new view's button
     this._failure = null;          // its failure's wording, kept until the map moves
     this._view = 0;                // bumped by each move, so a download finishing late cannot word the new view
     this._tooBig = false;          // the view is past MAX_TILES
@@ -144,9 +146,15 @@
     this._restyle();
   };
 
-  // A suggestion's or a route's run can replace ways drawn here, and nothing else would repaint them.
+  // A suggestion's or a route's run can replace ways drawn here or bring pieces the badge counts missing,
+  // and nothing else would repaint them or recount it.
   StreetsInFogLayer.prototype._followIndex = function () {
-    this.streets.onWaysChanged = () => this.refresh();
+    this.streets.onWaysChanged = () => this._indexChanged();
+  };
+
+  // only when the index moved since the last pass read it: the button's own download ends in a pass already
+  StreetsInFogLayer.prototype._indexChanged = function () {
+    if (this.streets.version !== this._seenVersion) this.refresh();
   };
 
   // Recount what is on the device: once main.js swaps in the street cache, and after a run replaces ways (see _followIndex).
@@ -160,9 +168,22 @@
     if (this.enabled) this._update();
   };
 
-  // runs and cursor go together, and both are valid only for the index epoch recorded here
+  // runs, cursor and _judged go together, and all are valid only for the index epoch recorded here
   StreetsInFogLayer.prototype._rejudge = function () {
-    this.runs = []; this.doneRuns = []; this._cursor = 0;
+    this.runs = []; this.doneRuns = []; this._cursor = 0; this._judged.clear();
+    this._wayEpoch = this.streets.wayEpoch;
+  };
+
+  // The index replaced or dropped ways (a new wayEpoch): a replaced way is a new object under its id, so
+  // only the ways whose judged object is gone lose their runs, and the cursor walks the list again
+  // judging just the ways not judged as they are now. The fog has not moved, so the rest stand.
+  StreetsInFogLayer.prototype._resync = function () {
+    const live = new Map();
+    for (const w of this.streets.ways) live.set(w.id, w);
+    for (const [id, w] of this._judged) if (live.get(id) !== w) this._judged.delete(id);
+    const keep = (r) => this._judged.has(r.id);
+    this.runs = this.runs.filter(keep); this.doneRuns = this.doneRuns.filter(keep);
+    this._cursor = 0;
     this._wayEpoch = this.streets.wayEpoch;
   };
 
@@ -220,6 +241,9 @@
   StreetsInFogLayer.prototype._update = async function () {
     if (!this.enabled) return;
     const pass = ++this._pass;
+    // what _indexChanged compares, taken as the pass starts: this pass (or the one it leaves dirty) reads
+    // the index as it is now, and a change during the pass still refreshes
+    this._seenVersion = this.streets.version;
     const current = () => this.enabled && pass === this._pass;
     try {
       const tiles = this._visibleTiles();
@@ -239,7 +263,7 @@
         await this._classifyNew();
         if (!current()) return;
         this._draw();
-        if (!this._fetching) this._sayKnown(tiles.length);
+        if (this._fetching !== this._view) this._sayKnown(tiles.length);
       } finally {
         this._busy = false;
         if (this._dirty) { this._dirty = false; this._update(); }
@@ -247,7 +271,7 @@
     } catch (e) {
       // nothing here downloads, so whatever threw is a bug (the class only, messages name tiles)
       console.error("[streets layer] showing streets threw", e && e.name);
-      if (current() && !this._fetching) this._say(INTERNAL);
+      if (current() && this._fetching !== this._view) this._say(INTERNAL);
     }
   };
 
@@ -266,12 +290,12 @@
     // the download asks only for the missing pieces, but its count is the view's, as the badge's is:
     // the pieces already on the device (known) are done, so a retry shows the same total
     const rects = this._missingRects, view = this._view, known = this._known;
-    if (this._fetching || !this.enabled || this._tooBig || !rects.length || rects.length > FETCH_MAX_TILES) return;
-    this._fetching = true;
+    if (this._fetching === view || !this.enabled || this._tooBig || !rects.length || rects.length > FETCH_MAX_TILES) return;
+    this._fetching = view;
     this._failure = null;
-    // switched off or zoomed out mid-download: a late count must not replace that badge
+    // moved, switched off or zoomed out mid-download: a late count must not replace that badge
     const onProgress = ({ done, total, waitUntil }) => {
-      if (this.enabled && !this._tooBig) this._say(global.StreetMessages.progress(done + known, total + known, waitUntil, Date.now()));
+      if (view === this._view && this.enabled && !this._tooBig) this._say(global.StreetMessages.progress(done + known, total + known, waitUntil, Date.now()));
     };
     // the download belongs to the view it was tapped in: once the map moves or the look is switched off
     // it asks nothing further, so it does not keep the server busy through its busy waits
@@ -287,7 +311,7 @@
         this._failure = download ? global.StreetMessages.describe(Object.assign(facts, { done: facts.done + known, total: facts.total + known, retryAt: null })) : INTERNAL;
       }
     } finally {
-      this._fetching = false;
+      if (this._fetching === view) this._fetching = false;
     }
     await this._update();
   };
@@ -302,10 +326,14 @@
       // a throw in a later slice runs from onmessage, outside the promise: it must reject by hand
       const step = () => {
         try {
-          // a fresh answer replaced or dropped ways and the index does not say which: judge every way again
-          if (this._wayEpoch !== this.streets.wayEpoch) this._rejudge();
+          if (this._wayEpoch !== this.streets.wayEpoch) this._resync();
           const ways = this.streets.ways, t0 = performance.now();
-          while (this._cursor < ways.length && performance.now() - t0 < SLICE_MS) this._classifyWay(ways[this._cursor++]);
+          while (this._cursor < ways.length && performance.now() - t0 < SLICE_MS) {
+            const w = ways[this._cursor++];
+            if (this._judged.get(w.id) === w) continue;
+            this._judged.set(w.id, w);
+            this._classifyWay(w);
+          }
           if (this._cursor < ways.length) ch.port2.postMessage(null); else finish(resolve);
         } catch (e) { finish(reject, e); }
       };
