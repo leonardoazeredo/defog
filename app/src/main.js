@@ -57,9 +57,9 @@
   const fogMap = new FogParser.FogMap();
   let fogLayer = null;
   // The map opens on a wide view, so activity-only fog (no import, which fits in finishLoad) would sit out of sight: fit it
-  // once, but never over a pan, zoom or tap the person made themselves.
+  // once, but never over any other map move since load (a gesture, "Show on map", a waypoint): Leaflet's movestart covers them all.
   let fitted = false, mapTouched = false;
-  for (const ev of ["pointerdown", "wheel", "keydown"]) map.getContainer().addEventListener(ev, () => { mapTouched = true; }, { passive: true });
+  map.on("movestart", () => { mapTouched = true; });
   const SWATCHES = ["#2d3a4a", "#40639c", "#68509f", "#6a6f8a"]; // slate · blue · purple · blue-grey
   const WIDEN_MAX = 4;
 
@@ -763,7 +763,7 @@
       () => { if (fogLayer) fogLayer.redraw(); else if (fogMap.hasFog()) ensureLayer(); }, // activities alone, no import: the first cells create the layer
       () => {
         const b = !fitted && !mapTouched && fogMap.tileCount === 0 && fogMap.hasFog() ? fogMap.latLngBounds() : null;
-        if (b) { fitted = true; map.fitBounds(b, { padding: [20, 20] }); }
+        if (b) { fitted = true; map.fitBounds(b, { padding: [20, 20] }); mapTouched = false; } // movestart fired for our own fit
       },
       () => streets.invalidateFrac(), // the street index remembers each segment's fogged share, from the old fog
       () => streetsLayer.invalidateFog(), // streets must be judged against the fog that just arrived
@@ -772,9 +772,9 @@
       // A shown suggestion's gain numbers were scored on the old fog; only a finished result has a `list` (a run in flight emits loading states and scores on the live fog), so do not make this unconditional: clearResults would cancel the run.
       () => { if (lastSug && lastSug.list) suggest.clearResults(); }
     ];
-    for (const step of steps) {
-      try { step(); } catch (e) { console.warn("[fog] a refresh step failed:", e && e.name); }
-    }
+    steps.forEach((step, i) => {
+      try { step(); } catch (e) { console.warn(`[fog] refresh step ${i} failed:`, e && e.name); }
+    });
   }
   // `history` is the History tab the adapter feeds; `routeStatus` and `linkStatus` carry the phone's answers to the Send button.
   window.CrossfogPage = {

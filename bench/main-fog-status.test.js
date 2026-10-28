@@ -52,7 +52,7 @@ function fogScope(over) {
     streetsLayer: { invalidateFog: () => calls.push("invalidateFog") },
     updateDefog: () => calls.push("updateDefog"),
     syncSug: () => calls.push("syncSug"),
-    map: { fitBounds: () => calls.push("fitBounds") },
+    map: { fitBounds: () => { calls.push("fitBounds"); s.mapTouched = true; } }, // Leaflet fires movestart for it
     suggest: { clearResults: () => calls.push("clearResults") },
     lastSug: null,
     mapTouched: false,
@@ -99,6 +99,7 @@ for (const lastSug of [null, { loading: true }, { error: true }, { empty: true }
   const f = liftFogChanged(s);
   f(); f();
   assert.equal(calls.filter((c) => c === "fitBounds").length, 1, "activity-only fog fits the map once");
+  assert.equal(s.mapTouched, false, "our own fit does not count as the person moving the map");
 }
 {
   const { s, calls } = fogScope({ mapTouched: true });
@@ -110,6 +111,9 @@ for (const lastSug of [null, { loading: true }, { error: true }, { empty: true }
   liftFogChanged(s)();
   assert.ok(!calls.includes("fitBounds"), "an import has its own fit in finishLoad");
 }
+
+// ---- any move, including one started from the sidebar, marks the map as touched
+assert.match(src, /map\.on\("movestart", \(\) => \{ mapTouched = true; \}\)/);
 
 // ---- finishLoad hands the shared refresh to fogChanged
 {
