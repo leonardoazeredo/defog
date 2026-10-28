@@ -10,6 +10,8 @@ export interface Activity extends ActivitySummary {
   encoderVersion: string;
 }
 
+export type ActivityDetail = Omit<Activity, "gpx">;
+
 export type StoredRoute = RouteRecord & { sentAt?: string };
 
 /** What a list shows; the geometry and the file stay behind `get`. */
@@ -19,7 +21,10 @@ export interface ActivityStore {
   /** Idempotent by id: a known id changes nothing and reports `stored: false`. */
   add(activity: Activity): Promise<{ stored: boolean }>;
   list(): Promise<ActivitySummary[]>;
-  get(id: string): Promise<Activity | null>;
+  /** Everything but the GPX, so a bad GPX blob cannot hide a track that is fine. */
+  get(id: string): Promise<ActivityDetail | null>;
+  /** Inflates the GPX text on demand; rejects when the stored blob cannot be inflated. */
+  gpx(id: string): Promise<string | null>;
   delete(id: string): Promise<boolean>;
 }
 

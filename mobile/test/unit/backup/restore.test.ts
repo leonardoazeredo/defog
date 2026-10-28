@@ -164,7 +164,7 @@ describe("restore flow", () => {
     const [v] = await target.db.all<{ user_version: number }>("PRAGMA user_version");
     expect(v?.user_version).toBe(SCHEMA_VERSION);
     expect(await ids(target)).toEqual([activity().id]);
-    expect((await createActivityStore(target.db).get(activity().id))?.gpx).toBe(gpx);
+    expect(await createActivityStore(target.db).gpx(activity().id)).toBe(gpx);
     expect((await target.fogStore.current())?.name).toBe("Sync.zip");
   });
 

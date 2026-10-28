@@ -1,6 +1,6 @@
 import type { SqlDriver } from "../db/driver.js";
 import { deflateGpx, inflateGpx } from "./gpxBlob.js";
-import type { Activity, ActivityStore, ActivitySummary } from "./types.js";
+import type { ActivityDetail, ActivityStore, ActivitySummary } from "./types.js";
 
 interface Row {
   id: string;
@@ -63,16 +63,26 @@ export function createActivityStore(db: SqlDriver): ActivityStore {
     },
 
     async get(id) {
-      const [r] = await db.all<Row>("SELECT * FROM activities WHERE id = ?", [id]);
+      const [r] = await db.all<Omit<Row, "gpx_deflated">>(
+        `SELECT ${SUMMARY_COLUMNS}, track_json, received_at, encoder_version FROM activities WHERE id = ?`,
+        [id],
+      );
       if (!r) return null;
-      const full: Activity = {
+      const detail: ActivityDetail = {
         ...toSummary(r),
-        gpx: inflateGpx(r.gpx_deflated),
         track: JSON.parse(r.track_json),
         receivedAt: r.received_at,
         encoderVersion: r.encoder_version,
       };
-      return full;
+      return detail;
+    },
+
+    async gpx(id) {
+      const [r] = await db.all<Pick<Row, "gpx_deflated">>(
+        "SELECT gpx_deflated FROM activities WHERE id = ?",
+        [id],
+      );
+      return r ? inflateGpx(r.gpx_deflated) : null;
     },
 
     async delete(id) {

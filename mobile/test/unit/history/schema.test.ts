@@ -86,7 +86,7 @@ describe("migration 2: the GPX deflated at rest", () => {
     expect(rows.map((r) => inflateGpx(r.gpx_deflated))).toEqual([GPX_A, GPX_B]);
     expect(rows[1]?.gpx_deflated.length).toBeLessThan(GPX_B.length / 4);
     const store = createActivityStore(db);
-    expect((await store.get(IDS[1] as string))?.gpx).toBe(GPX_B);
+    expect(await store.gpx(IDS[1] as string)).toBe(GPX_B);
     expect(await store.get(IDS[0] as string)).toMatchObject({
       travelMode: "walk",
       startedAt: "2026-03-01T10:00:00Z",
@@ -124,7 +124,7 @@ describe("migration 2: the GPX deflated at rest", () => {
       expect(await gpxColumns(again)).toEqual(["gpx TEXT"]);
       expect((await tables(again)).map((t) => t.name)).toEqual(["activities", "blobs", "routes"]);
       expect(await migrate(again)).toBe(2);
-      expect((await createActivityStore(again).get(IDS[1] as string))?.gpx).toBe(GPX_B);
+      expect(await createActivityStore(again).gpx(IDS[1] as string)).toBe(GPX_B);
       await again.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -153,8 +153,8 @@ describe("migration 2: the GPX deflated at rest", () => {
       const [v] = await again.all<{ user_version: number }>("PRAGMA user_version");
       expect(v?.user_version).toBe(1);
       expect(await migrate(again)).toBe(SCHEMA_VERSION);
-      expect((await createActivityStore(again).get(IDS[0] as string))?.gpx).toBe(GPX_A);
-      expect((await createActivityStore(again).get(IDS[1] as string))?.gpx).toBe(GPX_B);
+      expect(await createActivityStore(again).gpx(IDS[0] as string)).toBe(GPX_A);
+      expect(await createActivityStore(again).gpx(IDS[1] as string)).toBe(GPX_B);
       await again.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });

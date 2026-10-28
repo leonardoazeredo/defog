@@ -1,4 +1,11 @@
-import type { Activity, ActivityStore, RouteStore, RouteSummary, StoredRoute } from "./types.js";
+import type {
+  Activity,
+  ActivityDetail,
+  ActivityStore,
+  RouteStore,
+  RouteSummary,
+  StoredRoute,
+} from "./types.js";
 
 const copy = <T>(v: T): T => structuredClone(v);
 
@@ -30,7 +37,12 @@ export function createMemoryActivityStore(): ActivityStore {
     },
     async get(id) {
       const a = byId.get(id);
-      return a ? copy(a) : null;
+      if (!a) return null;
+      const { gpx: _gpx, ...detail }: Activity = a;
+      return copy(detail);
+    },
+    async gpx(id) {
+      return byId.get(id)?.gpx ?? null;
     },
     async delete(id) {
       return byId.delete(id);

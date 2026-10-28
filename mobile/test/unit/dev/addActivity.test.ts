@@ -34,7 +34,8 @@ describe("developer add activity", () => {
     await addActivityFromGpx(deps);
 
     const stored = await activities.get(ID);
-    expect(stored).toMatchObject({ id: ID, travelMode: "walk", encoderVersion: "dev", gpx: WALK });
+    expect(stored).toMatchObject({ id: ID, travelMode: "walk", encoderVersion: "dev" });
+    expect(await activities.gpx(ID)).toBe(WALK);
     expect(stored?.track.length).toBeGreaterThan(1);
     expect(await activities.list()).toHaveLength(1);
     expect(await link.pendingActivities()).toEqual([]);
