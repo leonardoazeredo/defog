@@ -32,45 +32,54 @@ export function createHistoryFlow(deps: HistoryDeps): HistoryFlow {
     }
   }
 
+  async function trackMessages(id: string): Promise<NativeToWeb[]> {
+    const activity = await activities.get(id);
+    // Deleted since the page listed it: without an answer the detail shows only its timeout line, not why.
+    if (!activity) return [{ v: 1, type: "trackUnavailable", activityId: id, reason: "notFound" }];
+    const { track } = activity;
+    // The history panel draws the route beside the track; a route that cannot be read costs only that line.
+    let route: { coords: RouteRecord["coords"] } | undefined;
+    if (activity.routeId != null) {
+      try {
+        const stored = await routes.get(activity.routeId);
+        if (stored) route = { coords: stored.coords };
+      } catch (e) {
+        warn("could not read a followed route", e);
+      }
+    }
+    // An empty track still needs one message: the page counts chunks, and `total` is at least 1.
+    const total = Math.max(1, Math.ceil(track.length / TRACK_CHUNK_POINTS));
+    const messages: NativeToWeb[] = [];
+    for (let index = 0; index < total; index++) {
+      const points = track.slice(index * TRACK_CHUNK_POINTS, (index + 1) * TRACK_CHUNK_POINTS);
+      messages.push({
+        v: 1,
+        type: "track",
+        activityId: id,
+        index,
+        total,
+        points,
+        ...(index === 0 && route ? { route } : {}),
+      });
+    }
+    return messages;
+  }
+
   return {
     publish,
 
     async needTrack(id) {
+      let messages: NativeToWeb[];
       try {
-        const activity = await activities.get(id);
-        // Deleted since the page listed it: without an answer the detail shows only its timeout line, not why.
-        if (!activity) {
-          send({ v: 1, type: "trackUnavailable", activityId: id, reason: "notFound" });
-          return;
-        }
-        const { track } = activity;
-        // The history panel draws the route beside the track; a route that cannot be read costs only that line.
-        let route: { coords: RouteRecord["coords"] } | undefined;
-        if (activity.routeId != null) {
-          try {
-            const stored = await routes.get(activity.routeId);
-            if (stored) route = { coords: stored.coords };
-          } catch (e) {
-            warn("could not read a followed route", e);
-          }
-        }
-        // An empty track still needs one message: the page counts chunks, and `total` is at least 1.
-        const total = Math.max(1, Math.ceil(track.length / TRACK_CHUNK_POINTS));
-        for (let index = 0; index < total; index++) {
-          const points = track.slice(index * TRACK_CHUNK_POINTS, (index + 1) * TRACK_CHUNK_POINTS);
-          send({
-            v: 1,
-            type: "track",
-            activityId: id,
-            index,
-            total,
-            points,
-            ...(index === 0 && route ? { route } : {}),
-          });
-        }
+        messages = await trackMessages(id);
       } catch (e) {
         warn("could not read a track", e);
-        send({ v: 1, type: "trackUnavailable", activityId: id, reason: "readFailed" });
+        messages = [{ v: 1, type: "trackUnavailable", activityId: id, reason: "readFailed" }];
+      }
+      try {
+        for (const msg of messages) send(msg);
+      } catch (e) {
+        warn("could not send a track", e);
       }
     },
 

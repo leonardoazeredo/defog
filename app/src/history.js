@@ -213,7 +213,15 @@
       clearOverlay();
       open = { id, points: null, route: null, trackNote: null, deleteNote: null };
       render();
-      if (opts.onNeedTrack(id) === false) { noteTrack(id, TRACK_NOTES.offline); return; }
+      let asked;
+      try {
+        asked = opts.onNeedTrack(id);
+      } catch (e) {
+        console.error("crossfog: could not ask the phone for a track", e instanceof Error ? e.name : typeof e);
+        noteTrack(id, TRACK_NOTES.timeout);
+        return;
+      }
+      if (asked === false) { noteTrack(id, TRACK_NOTES.offline); return; }
       trackTimer = global.setTimeout(() => { trackTimer = null; noteTrack(id, TRACK_NOTES.timeout); }, REPLY_TIMEOUT_MS);
     }
 

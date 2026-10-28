@@ -197,4 +197,18 @@ describe("history", () => {
     ]);
     valid(sent);
   });
+
+  it("does not reject when the page cannot be told", async () => {
+    const activities = createMemoryActivityStore();
+    await activities.add(activity({ id: ID(1) }));
+    const flow = createHistoryFlow({
+      activities,
+      routes: createMemoryRouteStore(),
+      send: () => {
+        throw new Error("no web view");
+      },
+    });
+    await expect(flow.needTrack(ID(1))).resolves.toBeUndefined();
+    await expect(flow.needTrack(ID(9))).resolves.toBeUndefined();
+  });
 });

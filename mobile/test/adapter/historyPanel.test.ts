@@ -327,6 +327,18 @@ describe("History tab", () => {
     expect($("historyDetail").textContent).not.toContain("Loading the track");
   });
 
+  it("stops waiting when asking the phone for the track throws", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    (window.crossfog as { needTrack(id: string): void }).needTrack = () => {
+      throw new TypeError("bridge gone");
+    };
+    panel.setActivities([summary(A, "2026-03-01T10:00:00Z")]);
+    expect(() => click(cards()[0] ?? null)).not.toThrow();
+    expect($("historyDetail").textContent).toContain("did not send the track");
+    expect($("historyDetail").textContent).not.toContain("Loading the track");
+    expect(error.mock.calls.join(" ")).toContain("TypeError");
+  });
+
   it("keeps the card open and says why when Delete cannot reach the phone", () => {
     panel.setActivities([summary(A, "2026-03-01T10:00:00Z")]);
     click(cards()[0] ?? null);
@@ -486,6 +498,21 @@ describe("Send to watch", () => {
     send.routeStatus({ routeId: id, state: "waiting" });
     vi.advanceTimersByTime(replyTimeoutMs() * 10);
     expect(chip()).toBe("Waiting for watch");
+  });
+
+  it("gives a second send its own wait", () => {
+    vi.useFakeTimers();
+    route.setFixedRoute(PINS(), COORDS, STATS);
+    send.update();
+    click(sendBtn());
+    vi.advanceTimersByTime(replyTimeoutMs() - 1000);
+    click(sendBtn());
+    vi.advanceTimersByTime(2000);
+    expect(chip()).toBe("");
+    vi.advanceTimersByTime(replyTimeoutMs());
+    expect(chip()).toBe("Could not send");
+    click(sendBtn());
+    expect(chip()).toBe("");
   });
 
   it("does not time out a route that was edited before the phone answered", () => {
