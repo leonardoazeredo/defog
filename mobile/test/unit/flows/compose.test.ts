@@ -200,6 +200,7 @@ describe("composed flows", () => {
       await settle();
       await expect(flows.handOffNow()).resolves.toBeUndefined();
       await expect(flows.ready()).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalled();
       for (const args of warn.mock.calls) expect(args).toEqual([expect.any(String), "Error"]);
     } finally {
       warn.mockRestore();

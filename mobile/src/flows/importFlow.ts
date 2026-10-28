@@ -12,7 +12,7 @@ export interface ImportFlowDeps {
   notify(text: string): void;
   releaseSource(uri: string): Promise<void>;
   setBusy(on: boolean): void;
-  /** Shown to the page the next time it is ready. */
+  /** Shown to the page the next time it is ready, so the flow queues only when a `ready` will follow. */
   queueNotice(text: string): void;
   /** Reloads the page; the controller owns the page's life. */
   remount(): Promise<void>;
@@ -53,16 +53,41 @@ export function createImportFlow(deps: ImportFlowDeps): ImportFlow {
     }
   }
 
+  // The cached source is a copy of the user's location history; a failed release leaves only that copy behind,
+  // so it is logged and the outcome the user was told stands.
+  async function release(uri: string): Promise<void> {
+    try {
+      await deps.releaseSource(uri);
+    } catch (e) {
+      warnClass("import", "could not release a source file", e);
+    }
+  }
+
+  // A failure is a toast (`notify`): a queued notice would wait for some later `ready` and show a stale failure then.
   async function doImport(file: SourceFile, source: "picker" | "share"): Promise<boolean> {
     deps.setBusy(true);
     try {
       await store.beginImport(file, source);
-      await deps.releaseSource(file.uri);
+    } catch (e) {
+      warnClass("import", "could not begin an import", e);
+      await release(file.uri);
+      deps.notify(COPY.importFailed);
+      return false;
+    }
+    await release(file.uri);
+    try {
       await deps.remount();
       return true;
     } catch (e) {
-      warnClass("import", "could not begin an import", e);
-      deps.queueNotice(COPY.importFailed);
+      warnClass("import", "could not show an import", e);
+      // The native remount is a state bump that does not throw today; should one fail, the copy goes, or the
+      // next `ready` would load the import the user was just told had failed.
+      try {
+        await store.discardPending();
+      } catch (e2) {
+        warnClass("import", "could not drop an import it could not show", e2);
+      }
+      deps.notify(COPY.importFailed);
       return false;
     }
   }
@@ -74,6 +99,7 @@ export function createImportFlow(deps: ImportFlowDeps): ImportFlow {
       warnClass("import", "could not take a shared file", e);
       // Nothing is cleared: a throw comes before this share takes the import (`doImport` catches its own),
       // so any import active now belongs to a pick or an earlier share.
+      await release(file.uri);
       deps.notify(COPY.importFailed);
     }
   }
@@ -81,7 +107,7 @@ export function createImportFlow(deps: ImportFlowDeps): ImportFlow {
   async function incoming(file: SourceFile): Promise<void> {
     if (!acceptIncoming(file.name)) {
       deps.notify(COPY.zipOnly);
-      await deps.releaseSource(file.uri);
+      await release(file.uri);
       return;
     }
     if (importActive) {
@@ -92,7 +118,7 @@ export function createImportFlow(deps: ImportFlowDeps): ImportFlow {
     if (current) {
       const confirmed = await deps.confirmReplace(file.name);
       if (!confirmed) {
-        await deps.releaseSource(file.uri);
+        await release(file.uri);
         return;
       }
     }
@@ -122,7 +148,7 @@ export function createImportFlow(deps: ImportFlowDeps): ImportFlow {
         if (!ok) clearImportActive();
       } catch (e) {
         warnClass("import", "could not pick a file", e);
-        deps.queueNotice(COPY.importFailed);
+        deps.notify(COPY.importFailed);
         clearImportActive();
       }
     },
@@ -141,13 +167,14 @@ export function createImportFlow(deps: ImportFlowDeps): ImportFlow {
         await endImport();
         return;
       }
-      if (!msg.ok) deps.queueNotice(COPY.notABackup);
       await endImport();
       if (msg.ok) return;
       try {
         await deps.remount();
+        deps.queueNotice(COPY.notABackup);
       } catch (e) {
         warnClass("import", "could not reload after a bad import", e);
+        deps.notify(COPY.notABackup);
       }
     },
 

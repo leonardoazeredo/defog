@@ -10,7 +10,7 @@ import { createDatabase, historyGate } from "./database.js";
 // to a database it created empty.
 async function open(): Promise<SqlDriver> {
   const history = await createDatabase();
-  if (history.kind !== "ready") throw new HistoryKeyLostError();
+  if (history.kind === "keyLost") throw new HistoryKeyLostError();
   return history.db;
 }
 
