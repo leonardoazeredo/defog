@@ -25,4 +25,6 @@ dependencies {
   androidTestImplementation 'androidx.test:runner:1.6.2'
   androidTestImplementation 'androidx.test.ext:junit:1.2.1'
   androidTestImplementation 'junit:junit:4.13.2'
+  androidTestImplementation 'net.zetetic:sqlcipher-android:4.5.4@aar'
+  androidTestImplementation 'androidx.sqlite:sqlite:2.2.0'
 }
