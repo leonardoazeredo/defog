@@ -1,5 +1,10 @@
 import type { SqlDriver } from "../db/driver.js";
-import type { RouteStore, RouteSummary, StoredRoute } from "./types.js";
+import {
+  type RouteStore,
+  type RouteSummary,
+  type StoredRoute,
+  UnknownRouteError,
+} from "./types.js";
 
 interface Row {
   id: string;
@@ -71,7 +76,7 @@ export function createRouteStore(db: SqlDriver, deps: { now?: () => Date } = {})
         now().toISOString(),
         id,
       ]);
-      if (changes === 0) throw new Error("unknown route");
+      if (changes === 0) throw new UnknownRouteError(id);
     },
   };
 }

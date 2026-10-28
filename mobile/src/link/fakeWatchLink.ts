@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { RouteRecord } from "../bridge/protocol.js";
 import type {
   ActivityOffer,
@@ -20,7 +21,7 @@ export interface FakeWatchLink extends WatchLink {
   confirmRoute(routeId: string): void;
   /** The latest route queued under each id; `confirmRoute` does not remove it. */
   queued(): RouteRecord[];
-  /** Every id passed to `release`, in order, known or not. */
+  /** Every UUID passed to `release`, in order, known or not; a malformed id is refused and not recorded. */
   released(): string[];
 }
 
@@ -78,6 +79,9 @@ export function createFakeWatchLink(): FakeWatchLink {
       return { ...offer };
     },
     async release(id) {
+      // The native side answers ERR_INVALID_ID for an id that is not a UUID (it also refuses the nil
+      // and max UUIDs, which this lets through); a flow that passes a bad id must fail here too.
+      if (!z.uuid().safeParse(id).success) throw new Error("invalid id");
       releasedIds.push(id);
       staged.delete(id);
       unreadable.delete(id);

@@ -133,14 +133,14 @@ class StagingStoreTest {
   }
 
   @Test
-  fun aTamperedByteMakesReadReturnNull() {
+  fun aTamperedByteMakesTheItemUnreadable() {
     val s = store()
     s.stage(a, "secret".toByteArray())
     val file = File(dir, "$a.bin")
     val bytes = file.readBytes()
     for (i in bytes.indices) {
       file.writeBytes(bytes.copyOf().also { it[i] = (it[i].toInt() xor 1).toByte() })
-      assertNull("byte $i", s.read(a))
+      assertThrows("byte $i", UnreadableItemException::class.java) { s.read(a) }
     }
   }
 
@@ -149,13 +149,14 @@ class StagingStoreTest {
     val s = store()
     s.stage(a, "secret".toByteArray())
     File(dir, "$a.bin").renameTo(File(dir, "$b.bin"))
-    assertNull(s.read(b))
+    assertThrows(UnreadableItemException::class.java) { s.read(b) }
   }
 
   @Test
   fun anotherKeyCannotReadTheItem() {
     store().stage(a, "secret".toByteArray())
-    assertNull(store(key = SecretKeySpec(ByteArray(32) { 8 }, "AES")).read(a))
+    val other = store(key = SecretKeySpec(ByteArray(32) { 8 }, "AES"))
+    assertThrows(UnreadableItemException::class.java) { other.read(a) }
   }
 
   @Test
@@ -171,10 +172,10 @@ class StagingStoreTest {
   }
 
   @Test
-  fun anItemLargerThanTheFrameLimitIsNotReadBack() {
+  fun anItemLargerThanTheFrameLimitIsUnreadableNotMissing() {
     store().stage(a, byteArrayOf(1))
     File(dir, "$a.bin").writeBytes(ByteArray(MAX_FRAME_BYTES + 1024))
-    assertNull(store().read(a))
+    assertThrows(UnreadableItemException::class.java) { store().read(a) }
   }
 
   @Test

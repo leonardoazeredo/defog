@@ -7,6 +7,7 @@ import android.security.keystore.KeyProperties
 import android.util.AtomicFile
 import android.util.Log
 import java.io.File
+import java.io.IOException
 import java.security.UnrecoverableKeyException
 import java.security.KeyStore
 import java.security.SecureRandom
@@ -25,6 +26,13 @@ class KeyLostException(
   cause: Throwable? = null,
   val permanent: Boolean = false,
 ) : Exception(message, cause)
+
+/**
+ * The key's state forbids the call (a key that works or may on a later read, no key to
+ * replace, or a database file that exists). The one failure JS reads as ERR_INVALID_STATE; any
+ * other IllegalStateException is a failure, not a refusal.
+ */
+class KeyRefusedException(message: String) : IllegalStateException(message)
 
 /**
  * FRESH: neither the Keystore key nor the file. LOST: exactly one of them. UNREADABLE: both, but
@@ -75,7 +83,9 @@ class Keys(
   fun databaseKey(): ByteArray = synchronized(LOCK) {
     when (presence()) {
       KeyState.FRESH -> createDatabaseKey()
-      KeyState.LOST -> throw KeyLostException("database key file and Keystore key do not match")
+      KeyState.LOST -> throw KeyLostException(
+        if (databaseKeyFile.exists()) "the Keystore key is missing" else "the database key file is missing",
+      )
       else -> readDatabaseKey()
     }
   }
@@ -90,7 +100,7 @@ class Keys(
    */
   fun replaceLostDatabaseKey(dek: ByteArray): Unit = synchronized(LOCK) {
     require(dek.size == DATABASE_KEY_BYTES) { "database key has the wrong length" }
-    check(keyState().replaceable) { "the database key is neither lost nor unreadable" }
+    refuseUnless(keyState().replaceable) { "the database key is neither lost nor unreadable" }
     discardDatabaseKey()
     storeDatabaseKey(dek)
   }
@@ -102,9 +112,9 @@ class Keys(
    * Throws when the Keystore key cannot be deleted, since the next read would then still be lost.
    */
   fun resetKeys(): Unit = synchronized(LOCK) {
-    check(DATABASE_FILES.none { File(sqliteDir, it).exists() }) { "a database file exists" }
+    refuseUnless(DATABASE_FILES.none { File(sqliteDir, it).exists() }) { "a database file exists" }
     val state = keyState()
-    check(state.replaceable || state == KeyState.FRESH) {
+    refuseUnless(state.replaceable || state == KeyState.FRESH) {
       "the database key is neither lost nor unreadable"
     }
     discardDatabaseKey()
@@ -161,7 +171,8 @@ class Keys(
 
   private fun writeAtomically(blob: ByteArray) {
     val dir = databaseKeyFile.parentFile!!
-    check(dir.isDirectory || dir.mkdirs()) { "cannot create ${dir.path}" }
+    // An IOException, not a check(): the key's state allowed the write, the disk did not.
+    if (!dir.isDirectory && !dir.mkdirs()) throw IOException("cannot create the directory for the key")
     // AtomicFile syncs before it renames, so a crash leaves either no file or the whole one.
     val atomic = AtomicFile(databaseKeyFile)
     val out = atomic.startWrite()
@@ -215,6 +226,10 @@ class Keys(
   }
 }
 
+private inline fun refuseUnless(allowed: Boolean, message: () -> String) {
+  if (!allowed) throw KeyRefusedException(message())
+}
+
 private val KeyState.replaceable get() = this == KeyState.LOST || this == KeyState.UNREADABLE
 
 /**
@@ -259,7 +274,8 @@ private const val KEK_RETRY_PAUSE_MS = 200L
  * be transient, so that failure is read once more after `pause` before it is reported as
  * KeyLostException. That exception is never permanent, so `keyState()` still reads EXISTING and
  * nothing replaces the key: replacing one that still works would make the database unreadable.
- * Only `unwrapDatabaseKey` marks a failure permanent. Any other failure propagates unchanged.
+ * Only `unwrapDatabaseKey` marks a failure permanent. Any other failure propagates unchanged; one
+ * on the retry carries the first UnrecoverableKeyException as suppressed.
  */
 internal fun readKekOrLost(
   pause: () -> Unit = { Thread.sleep(KEK_RETRY_PAUSE_MS) },
@@ -274,6 +290,9 @@ internal fun readKekOrLost(
     } catch (e: UnrecoverableKeyException) {
       e.addSuppressed(first)
       throw KeyLostException("Keystore key cannot be used", e)
+    } catch (e: Exception) {
+      e.addSuppressed(first)
+      throw e
     }
   }
   return kek ?: throw KeyLostException("Keystore key is missing")

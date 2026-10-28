@@ -49,6 +49,14 @@ describe("fake watch link", () => {
     expect(link.released()).toEqual([offer(1).activityId, offer(2).activityId]);
   });
 
+  it("release refuses an id that is not a UUID, as the native side does", async () => {
+    const link = createFakeWatchLink();
+    link.stage(offer(1));
+    await expect(link.release("../x")).rejects.toThrow("invalid id");
+    expect(link.released()).toEqual([]);
+    expect(await link.pendingActivities()).toHaveLength(1);
+  });
+
   it("queueRoute records the route, and a second queue of the same id replaces it", async () => {
     const link = createFakeWatchLink();
     const route = routeRecord();

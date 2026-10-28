@@ -12,6 +12,7 @@ import {
   type ReplaceDeps,
   recoverInterruptedReplace,
 } from "../../../src/backup/replace.js";
+import { checkedKeyHex } from "../../../src/db/keyHex.js";
 import { createActivityStore } from "../../../src/history/activityStore.js";
 import { createHarness, type Harness } from "../../support/backupHarness.js";
 import { createNodeSqliteDriver, openNodeBackup } from "../../support/nodeSqliteDriver.js";
@@ -60,7 +61,7 @@ describe("database replacer", () => {
         throw lost;
       },
       keyState: async () => "lost" as const,
-      newDatabaseKeyHex: () => "cd".repeat(32),
+      newDatabaseKeyHex: () => checkedKeyHex("cd".repeat(32)),
       replaceLostDatabaseKey: async (keyHex) => {
         kept.push(keyHex);
       },
@@ -172,6 +173,20 @@ describe("database replacer", () => {
     expect((await createActivityStore(target.db).list()).map((a) => a.id)).toEqual([
       "33333333-3333-4333-8333-333333333333",
     ]);
+  });
+
+  it("replaces no key that reads as fresh", async () => {
+    const { deps, kept } = lostKeyDeps({ keyState: async () => "fresh" as const });
+    const backup = await openedBackup();
+    let exported = false;
+    backup.exportTo = async () => {
+      exported = true;
+    };
+    await expect(createDatabaseReplacer(deps)(backup)).rejects.toThrow(
+      expect.objectContaining({ name: "KeyLostError" }),
+    );
+    expect(exported).toBe(false);
+    expect(kept).toEqual([]);
   });
 
   it("keeps the new key before reopening, which reads it", async () => {

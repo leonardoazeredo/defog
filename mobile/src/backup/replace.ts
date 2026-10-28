@@ -1,4 +1,5 @@
 import type { AttachedBackup, SqlDriver } from "../db/driver.js";
+import type { DatabaseKeyHex } from "../db/keyHex.js";
 
 export const LIVE_DB = "crossfog.db";
 export const RESTORING_DB = "crossfog.restoring.db";
@@ -54,18 +55,26 @@ export interface ReplaceDeps {
   closeLive(): Promise<void>;
   /** Opens and migrates the database at `LIVE_DB`; rejects when it cannot be used. */
   reopen(): Promise<void>;
-  /** The device key as hex; rejects with the key-lost error when it cannot be read. */
-  databaseKeyHex(): Promise<string>;
+  /**
+   * The device key, as hex; rejects with the key-lost error when it cannot be read (only `keyState`
+   * says whether it may be replaced), or with the key-unavailable error when the read failed otherwise.
+   */
+  databaseKeyHex(): Promise<DatabaseKeyHex>;
   /** The native key state; only `lost` and `unreadable` let `replaceLostDatabaseKey` keep a new key. */
   keyState(): Promise<"fresh" | "existing" | "lost" | "unreadable">;
   /** A new random device key as hex; nothing is kept until `replaceLostDatabaseKey`. */
-  newDatabaseKeyHex(): string;
+  newDatabaseKeyHex(): DatabaseKeyHex;
   /** Keeps `keyHex` as the device key in place of a lost or unreadable one. */
-  replaceLostDatabaseKey(keyHex: string): Promise<void>;
+  replaceLostDatabaseKey(keyHex: DatabaseKeyHex): Promise<void>;
   isKeyLost(e: unknown): boolean;
   /** Opens a database file in the SQLite directory with the device key. */
-  openFile(name: string, keyHex: string): Promise<SqlDriver>;
+  openFile(name: string, keyHex: DatabaseKeyHex): Promise<SqlDriver>;
 }
+
+/** The key a restore builds with: the device's own, or a new one that replaces a lost one after the swap. */
+type DeviceKey =
+  | { kind: "existing"; hex: DatabaseKeyHex }
+  | { kind: "replacement"; hex: DatabaseKeyHex };
 
 async function count(db: { all<T>(sql: string): Promise<T[]> }, table: string): Promise<number> {
   const [row] = await db.all<{ n: number }>(`SELECT count(*) AS n FROM ${table}`);
@@ -93,9 +102,9 @@ export function createDatabaseReplacer(
 ): (backup: AttachedBackup) => Promise<void> {
   const { files } = deps;
 
-  async function deviceKey(): Promise<{ hex: string; lost: boolean }> {
+  async function deviceKey(): Promise<DeviceKey> {
     try {
-      return { hex: await deps.databaseKeyHex(), lost: false };
+      return { kind: "existing", hex: await deps.databaseKeyHex() };
     } catch (e) {
       if (!deps.isKeyLost(e)) throw e;
       // Only a key in the native `lost` state (one of alias and key file gone) or `unreadable` state
@@ -106,11 +115,11 @@ export function createDatabaseReplacer(
         throw e;
       });
       if (state !== "lost" && state !== "unreadable") throw e;
-      return { hex: deps.newDatabaseKeyHex(), lost: true };
+      return { kind: "replacement", hex: deps.newDatabaseKeyHex() };
     }
   }
 
-  async function build(backup: AttachedBackup, keyHex: string): Promise<void> {
+  async function build(backup: AttachedBackup, keyHex: DatabaseKeyHex): Promise<void> {
     removeWithSidecars(files, RESTORING_DB);
     await backup.exportTo(files.pathOf(RESTORING_DB), `x'${keyHex}'`);
     const built = await deps.openFile(RESTORING_DB, keyHex);
@@ -150,7 +159,7 @@ export function createDatabaseReplacer(
   return (backup) =>
     deps.exclusive(async () => {
       await deps.closeLive();
-      let key: { hex: string; lost: boolean };
+      let key: DeviceKey;
       try {
         key = await deviceKey();
         await build(backup, key.hex);
@@ -163,7 +172,7 @@ export function createDatabaseReplacer(
       try {
         swap();
         // Kept before reopen, which reads the key from the device.
-        if (key.lost) {
+        if (key.kind === "replacement") {
           await deps.replaceLostDatabaseKey(key.hex);
           keyKept = true;
         }

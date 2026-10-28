@@ -38,10 +38,6 @@ data class RouteOffer(
 }
 
 object Frames {
-  // Matches zod's uuid() except that the nil and max UUIDs are rejected, like StagingStore.ID: a frame
-  // JS would reject must not be staged.
-  private val UUID = Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}")
-
   fun parseActivityOffer(bytes: ByteArray): ActivityOffer {
     val o = parseObject(bytes)
     return ActivityOffer(
@@ -88,7 +84,8 @@ object Frames {
 
   private fun JSONObject.uuid(key: String): String {
     val value = text(key, 36)
-    if (!UUID.matches(value)) throw FrameException("field $key is missing or invalid")
+    // The id form StagingStore takes, so a frame accepted here is never refused when staged.
+    if (!UUID_ID.matches(value)) throw FrameException("field $key is missing or invalid")
     return value
   }
 }

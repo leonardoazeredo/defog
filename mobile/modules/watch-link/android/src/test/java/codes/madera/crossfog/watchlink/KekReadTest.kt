@@ -67,6 +67,22 @@ class KekReadTest {
   }
 
   @Test
+  fun aDifferentFailureOnTheRetryKeepsTheFirstAsSuppressed() {
+    val first = UnrecoverableKeyException("device locked")
+    val busy = KeyStoreException("keystore busy")
+    var reads = 0
+    val thrown = assertThrows(KeyStoreException::class.java) {
+      readKekOrLost(pause) {
+        reads++
+        if (reads == 1) throw first
+        throw busy
+      }
+    }
+    assertSame(busy, thrown)
+    assertSame(first, thrown.suppressed.single())
+  }
+
+  @Test
   fun anyOtherFailurePropagatesUnchangedWithoutARetry() {
     val busy = KeyStoreException("keystore busy")
     var reads = 0

@@ -1,4 +1,5 @@
-import type { SqlDriver } from "./driver.js";
+import { NotADatabaseError, type SqlDriver } from "./driver.js";
+import type { DatabaseKeyHex } from "./keyHex.js";
 
 export type HistoryDatabase = { kind: "ready"; db: SqlDriver } | { kind: "keyLost" };
 
@@ -10,9 +11,19 @@ export class HistoryKeyLostError extends Error {
   override name = "HistoryKeyLostError";
 }
 
+/**
+ * A key that reads but does not open the file (a wrong key, or a file that is no database: SQLCipher
+ * cannot tell them apart) is as good as lost: the owner is asked for a restore instead of seeing an
+ * open that fails on every start.
+ */
+export function wrongKeyAsKeyLost(e: unknown): HistoryDatabase {
+  if (e instanceof NotADatabaseError) return { kind: "keyLost" };
+  throw e;
+}
+
 export interface OpenHistoryDeps {
   keyState(): Promise<"fresh" | "existing" | "lost" | "unreadable">;
-  getDatabaseKeyHex(): Promise<string>;
+  getDatabaseKeyHex(): Promise<DatabaseKeyHex>;
   /** Whether a database file (the live one or a restore's replaced copy) is already on disk. */
   databaseExists(): boolean;
   /**
@@ -20,7 +31,7 @@ export interface OpenHistoryDeps {
    * live database or a restore's replaced copy exists.
    */
   resetKeys(): Promise<void>;
-  openDriver(keyHex: string): Promise<SqlDriver>;
+  openDriver(keyHex: DatabaseKeyHex): Promise<SqlDriver>;
   migrate(db: SqlDriver): Promise<number>;
   isKeyLostError(e: unknown): boolean;
 }
@@ -38,7 +49,7 @@ export async function openHistory(deps: OpenHistoryDeps): Promise<HistoryDatabas
     return { kind: "keyLost" };
   }
 
-  let keyHex: string;
+  let keyHex: DatabaseKeyHex;
   try {
     keyHex = await deps.getDatabaseKeyHex();
   } catch (e) {
@@ -49,7 +60,13 @@ export async function openHistory(deps: OpenHistoryDeps): Promise<HistoryDatabas
   try {
     await deps.migrate(db);
   } catch (e) {
-    await db.close().catch(() => undefined);
+    // The migration's error is the one worth reporting; the close's class is only logged.
+    await db.close().catch((closeError: unknown) => {
+      console.warn(
+        "crossfog: history close failed",
+        closeError instanceof Error ? closeError.name : "unknown",
+      );
+    });
     throw e;
   }
   return { kind: "ready", db };

@@ -154,7 +154,7 @@ class KeysTest {
       keys.databaseKey()
       keys.databaseKeyFile.delete()
       File(sqliteDir, name).writeBytes(ByteArray(16))
-      assertThrows(name, IllegalStateException::class.java) { keys.resetKeys() }
+      assertThrows(name, KeyRefusedException::class.java) { keys.resetKeys() }
       assertEquals(name, KeyState.LOST, keys.keyState())
       assertTrue(name, aliasPresent())
     }
@@ -164,7 +164,7 @@ class KeysTest {
   fun resetIsRefusedForAKeyThatStillWorks() {
     val keys = keys()
     val key = keys.databaseKey()
-    assertThrows(IllegalStateException::class.java) { keys.resetKeys() }
+    assertThrows(KeyRefusedException::class.java) { keys.resetKeys() }
     assertArrayEquals(key, keys.databaseKey())
   }
 
@@ -203,10 +203,62 @@ class KeysTest {
   @Test
   fun theStagingKeyIsTheSameAcrossInstances() {
     val first = Keys(context).stagingKey()
-    val second = Keys(context).stagingKey()
     assertEquals(KeyProperties.KEY_ALGORITHM_AES, first.algorithm)
-    // Keystore keys expose no material, so equal handles to one alias are the check.
-    assertEquals(first, second)
+    // Keystore keys expose no material, so the check is that one instance's blob opens under the other's.
+    val blob = KeyWrap(first, "id").wrap(byteArrayOf(1, 2, 3))
+    assertArrayEquals(byteArrayOf(1, 2, 3), KeyWrap(Keys(context).stagingKey(), "id").unwrap(blob))
+  }
+
+  @Test
+  fun aLostKeySaysWhichHalfIsMissing() {
+    val keys = keys()
+    keys.databaseKey()
+    keys.databaseKeyFile.delete()
+    assertEquals("the database key file is missing", assertThrows(KeyLostException::class.java) { keys.databaseKey() }.message)
+    reset()
+    keys.databaseKey()
+    KeyStore.getInstance("AndroidKeyStore").apply {
+      load(null)
+      deleteEntry(Keys.KEK_ALIAS)
+    }
+    assertEquals("the Keystore key is missing", assertThrows(KeyLostException::class.java) { keys.databaseKey() }.message)
+  }
+
+  @Test
+  fun replacingAFileWithoutItsKeystoreKeyKeepsTheGivenKey() {
+    val keys = keys()
+    keys.databaseKey()
+    KeyStore.getInstance("AndroidKeyStore").apply {
+      load(null)
+      deleteEntry(Keys.KEK_ALIAS)
+    }
+    val fresh = ByteArray(32) { (it + 1).toByte() }
+    keys.replaceLostDatabaseKey(fresh.copyOf())
+    assertEquals(KeyState.EXISTING, keys.keyState())
+    assertArrayEquals(fresh, Keys(context).databaseKey())
+  }
+
+  @Test
+  fun aFreshKeyCannotBeReplaced() {
+    val keys = keys()
+    assertThrows(KeyRefusedException::class.java) { keys.replaceLostDatabaseKey(ByteArray(32)) }
+    assertEquals(KeyState.FRESH, keys.keyState())
+  }
+
+  @Test
+  fun aFailedKeyFileWriteLeavesNoKeystoreKeyBehind() {
+    val keys = keys()
+    val dir = keys.databaseKeyFile.parentFile!!
+    dir.deleteRecursively()
+    // A file where the directory belongs, so creating it fails.
+    dir.writeBytes(byteArrayOf(0))
+    try {
+      assertThrows(java.io.IOException::class.java) { keys.databaseKey() }
+      assertFalse(aliasPresent())
+      assertEquals(KeyState.FRESH, keys.keyState())
+    } finally {
+      dir.delete()
+    }
   }
 
   @Test
@@ -226,7 +278,7 @@ class KeysTest {
   fun aKeyThatStillWorksCannotBeReplaced() {
     val keys = Keys(context)
     val key = keys.databaseKey()
-    assertThrows(IllegalStateException::class.java) { keys.replaceLostDatabaseKey(ByteArray(32)) }
+    assertThrows(KeyRefusedException::class.java) { keys.replaceLostDatabaseKey(ByteArray(32)) }
     assertArrayEquals(key, keys.databaseKey())
   }
 

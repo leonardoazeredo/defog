@@ -8,7 +8,7 @@ import java.security.KeyStore
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -46,7 +46,7 @@ class StagingStoreKeystoreTest {
     store().stage(id, "payload".toByteArray())
     val file = File(dir, "$id.bin")
     file.writeBytes(file.readBytes().also { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() })
-    assertNull(store().read(id))
+    assertThrows(UnreadableItemException::class.java) { store().read(id) }
   }
 
   @Test

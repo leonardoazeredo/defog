@@ -33,36 +33,24 @@ class WatchLinkModule : Module() {
 
     Events("activityStaged", "linkStatus", "routeSaved")
 
-    AsyncFunction("getDatabaseKeyHex") {
-      try {
-        keys.databaseKey().toHex()
-      } catch (e: KeyLostException) {
-        throw CodedException(KEY_LOST, e.message, e)
-      }
-    }
+    AsyncFunction("getDatabaseKeyHex") { keyCall { keys.databaseKey().toHex() } }
 
     // Only for a restore from the lost or unreadable state, where the old database cannot be read by
     // any key; JS calls it once the database built with this key is in place.
     AsyncFunction("replaceLostDatabaseKey") { keyHex: String ->
-      val dek = databaseKeyFromHex(keyHex)
-      try {
-        keys.replaceLostDatabaseKey(dek)
-      } catch (e: IllegalStateException) {
-        throw CodedException(INVALID_STATE, e.message, e)
-      } finally {
-        dek.fill(0)
+      keyCall {
+        val dek = databaseKeyFromHex(keyHex)
+        try {
+          keys.replaceLostDatabaseKey(dek)
+        } finally {
+          dek.fill(0)
+        }
       }
     }
 
     // Only when no database file exists and the key is lost or unreadable (or already fresh, which
     // drops nothing that works); Keys refuses otherwise.
-    AsyncFunction("resetKeys") {
-      try {
-        keys.resetKeys()
-      } catch (e: IllegalStateException) {
-        throw CodedException(INVALID_STATE, e.message, e)
-      }
-    }
+    AsyncFunction("resetKeys") { keyCall { keys.resetKeys() } }
 
     RegisterActivityContracts {
       createLauncher = registerForActivityResult(CreateDocumentContract())
@@ -87,7 +75,7 @@ class WatchLinkModule : Module() {
       }
     }
 
-    AsyncFunction("keyState") { keys.keyState().wire }
+    AsyncFunction("keyState") { keyCall { keys.keyState().wire } }
 
     // The watch transport is not built yet, so the link is never paired and never reachable.
     AsyncFunction("status") { mapOf("paired" to false, "reachable" to false) }
@@ -131,22 +119,26 @@ class WatchLinkModule : Module() {
     sendEvent("activityStaged", mapOf("activityId" to offer.activityId))
   }
 
+  private inline fun <T> keyCall(block: () -> T): T =
+    try {
+      block()
+    } catch (e: Exception) {
+      val failure = keyCallFailure(e)
+      throw CodedException(failure.code, failure.message, e)
+    }
+
   private inline fun <T> coded(block: () -> T): T =
     try {
       block()
-    } catch (e: FrameException) {
-      throw CodedException(INVALID_FRAME, e.message, e)
-    } catch (e: IllegalArgumentException) {
-      throw CodedException(INVALID_ID, e.message, e)
+    } catch (e: Exception) {
+      val failure = stagingCallFailure(e) ?: throw e
+      // No cause for a storage failure: a FileNotFoundException names the file, and so the id.
+      if (failure.code == STORAGE) Log.w(TAG, "staging store failed: ${e.javaClass.simpleName}")
+      throw CodedException(failure.code, failure.message, if (failure.code == STORAGE) null else e)
     }
 
   private companion object {
     const val TAG = "WatchLink"
-    const val KEY_LOST = "ERR_KEY_LOST"
-    const val NOT_FOUND = "ERR_NOT_FOUND"
-    const val INVALID_FRAME = "ERR_INVALID_FRAME"
-    const val INVALID_ID = "ERR_INVALID_ID"
-    const val INVALID_STATE = "ERR_INVALID_STATE"
   }
 }
 
@@ -154,8 +146,8 @@ internal fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 
 // The message never repeats the text: it is key material.
 internal fun databaseKeyFromHex(hex: String): ByteArray {
-  require(hex.length == 64 && hex.all { it in '0'..'9' || it in 'a'..'f' }) {
+  require(hex.length == Keys.DATABASE_KEY_BYTES * 2 && hex.all { it in '0'..'9' || it in 'a'..'f' }) {
     "malformed database key"
   }
-  return ByteArray(32) { i -> hex.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
+  return ByteArray(Keys.DATABASE_KEY_BYTES) { i -> hex.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
 }

@@ -1,4 +1,11 @@
-import type { Activity, ActivityStore, RouteStore, RouteSummary, StoredRoute } from "./types.js";
+import {
+  type Activity,
+  type ActivityStore,
+  type RouteStore,
+  type RouteSummary,
+  type StoredRoute,
+  UnknownRouteError,
+} from "./types.js";
 
 const copy = <T>(v: T): T => structuredClone(v);
 
@@ -59,11 +66,22 @@ export function createMemoryRouteStore(deps: { now?: () => Date } = {}): RouteSt
     async list() {
       return [...byId.values()]
         .sort((a, b) => newestFirst({ at: a.createdAt, id: a.id }, { at: b.createdAt, id: b.id }))
-        .map(({ waypoints: _w, coords: _c, gpx: _g, ...summary }): RouteSummary => copy(summary));
+        .map(
+          ({ id, createdAt, mode, travelMode, targetDistanceM, stats, sentAt }): RouteSummary =>
+            copy({
+              id,
+              createdAt,
+              mode,
+              travelMode,
+              ...(targetDistanceM === undefined ? {} : { targetDistanceM }),
+              stats,
+              ...(sentAt === undefined ? {} : { sentAt }),
+            }),
+        );
     },
     async markSent(id) {
       const r = byId.get(id);
-      if (!r) throw new Error("unknown route");
+      if (!r) throw new UnknownRouteError(id);
       r.sentAt = now().toISOString();
     },
   };

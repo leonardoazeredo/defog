@@ -1,6 +1,6 @@
 import { getRandomBytes } from "expo-crypto";
 import { createDatabaseReplacer } from "../backup/replace.js";
-import { toHex } from "../bridge/hex.js";
+import { newDatabaseKeyHex } from "../db/keyHex.js";
 import { createDatabaseFiles } from "./backupPlatform.js";
 import { closeDatabase, createDatabase, historyGate } from "./database.js";
 import { createExpoSqliteDriver } from "./expoSqliteDriver.js";
@@ -8,7 +8,7 @@ import {
   getDatabaseKeyHex,
   KeyLostError,
   keyState,
-  replaceLostDatabaseKeyHex,
+  replaceLostDatabaseKey,
 } from "./watchLinkModule.js";
 
 export const replaceDatabase = createDatabaseReplacer({
@@ -21,15 +21,8 @@ export const replaceDatabase = createDatabaseReplacer({
   },
   databaseKeyHex: getDatabaseKeyHex,
   keyState,
-  newDatabaseKeyHex() {
-    const bytes = getRandomBytes(32);
-    try {
-      return toHex(bytes);
-    } finally {
-      bytes.fill(0);
-    }
-  },
-  replaceLostDatabaseKey: replaceLostDatabaseKeyHex,
+  newDatabaseKeyHex: () => newDatabaseKeyHex(getRandomBytes),
+  replaceLostDatabaseKey,
   isKeyLost: (e) => e instanceof KeyLostError,
   openFile: (name, keyHex) => createExpoSqliteDriver({ name, keyHex }),
 });

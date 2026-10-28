@@ -35,7 +35,7 @@ describe("migrate", () => {
   it("refuses a database from a newer app", async () => {
     const db = createNodeSqliteDriver(":memory:");
     await db.exec(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
-    await expect(migrate(db)).rejects.toThrow(/newer/);
+    await expect(migrate(db)).rejects.toThrow(/newer app.*update the app/);
   });
 
   it("rolls the migration back when a step fails", async () => {

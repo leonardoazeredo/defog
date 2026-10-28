@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { checkedKeyHex, type DatabaseKeyHex } from "../../../src/db/keyHex.js";
 
 const native = {
   getDatabaseKeyHex: vi.fn(),
@@ -21,13 +22,14 @@ vi.mock("../../../modules/watch-link", () => ({ default: native }));
 const {
   getDatabaseKeyHex,
   keyState,
-  replaceLostDatabaseKeyHex,
+  replaceLostDatabaseKey,
   resetKeys,
   createDocument,
   copyToUri,
   displayNameOf,
   copyFromUri,
   KeyLostError,
+  KeyUnavailableError,
   linkStatus,
   pendingActivities,
   readActivity,
@@ -72,6 +74,32 @@ describe("getDatabaseKeyHex", () => {
     const failure = Object.assign(new Error("no context"), { code: "ERR_NO_CONTEXT" });
     native.getDatabaseKeyHex.mockRejectedValue(failure);
     await expect(getDatabaseKeyHex()).rejects.toBe(failure);
+  });
+});
+
+describe("a key the native side cannot reach now", () => {
+  const unavailable = () =>
+    Object.assign(new Error("cannot reach the database key"), {
+      code: "ERR_KEY_UNAVAILABLE",
+    });
+
+  it.each([
+    ["getDatabaseKeyHex", () => getDatabaseKeyHex(), native.getDatabaseKeyHex],
+    ["keyState", () => keyState(), native.keyState],
+    ["resetKeys", () => resetKeys(), native.resetKeys],
+    [
+      "replaceLostDatabaseKey",
+      () => replaceLostDatabaseKey(checkedKeyHex("ab".repeat(32))),
+      native.replaceLostDatabaseKey,
+    ],
+  ] as const)("%s rejects with KeyUnavailableError, never KeyLostError", async (_n, call, fn) => {
+    const failure = unavailable();
+    fn.mockRejectedValue(failure);
+    const err = await call().catch((e) => e);
+    expect(err).toBeInstanceOf(KeyUnavailableError);
+    expect(err).not.toBeInstanceOf(KeyLostError);
+    expect(err.name).toBe("KeyUnavailableError");
+    expect(err.cause).toBe(failure);
   });
 });
 
@@ -137,11 +165,12 @@ describe("staging and outbox calls", () => {
 });
 
 describe("backup file functions", () => {
-  it("hands a well-formed key to the native side to keep, and refuses any other", async () => {
+  it("hands the key to the native side to keep, and checks it again on the way", async () => {
     native.replaceLostDatabaseKey.mockResolvedValue(undefined);
-    await replaceLostDatabaseKeyHex("ab".repeat(32));
+    await replaceLostDatabaseKey(checkedKeyHex("ab".repeat(32)));
     expect(native.replaceLostDatabaseKey).toHaveBeenCalledExactlyOnceWith("ab".repeat(32));
-    await expect(replaceLostDatabaseKeyHex("AB".repeat(32))).rejects.toThrow(
+    // Only a cast gets an unchecked string past the type.
+    await expect(replaceLostDatabaseKey("AB".repeat(32) as DatabaseKeyHex)).rejects.toThrow(
       "malformed database key",
     );
     expect(native.replaceLostDatabaseKey).toHaveBeenCalledOnce();

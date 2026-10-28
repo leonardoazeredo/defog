@@ -17,7 +17,11 @@ class KeyWrap(private val kek: SecretKey, alias: String) {
     // No IV passed: the Keystore refuses a caller-chosen one for keys that require randomized encryption.
     cipher.init(Cipher.ENCRYPT_MODE, kek)
     cipher.updateAAD(aad)
-    return cipher.iv + cipher.doFinal(dek)
+    // unwrap reads the first IV_BYTES as the IV, so a provider that chose another length would
+    // write a blob nothing can unwrap.
+    val iv = cipher.iv
+    check(iv.size == IV_BYTES) { "the cipher chose an IV of the wrong length" }
+    return iv + cipher.doFinal(dek)
   }
 
   fun unwrap(blob: ByteArray): ByteArray {
