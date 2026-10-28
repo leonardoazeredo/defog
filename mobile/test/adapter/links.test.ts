@@ -48,6 +48,8 @@ document.addEventListener = (
 };
 
 afterEach(() => {
+  document.head.innerHTML = "";
+  document.body.innerHTML = "";
   for (const [type, listener] of added.splice(0))
     document.removeEventListener(type, listener, true);
 });
@@ -58,8 +60,8 @@ function install(): unknown[] {
   return sent;
 }
 
-function click(el: Element, type = "click"): MouseEvent {
-  const ev = new MouseEvent(type, { bubbles: true, cancelable: true });
+function click(el: Element, type = "click", button = type === "auxclick" ? 1 : 0): MouseEvent {
+  const ev = new MouseEvent(type, { bubbles: true, cancelable: true, button });
   el.dispatchEvent(ev);
   return ev;
 }
@@ -122,19 +124,38 @@ it("intercepts a middle-click (auxclick) on a foreign link", () => {
   expect(sent).toEqual([{ v: 1, type: "openExternal", url: "https://example.org/mid" }]);
 });
 
-it("intercepts the click a focused link gets from the Enter key", () => {
+it("leaves a right-click (auxclick, button 2) on a foreign link alone", () => {
   const sent = install();
-  pageAt(ORIGIN, '<a href="https://example.org/key">x</a>');
+  pageAt(ORIGIN, '<a href="https://example.org/ctx">x</a>');
   const a = document.querySelector("a");
   if (a == null) throw new Error("no link rendered");
-  a.focus();
-  // Chromium turns Enter on a focused link into this same synthetic click.
-  a.click();
-  expect(sent).toEqual([{ v: 1, type: "openExternal", url: "https://example.org/key" }]);
+  expect(click(a, "auxclick", 2).defaultPrevented).toBe(false);
+  expect(sent).toEqual([]);
 });
 
-// The WebView lets a navigation through when onShouldStartLoadWithRequest answers late (#138), so a same-origin click that
-// would load anything has to be stopped here, not by decideNavigation's "block".
+it("opens a foreign link the same way from window.open as from a click", () => {
+  const sent = install();
+  pageAt(ORIGIN, "");
+  window.open("HTTPS://Example.org/a");
+  window.open("//example.org/b");
+  window.open("/relative");
+  window.open("mailto:a@example.org");
+  window.open();
+  expect(sent).toEqual([
+    { v: 1, type: "openExternal", url: "https://example.org/a" },
+    { v: 1, type: "openExternal", url: "https://example.org/b" },
+  ]);
+});
+
+it("stops a same-origin link with target=_blank and opens nothing", () => {
+  const sent = install();
+  pageAt(ORIGIN, '<a href="/other" target="_blank">x</a>');
+  const a = document.querySelector("a");
+  if (a == null) throw new Error("no link rendered");
+  expect(click(a).defaultPrevented).toBe(true);
+  expect(sent).toEqual([]);
+});
+
 it("leaves a fragment-only change of the current document and a blob download alone", () => {
   const sent = install();
   pageAt(
@@ -149,6 +170,19 @@ it("leaves a fragment-only change of the current document and a blob download al
   expect(sent).toEqual([]);
 });
 
+it("intercepts the click a focused link gets from the Enter key", () => {
+  const sent = install();
+  pageAt(ORIGIN, '<a href="https://example.org/key">x</a>');
+  const a = document.querySelector("a");
+  if (a == null) throw new Error("no link rendered");
+  a.focus();
+  // Chromium turns Enter on a focused link into this same synthetic click.
+  a.click();
+  expect(sent).toEqual([{ v: 1, type: "openExternal", url: "https://example.org/key" }]);
+});
+
+// The WebView lets a navigation through when onShouldStartLoadWithRequest answers late (#138), so a same-origin click that
+// would load anything has to be stopped here, not by decideNavigation's "block".
 it("stops a same-origin link that changes the path or the query without opening anything", () => {
   const sent = install();
   pageAt(
@@ -160,6 +194,20 @@ it("stops a same-origin link that changes the path or the query without opening 
     if (a == null) throw new Error("no link rendered");
     expect(click(a).defaultPrevented, id).toBe(true);
     expect(click(a, "auxclick").defaultPrevented, id).toBe(true);
+  }
+  expect(sent).toEqual([]);
+});
+
+it("stops a link to the page itself with no fragment, which would reload it", () => {
+  const sent = install();
+  pageAt(
+    ORIGIN,
+    `<a id="e" href="">e</a><a id="q" href="?">q</a><a id="abs" href="${ORIGIN}">abs</a>`,
+  );
+  for (const id of ["e", "q", "abs"]) {
+    const a = document.getElementById(id);
+    if (a == null) throw new Error("no link rendered");
+    expect(click(a).defaultPrevented, id).toBe(true);
   }
   expect(sent).toEqual([]);
 });
@@ -242,7 +290,7 @@ const NAVIGATION_PATTERNS: [string, RegExp][] = [
   ["a <form>", /<form[\s>]/i],
   [
     "a location assignment",
-    /\blocation(\.(href|assign|replace))?\s*=[^=]|\blocation\.(assign|replace)\(/,
+    /\blocation(\.(href|assign|replace))?\s*[-+*/|&]?=[^=]|\blocation\.(assign|replace)\(/,
   ],
   ["a meta refresh", /<meta[^>]*http-equiv\s*=\s*["']?refresh/i],
   ["a formaction", /\bformaction\b/i],
@@ -276,14 +324,31 @@ it("index.html, src/ and vendor/ cannot navigate except by a link click", () => 
   }
 });
 
-it("each navigation pattern matches its own sample", () => {
-  const samples: Record<string, string> = {
-    "a <form>": "<form action=x>",
-    "a location assignment": "location.href = 'x'",
-    "a meta refresh": '<meta http-equiv="refresh" content="0;url=x">',
-    "a formaction": '<button formaction="x">',
-    ".submit()": "f.submit()",
+it("each navigation pattern matches its own sample and not a near miss", () => {
+  const samples: Record<string, [string, string]> = {
+    "a <form>": ["<form action=x>", "<formatted>"],
+    "a location assignment": ["document.location = 'x'", "if (location.href == x) {}"],
+    "a meta refresh": ['<meta http-equiv="refresh" content="0;url=x">', '<meta charset="utf-8">'],
+    "a formaction": ['<button formaction="x">', "<button>"],
+    ".submit()": ["f.submit()", "f.submitted = true"],
   };
-  for (const [label, re] of NAVIGATION_PATTERNS)
-    expect(re.test(samples[label] ?? ""), label).toBe(true);
+  for (const [label, re] of NAVIGATION_PATTERNS) {
+    const [hit, miss] = samples[label] ?? ["", ""];
+    expect(re.test(hit), `${label} on its sample`).toBe(true);
+    expect(re.test(miss), `${label} on a near miss`).toBe(false);
+  }
+  expect(NAVIGATION_PATTERNS[1]?.[1].test("location.href += 'x'")).toBe(true);
+});
+
+it("every allowlisted hit still exists", () => {
+  const root = resolve(import.meta.dirname, "../../../app");
+  const patterns = new Map(NAVIGATION_PATTERNS);
+  for (const [f, labels] of Object.entries(ALLOWED))
+    for (const label of Object.keys(labels)) {
+      const re = patterns.get(label);
+      expect(re, `${f}: unknown pattern ${label}`).toBeDefined();
+      expect(re?.test(readFileSync(resolve(root, f), "utf8")), `${f} no longer has ${label}`).toBe(
+        true,
+      );
+    }
 });

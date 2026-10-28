@@ -46,8 +46,8 @@ beforeEach(() => {
   sent = [];
 });
 
-function install(handlers?: Parameters<typeof installPageApi>[2]) {
-  const api = installPageApi(win, (m) => sent.push(m), handlers);
+function install() {
+  const api = installPageApi(win, (m) => sent.push(m));
   const crossfog = win.crossfog;
   if (crossfog == null) throw new Error("window.crossfog was not installed");
   return { api, crossfog };
@@ -181,9 +181,18 @@ it("keeps dispatching when one listener throws", () => {
   error.mockRestore();
 });
 
-it("registers the handlers given at install as listeners", () => {
-  const onTrack = vi.fn();
-  const { api } = install({ track: onTrack });
-  api.dispatch({ v: 1, type: "track", ...trackPayload });
-  expect(onTrack).toHaveBeenCalledExactlyOnceWith(trackPayload);
+it("hands routeStatus, linkStatus and activities to their listeners without the envelope", () => {
+  const { api, crossfog } = install();
+  const onRoute = vi.fn();
+  const onLink = vi.fn();
+  const onActivities = vi.fn();
+  crossfog.on("routeStatus", onRoute);
+  crossfog.on("linkStatus", onLink);
+  crossfog.on("activities", onActivities);
+  api.dispatch({ v: 1, type: "routeStatus", routeId, state: "failed", why: "x" });
+  api.dispatch({ v: 1, type: "linkStatus", paired: true, reachable: false });
+  api.dispatch({ v: 1, type: "activities", items: [] });
+  expect(onRoute).toHaveBeenCalledExactlyOnceWith({ routeId, state: "failed", why: "x" });
+  expect(onLink).toHaveBeenCalledExactlyOnceWith({ paired: true, reachable: false });
+  expect(onActivities).toHaveBeenCalledExactlyOnceWith({ items: [] });
 });

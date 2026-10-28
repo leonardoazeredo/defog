@@ -2,7 +2,7 @@ import type { NativeToWeb, WebToNative } from "../src/bridge/protocol.js";
 import type { Send } from "./bridge.js";
 import type { FogCache } from "./fogCache.js";
 import type { LoadOutcome } from "./loader.js";
-import type { PageApi } from "./pageApi.js";
+import { isPageMessage, type PageApi } from "./pageApi.js";
 import { createReceiver } from "./receive.js";
 import type { PageSettings } from "./settings.js";
 import type { Status, StatusActions } from "./status.js";
@@ -155,12 +155,8 @@ export function createSession(deps: SessionDeps): { onMessage(msg: NativeToWeb):
           if (settings.apply(msg.json)) send({ v: 1, type: "settingsApplied" });
           break;
 
-        case "routeStatus":
-        case "linkStatus":
-        case "activities":
-        case "track":
-          pageApi.dispatch(msg);
-          break;
+        default:
+          if (isPageMessage(msg)) pageApi.dispatch(msg);
       }
     },
   };
