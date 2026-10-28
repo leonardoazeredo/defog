@@ -255,8 +255,9 @@ describe("expo sqlite driver export", () => {
 
 // A main connection that refuses any call while an exclusive transaction is open, as the real
 // one can ("database is locked"); the transaction's own connection never refuses.
-function lockingDb(events: string[], gate: { open: boolean }): ExpoDb {
+function lockingDb(events: string[], gate: { open: boolean; closed?: boolean }): ExpoDb {
   const refuse = (what: string) => {
+    if (gate.closed) throw new Error(`database is closed: ${what}`);
     if (gate.open) throw new Error(`database is locked: ${what}`);
     events.push(what);
   };
@@ -275,6 +276,9 @@ function lockingDb(events: string[], gate: { open: boolean }): ExpoDb {
       return [{}] as T[];
     },
     async closeAsync() {
+      // Closing takes a moment, as the real one does; the connection is unusable once it ends.
+      await new Promise((r) => setTimeout(r, 10));
+      gate.closed = true;
       events.push("close");
     },
     async withExclusiveTransactionAsync(task) {
@@ -407,5 +411,14 @@ describe("expo sqlite driver plain queries beside a transaction", () => {
     await db.close();
     await run;
     expect(events).toEqual(["SLOW", "close"]);
+  });
+
+  it("rejects a query made after close instead of running it on the closing database", async () => {
+    const { db, events } = await setup();
+    const closing = db.close();
+    const late = db.run("LATE");
+    await expect(late).rejects.toThrow(/closed/);
+    await closing;
+    expect(events).toEqual(["close"]);
   });
 });

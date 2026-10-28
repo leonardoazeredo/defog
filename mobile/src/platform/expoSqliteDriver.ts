@@ -104,7 +104,7 @@ export async function createExpoSqliteDriver(opts: ExpoSqliteDriverOptions): Pro
   }
 
   let tail: Promise<unknown> = Promise.resolve();
-  // Queries, transactions and exports wait in this one line: a plain query on the main connection
+  // Queries, transactions, exports and close wait in this one line: a plain query on the main connection
   // fails with "database is locked" while a transaction is open on its own connection. The
   // callback's own queries use `wrap(txn)` and skip the line; a call on this driver from inside a
   // callback would wait forever on the transaction it is part of, and nothing detects or prevents that.
@@ -132,9 +132,6 @@ export async function createExpoSqliteDriver(opts: ExpoSqliteDriverOptions): Pro
       return enqueue(run);
     },
     exportTo: (path, key) => enqueue(() => copyOut(db, "main", "backup", path, key)),
-    async close() {
-      await tail;
-      await db.closeAsync();
-    },
+    close: () => enqueue(() => db.closeAsync()),
   };
 }
