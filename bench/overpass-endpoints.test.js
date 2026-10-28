@@ -486,34 +486,84 @@ const realFetch = global.fetch;
     assert.equal(text, "The street server has blocked this network for today: it caps each network's daily use. Try another network, or try again tomorrow.");
     assert.ok(!/no answer|90 s/.test(text + e.message) && !/406/.test(text), text + " / " + e.message);
   }
-  { // within the hour main is held and only NextGIS's silence is fresh: still main's 406, blocked, with a retry time
+  { // within the hour main is held and only NextGIS's silence is fresh: the post's own stall outranks the
+    // held block, with NextGIS's error and, every endpoint now held, the first hold's end
     reset();
     global.fetch = routed({ [M]: status(406), [N]: silent });
     await rejection(played(Overpass.post("data=x")));
     assert.ok(t - start < 3_600_000 && t - start > 30_000, "main still held, NextGIS's 30 s over");
     calls = [];
+    const sent = t;
     const e = await rejection(played(Overpass.post("data=x")));
     assert.deepEqual(calls, [N], "main is not asked again");
-    assert.equal(e.reason, "blocked");
-    assert.equal(e.message, "overpass HTTP 406");
-    assert.equal(e.retryAt, start + 3_600_000, "the block's hour, not NextGIS's fresh 30 s");
-    calls = [];
-    const streets = new StreetIndex({ newFrac: () => 1 });
-    const d = await played(streets.ensureRects([{ s: 51, w: 13.7, n: 51.01, e: 13.71 }], "run").then(() => assert.fail("expected a rejection"), (x) => x));
-    assert.deepEqual([d.reason, typeof d.retryAt], ["blocked", "number"]);
-    const text = StreetMessages.describe(StreetIndex.downloadFacts(d), t);
-    assert.equal(text, "The street server has blocked this network for today: it caps each network's daily use. Try another network, or try again tomorrow.");
-    assert.ok(!/no answer|90 s/.test(text + d.message), text + " / " + d.message);
+    assert.equal(e.reason, "stalled");
+    assert.ok(!/406/.test(e.message), "NextGIS's own failure, not main's 406: " + e.message);
+    assert.equal(e.retryAt, sent + 90_000 + 30_000, "NextGIS's 30 s stall hold ends first");
   }
-  { // a held endpoint's error carries no retry time left over from an earlier post
+  { // a hold carried over from an earlier post outranks only when this post had nothing better:
+    // overpass-api.de held for its 406 and NextGIS answering 502 now is busy, with NextGIS's error and no
+    // retry time; a 429 holds NextGIS too and stays busy, with the first hold's end; with every endpoint
+    // held before the post, the held block wins as before; a 406 in this post is blocked
+    reset({ order: null });
+    global.fetch = routed({ [N]: status(500), [M]: status(406) });
+    assert.equal((await rejection(Overpass.post("data=x"))).reason, "blocked", "this post's own 406");
+    calls = []; t = start + 60_000;
+    global.fetch = routed({ [N]: status(502), [M]: answer });
+    const busy = await rejection(Overpass.post("data=x"));
+    assert.deepEqual(calls, [N], "main is held for its hour");
+    assert.deepEqual([busy.reason, busy.message, busy.retryAt], ["busy", "overpass HTTP 502", undefined]);
+    global.fetch = routed({ [N]: status(429), [M]: answer });
+    const limited = await rejection(Overpass.post("data=x"));
+    assert.deepEqual([limited.reason, limited.message, limited.retryAt], ["busy", "overpass HTTP 429", t + 30_000]);
+    calls = [];
+    const held = await rejection(Overpass.post("data=x"));
+    assert.deepEqual([calls, held.reason, held.message, held.retryAt], [[], "blocked", "overpass HTTP 406", start + 3_600_000]);
+    t += 30_001; global.fetch = routed({ [N]: status(406), [M]: answer });
+    assert.equal((await rejection(Overpass.post("data=x"))).reason, "blocked", "NextGIS's own 406");
+    // the browser's offline joins the post's own failures: it outranks a fresh 500, not a held block
+    reset();
+    global.fetch = routed({ [M]: status(406), [N]: status(500) });
+    await rejection(Overpass.post("data=x"));
+    t += 30_001;
+    Object.defineProperty(global.navigator, "onLine", { value: false, configurable: true });
+    try {
+      assert.equal((await rejection(Overpass.post("data=x"))).reason, "offline");
+    } finally { delete global.navigator.onLine; }
+  }
+  { // a fresh 500 beside a held 406 is the post's own failure: server, with no retry time left over from
+    // the earlier post that held both endpoints
     reset();
     global.fetch = routed({ [M]: status(406), [N]: status(429) });
     const first = await rejection(Overpass.post("data=x"));
     assert.equal(typeof first.retryAt, "number");
     t = start + 40_000; global.fetch = routed({ [M]: status(406), [N]: status(500) });
     const e = await rejection(Overpass.post("data=x"));
-    assert.equal(e.reason, "blocked");
+    assert.equal(e.reason, "server");
     assert.equal(e.retryAt, undefined, "NextGIS answered and is not held: no retry time");
+  }
+  { // a post whose caller went stale while it waited for a slot is not sent: the slot passes to the next
+    // post and the stale one rejects superseded; one stale before it asks anything sends nothing
+    reset({ key: null, order: null });
+    const f = heldFetch();
+    let stale = false;
+    const open = [1, 2].map((i) => Overpass.post("data=" + i));
+    const waiting = Overpass.post("data=3", { stale: () => stale });
+    waiting.catch(() => {});
+    const after = Overpass.post("data=4");
+    await settle();
+    assert.equal(calls.length, 2, "two open, two waiting for a slot");
+    stale = true;
+    f.pending.shift().answer();
+    await settle();
+    const e = await waiting.then(() => assert.fail("expected a rejection"), (x) => x);
+    assert.deepEqual([e.reason, e.retryAt], ["superseded", undefined]);
+    assert.equal(calls.length, 3, "the stale post sent nothing; its slot went to the next post");
+    while (f.pending.length) { f.pending.shift().answer(); await settle(); }
+    assert.deepEqual(await Promise.all([...open, after]), [{ from: M }, { from: M }, { from: M }]);
+    assert.equal(f.most[M], 2);
+    calls = [];
+    const already = await Overpass.post("data=5", { stale: () => true }).then(() => assert.fail("expected a rejection"), (x) => x);
+    assert.deepEqual([already.reason, calls], ["superseded", []]);
   }
   { // a remapped offline and the browser's own offline each throw an error of their own reason's
     reset();

@@ -51,8 +51,9 @@
     // opts.cacheOnly, it comes back in the returned Map alone. A failure rethrows the network's error
     // as it is; ensureRects counts tiles. opts.cacheOnly: what the store holds and nothing else, never
     // the network, so the Streets in fog look can draw on every pan without spending the server's
-    // daily share. The run's other opts (its clock and busy wait) go to the network source, so a busy
-    // wait keeps to the run's deadline and stop.
+    // daily share. The run's other opts (its clock, busy wait and stale) go to the network source, so a
+    // busy wait keeps to the run's deadline and stop, and a replaced run's posts still waiting for a slot
+    // are not sent.
     async function fetchStreets(tiles, kind, onTile, opts) {
       const state = { storeDown: false };
       const out = new Map();
@@ -96,8 +97,8 @@
         await Promise.all(puts);
         const left = missing.filter((t) => !out.has(t.x + ":" + t.y));
         // old streets beat none when offline, but only if they cover everything still missing; a throw
-        // with no outage reason is a bug, which old streets must not hide
-        if (stopped || !OUTAGE_REASONS.has(e && e.reason) || !left.every((t) => expired.has(t.x + ":" + t.y))) throw e;
+        // with no outage reason is a bug, which old streets must not hide; a replaced run is given none
+        if (stopped || (opts && opts.stale && opts.stale()) || !OUTAGE_REASONS.has(e && e.reason) || !left.every((t) => expired.has(t.x + ":" + t.y))) throw e;
         // in the Map alone, past onTile: they cost no request, so the caller's per-tile stop (the run
         // deadline) must not cut them off
         for (const t of left) out.set(t.x + ":" + t.y, expired.get(t.x + ":" + t.y));

@@ -134,6 +134,34 @@ function source(held, net) {
     assert.deepEqual(state.said.slice(0, 3).map(([text]) => text), ["Getting the street map, 0 of 2…",
       "The street servers are busy. Trying again in about 20 s… (0 of 2)", "Getting the street map, 0 of 2…"]);
   }
+  { // the map moved, or the look switched off, during a busy wait: the download asks nothing further,
+    // words nothing and warns nothing
+    for (const leave of ["move", "switch off"]) {
+      const warned = [], orig = console.warn;
+      console.warn = (...a) => warned.push(a);
+      let asked = 0;
+      const src = async (tiles, kind, onTile, opts) => {
+        const out = new Map();
+        if (opts && opts.cacheOnly) return out;
+        asked++;
+        await opts.wait(Date.now() + 15000);
+        asked++;
+        for (const t of tiles) { out.set(t.x + ":" + t.y, { ways: [], groups: {} }); onTile(t, out.get(t.x + ":" + t.y)); }
+        return out;
+      };
+      const { layer, state, streets } = fakeLayer(src);
+      try {
+        streets.sleep = async () => { if (leave === "move") layer._moved(); else layer.setEnabled(false); };
+        await layer._update();
+        await layer._download();
+      } finally { console.warn = orig; }
+      assert.equal(asked, 1, leave + ": no request after the wait");
+      assert.equal(layer._failure, null, leave);
+      assert.deepEqual(warned, [], leave);
+      assert.equal(layer._fetching, false, leave);
+      if (leave === "move") assert.deepEqual(state.said.pop(), ["Street map known for 0 of 2 pieces here.", "Download this area"]);
+    }
+  }
   { // a second tap while the download runs does nothing
     let release;
     const gate = new Promise((r) => { release = r; });

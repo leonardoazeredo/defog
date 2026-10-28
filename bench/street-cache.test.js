@@ -48,6 +48,26 @@ const T = (x, y) => ({ x, y });
     const got = await c2.fetchStreets([T(1, 2)], "run", null, { now: () => t, wait: async () => { throw stop; } }).then(() => null, (e) => e);
     assert.equal(got, stop);
   }
+  { // a replaced run is told to the network (its posts waiting for a slot are then not sent), and its
+    // outage gets no expired copy in place of the rest: nothing would use them
+    let t = 0;
+    const store = TileStore.memory({ maxEntries: 10 });
+    const { network } = fakeNetwork();
+    const c = StreetCache.create({ store, network, now: () => t, maxAgeMs: DAY });
+    await c.fetchStreets([T(1, 2)], "run");
+    t = 2 * DAY;
+    let stale = false, heard = null;
+    const failing = async (tiles, kind, onTile, opts) => {
+      heard = opts.stale;
+      stale = true;
+      throw Object.assign(new Error("overpass HTTP 502"), { reason: "busy" });
+    };
+    const c2 = StreetCache.create({ store, network: failing, now: () => t, maxAgeMs: DAY });
+    const got = await c2.fetchStreets([T(1, 2)], "run", null, { now: () => t, wait: async () => true, stale: () => stale }).then(() => null, (e) => e);
+    assert.equal(typeof heard, "function");
+    assert.equal(heard(), true, "the network hears the caller's own stale");
+    assert.equal(got && got.reason, "busy");
+  }
   { // a cold request fetches and stores; the same request again makes no network call
     const { network, calls } = fakeNetwork();
     const c = StreetCache.create({ store: TileStore.memory({ maxEntries: 10 }), network, now: () => 0 });
