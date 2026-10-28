@@ -7,7 +7,7 @@
 // over; a browser and the bench have none, and tests set a made-up one). The key is part of its URL,
 // so no message or log names the keyed URL. An endpoint that sends no response headers within
 // FIRST_BYTE_MS, or not the whole answer within REQUEST_TIMEOUT_MS, is abandoned (a stall) and held
-// 30 s, ten minutes from the third stall in a row. A 401 or 403 (a revoked or mistyped key) holds that endpoint an hour. A network failure with no readable status (no
+// 30 s, ten minutes from the third stall in a row. A 401 or 403 from NextGIS (a revoked or mistyped key) holds it an hour; overpass-api.de has no key, so its 401 or 403 is an ordinary failure. A network failure with no readable status (no
 // connection, or an answer without CORS headers, which can hide a 429) is held 30 s. The rejection
 // names the kind of failure in `reason`, one of five words, for the page to put into words (or
 // "superseded" when the caller's run was replaced, which the page never words).
@@ -48,7 +48,7 @@
     return typeof key === "string" && key ? "https://overpass.nextgis.com/" + encodeURIComponent(key) + "/api/interpreter" : undefined;
   }
   let state = {}; // url -> {until: time before which it is not asked again, heldAt: when that hold was set, why: its reason, error: the failure that earned it, stalls: in a row}
-  let warned = {}; // endpoint name -> true once a 401/403 from it was logged; keyed on the name, the URL holds the key
+  let warned = {}; // endpoint name -> true once a 401/403 from NextGIS was logged; keyed on the name, the URL holds the key
   let slots = {}; // endpoint name -> {open: requests in flight, waiting: resolvers, first come first served}
 
   const stateOf = (url) => state[url] || (state[url] = { until: 0, heldAt: -Infinity, why: null, error: null, stalls: 0 });
@@ -179,7 +179,8 @@
       else if (r.kind === "network") { why = "offline"; holdMs = MIN_BACKOFF_MS; }
       else if (r.status === 406) { why = "blocked"; holdMs = Math.max(BAN_HOLD_MS, r.retryAfter); }
       else if (r.status === 429) { why = "busy"; holdMs = Math.max(MIN_BACKOFF_MS, r.retryAfter); }
-      else if (r.status === 401 || r.status === 403) {
+      // only NextGIS needs a credential, so a 401 or 403 from overpass-api.de is no credential problem and is not held
+      else if ((r.status === 401 || r.status === 403) && name === "nextgis") {
         // a key that is revoked or mistyped stays so until the owner fixes it: ask elsewhere for an
         // hour instead of paying a failed round trip first on every request
         why = "server"; holdMs = BAN_HOLD_MS;

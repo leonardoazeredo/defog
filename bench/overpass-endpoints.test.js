@@ -726,7 +726,7 @@ const realFetch = global.fetch;
       assert.deepEqual(set, [["f2m_overpassOrder", "main"]], "an explicit choice is stored");
     }
   }
-  { // 19. a 401 or 403 (a revoked or mistyped key) holds the endpoint an hour and is logged once per
+  { // 19. a 401 or 403 from NextGIS (a revoked or mistyped key) holds it an hour and is logged once per
     //     endpoint name with status and name only: never the URL, which holds the key
     for (const code of [401, 403]) {
       reset({ order: null });
@@ -753,6 +753,13 @@ const realFetch = global.fetch;
         assert.equal(e.retryAt, undefined, "overpass-api.de is not held");
       } finally { console.warn = realWarn; }
     }
+    // overpass-api.de alone: its 403 is no credential problem, so it is not held
+    reset({ key: null });
+    global.fetch = routed({ [M]: status(403) });
+    await rejection(Overpass.post("data=x"));
+    calls = [];
+    await rejection(Overpass.post("data=x"));
+    assert.deepEqual(calls, [M], "overpass-api.de is asked again at once");
   }
   { // 20. a browser that reports offline wins when no endpoint was asked in this post: every one is
     //     held from an earlier post, so the person is not told the server is slow
