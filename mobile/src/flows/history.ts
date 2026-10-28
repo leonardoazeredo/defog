@@ -11,7 +11,7 @@ export interface HistoryDeps {
 export interface HistoryFlow {
   /** Sends the activity summaries, newest first. Never rejects. */
   publish(): Promise<void>;
-  /** Sends one activity's track in chunks. Never rejects. */
+  /** Sends one activity's track in chunks, or `trackUnavailable` when the activity is gone or cannot be read. Never rejects. */
   needTrack(id: string): Promise<void>;
   /** Deletes the activity, then publishes the rest. Never rejects. */
   deleteActivity(id: string): Promise<void>;
@@ -38,7 +38,11 @@ export function createHistoryFlow(deps: HistoryDeps): HistoryFlow {
     async needTrack(id) {
       try {
         const activity = await activities.get(id);
-        if (!activity) return;
+        // Deleted since the page listed it: without an answer the detail shows only its timeout line, not why.
+        if (!activity) {
+          send({ v: 1, type: "trackUnavailable", activityId: id, reason: "notFound" });
+          return;
+        }
         const { track } = activity;
         // The history panel draws the route beside the track; a route that cannot be read costs only that line.
         let route: { coords: RouteRecord["coords"] } | undefined;
@@ -66,6 +70,7 @@ export function createHistoryFlow(deps: HistoryDeps): HistoryFlow {
         }
       } catch (e) {
         warn("could not read a track", e);
+        send({ v: 1, type: "trackUnavailable", activityId: id, reason: "readFailed" });
       }
     },
 

@@ -65,6 +65,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   // The phone's answers go to the Send button's chip through CrossfogPage; both are optional so a page without the button ignores them.
   window.crossfog?.on("routeStatus", (msg) => window.CrossfogPage?.routeStatus?.(msg));
   window.crossfog?.on("linkStatus", (msg) => window.CrossfogPage?.linkStatus?.(msg));
+  // Only the panel listens: the history sync still holds the track as requested, so a reveal whose
+  // track could not be read waits until the next page load or until the activity leaves the list and returns.
+  window.crossfog?.on("trackUnavailable", ({ activityId, reason }) =>
+    window.CrossfogPage?.history?.trackUnavailable?.(activityId, reason),
+  );
 
   const zipInput = document.getElementById("zip") as HTMLInputElement;
   const load = (bytes: Uint8Array, name: string) =>

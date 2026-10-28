@@ -33,6 +33,7 @@ interface Route {
 interface Panel {
   setActivities(items: ActivitySummary[]): void;
   setTrack(id: string, points: unknown[], route?: { coords: number[][] }): void;
+  trackUnavailable(id: string, reason: "notFound" | "readFailed"): void;
   refresh(): void;
 }
 interface SendControl {
@@ -63,6 +64,10 @@ let send: SendControl;
 let route: Route;
 let map: LeafletMap;
 let shown: ReturnType<typeof vi.fn>;
+
+const replyTimeoutMs = () =>
+  (window as unknown as { HistoryPanel: { REPLY_TIMEOUT_MS: number } }).HistoryPanel
+    .REPLY_TIMEOUT_MS;
 
 const $ = (id: string) => document.getElementById(id) as HTMLElement;
 const cards = () => Array.from(document.querySelectorAll<HTMLElement>("#historyList .histCard"));
@@ -264,6 +269,75 @@ describe("History tab", () => {
     expect(sent).toEqual([]);
   });
 
+  it("says the track is gone when the phone no longer has the activity", () => {
+    panel.setActivities([summary(A, "2026-03-01T10:00:00Z")]);
+    click(cards()[0] ?? null);
+    panel.trackUnavailable(A, "notFound");
+    expect($("historyDetail").textContent).toContain("no longer on the phone");
+    expect($("historyDetail").textContent).not.toContain("Loading the track");
+    expect(button("Show on map").disabled).toBe(true);
+  });
+
+  it("says the phone could not read the track", () => {
+    panel.setActivities([summary(A, "2026-03-01T10:00:00Z")]);
+    click(cards()[0] ?? null);
+    panel.trackUnavailable(B, "readFailed");
+    expect($("historyDetail").textContent).toContain("Loading the track");
+    panel.trackUnavailable(A, "readFailed");
+    expect($("historyDetail").textContent).toContain("could not read this track");
+  });
+
+  it("stops waiting for a track the phone never sends", () => {
+    vi.useFakeTimers();
+    panel.setActivities([summary(A, "2026-03-01T10:00:00Z")]);
+    click(cards()[0] ?? null);
+    vi.advanceTimersByTime(replyTimeoutMs() - 1);
+    expect($("historyDetail").textContent).toContain("Loading the track");
+    vi.advanceTimersByTime(1);
+    expect($("historyDetail").textContent).toContain("did not send the track");
+    expect($("historyDetail").textContent).not.toContain("Loading the track");
+
+    // a track that arrives late still shows
+    panel.setTrack(A, [{ t: 0, lat: 51, lon: 13.7 }]);
+    expect(button("Show on map").disabled).toBe(false);
+    expect($("historyDetail").textContent).not.toContain("did not send the track");
+  });
+
+  it("does not time out a track that arrived, nor one for a card since closed", () => {
+    vi.useFakeTimers();
+    panel.setActivities([summary(A, "2026-03-01T10:00:00Z"), summary(B, "2026-03-02T10:00:00Z")]);
+    click(cards()[1] ?? null);
+    panel.setTrack(A, [{ t: 0, lat: 51, lon: 13.7 }]);
+    vi.advanceTimersByTime(replyTimeoutMs());
+    expect($("historyDetail").textContent).not.toContain("did not send the track");
+
+    click(button("← All"));
+    click(cards()[0] ?? null);
+    vi.advanceTimersByTime(replyTimeoutMs() / 2);
+    panel.setTrack(B, [{ t: 0, lat: 51, lon: 13.7 }]);
+    vi.advanceTimersByTime(replyTimeoutMs());
+    expect($("historyDetail").textContent).not.toContain("did not send the track");
+  });
+
+  it("says it is not connected instead of loading forever outside the phone app", () => {
+    delete (window as { crossfog?: unknown }).crossfog;
+    panel.setActivities([summary(A, "2026-03-01T10:00:00Z")]);
+    click(cards()[0] ?? null);
+    expect($("historyDetail").textContent).toContain("This page is not running in the app");
+    expect($("historyDetail").textContent).not.toContain("Loading the track");
+  });
+
+  it("keeps the card open and says why when Delete cannot reach the phone", () => {
+    panel.setActivities([summary(A, "2026-03-01T10:00:00Z")]);
+    click(cards()[0] ?? null);
+    delete (window as { crossfog?: unknown }).crossfog;
+    click(button("Delete"));
+    click(button("Confirm"));
+    expect($("historyDetail").style.display).toBe("");
+    expect($("historyDetail").textContent).toContain("nothing was deleted");
+    expect(button("Delete").textContent).toBe("Delete");
+  });
+
   it("closes the detail when its activity leaves the list", () => {
     panel.setActivities([summary(A, "2026-03-01T10:00:00Z"), summary(B, "2026-03-02T10:00:00Z")]);
     click(cards()[1] ?? null);
@@ -378,6 +452,51 @@ describe("Send to watch", () => {
     };
     expect(() => send.update()).not.toThrow();
     expect(sendBtn().disabled).toBe(true);
+  });
+
+  it("says Could not send when handing the route to the phone throws", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    route.setFixedRoute(PINS(), COORDS, STATS);
+    send.update();
+    (window.crossfog as { sendRoute(r: unknown): void }).sendRoute = () => {
+      throw new TypeError("bridge gone");
+    };
+    expect(() => click(sendBtn())).not.toThrow();
+    expect(chip()).toBe("Could not send");
+    expect(error.mock.calls.join(" ")).toContain("TypeError");
+  });
+
+  it("says Could not send when the phone never answers", () => {
+    vi.useFakeTimers();
+    route.setFixedRoute(PINS(), COORDS, STATS);
+    send.update();
+    click(sendBtn());
+    vi.advanceTimersByTime(replyTimeoutMs() - 1);
+    expect(chip()).toBe("");
+    vi.advanceTimersByTime(1);
+    expect(chip()).toBe("Could not send");
+  });
+
+  it("keeps Waiting for watch once the phone has answered, however long the watch takes", () => {
+    vi.useFakeTimers();
+    route.setFixedRoute(PINS(), COORDS, STATS);
+    send.update();
+    click(sendBtn());
+    const id = (sent[0] as Extract<WebToNative, { type: "sendRoute" }>).route.id;
+    send.routeStatus({ routeId: id, state: "waiting" });
+    vi.advanceTimersByTime(replyTimeoutMs() * 10);
+    expect(chip()).toBe("Waiting for watch");
+  });
+
+  it("does not time out a route that was edited before the phone answered", () => {
+    vi.useFakeTimers();
+    route.setFixedRoute(PINS(), COORDS, STATS);
+    send.update();
+    click(sendBtn());
+    route._applyRoute([...COORDS, [13.72, 51.001, 118]], { ...STATS, km: 0.9 });
+    send.update();
+    vi.advanceTimersByTime(replyTimeoutMs());
+    expect(chip()).toBe("");
   });
 
   it("does nothing outside the phone app", () => {

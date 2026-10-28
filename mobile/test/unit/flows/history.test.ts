@@ -140,10 +140,13 @@ describe("history", () => {
     expect(sent[0]).not.toHaveProperty("route");
   });
 
-  it("sends nothing for an activity it does not have", async () => {
+  it("says the track is gone for an activity it does not have, so the page stops waiting", async () => {
     const { sent, flow } = setup();
     await flow.needTrack(ID(9));
-    expect(sent).toEqual([]);
+    expect(sent).toEqual([
+      { v: 1, type: "trackUnavailable", activityId: ID(9), reason: "notFound" },
+    ]);
+    valid(sent);
   });
 
   it("deletes the activity and publishes the rest", async () => {
@@ -188,8 +191,10 @@ describe("history", () => {
     await expect(flow.deleteActivity(ID(1))).resolves.toBeUndefined();
     await expect(flow.needTrack(ID(1))).resolves.toBeUndefined();
     await expect(flow.publish()).resolves.toBeUndefined();
-    expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({ type: "notice" });
+    expect(sent).toEqual([
+      expect.objectContaining({ type: "notice" }),
+      { v: 1, type: "trackUnavailable", activityId: ID(1), reason: "readFailed" },
+    ]);
     valid(sent);
   });
 });

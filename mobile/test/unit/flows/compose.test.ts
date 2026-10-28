@@ -107,7 +107,7 @@ describe("composed flows", () => {
     expect(link.queued()).toHaveLength(1);
     await flows.needTrack(A);
     await flows.deleteActivity(A);
-    expect(sent.map((m) => m.type)).toEqual(["routeStatus", "activities"]);
+    expect(sent.map((m) => m.type)).toEqual(["routeStatus", "trackUnavailable", "activities"]);
   });
 
   it("hands off now and publishes once an activity was stored", async () => {

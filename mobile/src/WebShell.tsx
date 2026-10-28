@@ -10,10 +10,16 @@ import { WEB_HTML } from "../../generated/web.js";
 import { createBackupFlow } from "./backup/backup.js";
 import { createRestoreFlow } from "./backup/restore.js";
 import { createSettingsChannel } from "./backup/settings.js";
+import { reportDropped } from "./bridge/dropped.js";
 import { decideNavigation, shouldOpenWindowExternally } from "./bridge/navigationPolicy.js";
 import { openLink } from "./bridge/openLink.js";
 import { pageConfigScript } from "./bridge/pageConfig.js";
-import { isTrustedSource, ORIGIN, parseWebToNative } from "./bridge/protocol.js";
+import {
+  inspectWebToNative,
+  isTrustedSource,
+  type NativeToWeb,
+  ORIGIN,
+} from "./bridge/protocol.js";
 import { createSend, scheduleTask } from "./bridge/send.js";
 import { type Controller, createController } from "./controller.js";
 import { COPY } from "./copy.js";
@@ -92,7 +98,7 @@ function buildController(
   initialLoadDone: React.RefObject<boolean>,
   setBusy: (on: boolean) => void,
   askPassphrase: (mode: PassphraseRequest["mode"]) => Promise<PassphraseAnswer | null>,
-): { controller: Controller; flows: ComposedFlows } {
+): { controller: Controller; flows: ComposedFlows; send: (msg: NativeToWeb) => void } {
   const fogDir = new Directory(Paths.document, "fog");
   const fs = createExpoFileStore(fogDir);
   const store = createFogStore(fs, { sha256Hex, now: Date.now });
@@ -184,7 +190,7 @@ function buildController(
     flows,
     ...(__DEV__ ? { devAddActivity: devAddActivity(flows, notify) } : {}),
   });
-  return { controller, flows };
+  return { controller, flows, send };
 }
 
 export function WebShell(): React.JSX.Element {
@@ -214,7 +220,7 @@ export function WebShell(): React.JSX.Element {
         }),
     );
   }
-  const { controller, flows } = builtRef.current;
+  const { controller, flows, send } = builtRef.current;
 
   useEffect(() => {
     void controller.start();
@@ -289,12 +295,12 @@ export function WebShell(): React.JSX.Element {
         }}
         onMessage={(event) => {
           if (!isTrustedSource(event.nativeEvent.url)) return;
-          const msg = parseWebToNative(event.nativeEvent.data);
-          if (!msg) {
-            console.warn("crossfog: dropped invalid message");
+          const parsed = inspectWebToNative(event.nativeEvent.data);
+          if (!parsed.ok) {
+            reportDropped(parsed.drop, send);
             return;
           }
-          void controller.onWebMessage(msg);
+          void controller.onWebMessage(parsed.msg);
         }}
         onContentProcessDidTerminate={() => {
           void controller.onProcessGone();
