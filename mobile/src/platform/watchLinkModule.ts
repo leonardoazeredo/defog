@@ -91,6 +91,10 @@ export function pendingActivities(): Promise<unknown> {
   return WatchLink.pendingActivities();
 }
 
+export function unreadableActivities(): Promise<unknown> {
+  return WatchLink.unreadableActivities();
+}
+
 export function readActivity(id: string): Promise<string> {
   return WatchLink.readActivity(id);
 }

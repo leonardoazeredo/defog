@@ -10,6 +10,8 @@ import type {
 export interface FakeWatchLink extends WatchLink {
   /** The watch handed an activity to the phone's staging store. */
   stage(offer: ActivityOffer): void;
+  /** An item staged under `id` that no longer reads back, as after a lost staging alias. */
+  stageUnreadable(id: string): void;
   setStatus(status: LinkStatus): void;
   /** The watch saved a queued route. */
   confirmRoute(routeId: string): void;
@@ -23,6 +25,7 @@ type Listeners = { [E in keyof WatchLinkEvents]: Set<(payload: WatchLinkEvents[E
 
 export function createFakeWatchLink(): FakeWatchLink {
   const staged = new Map<string, ActivityOffer>();
+  const unreadable = new Set<string>();
   const routes = new Map<string, RouteRecord>();
   const releasedIds: string[] = [];
   let currentStatus: LinkStatus = { paired: false, reachable: false };
@@ -63,6 +66,9 @@ export function createFakeWatchLink(): FakeWatchLink {
     async pendingActivities() {
       return [...staged.values()].map(withoutFile);
     },
+    async unreadableActivities() {
+      return unreadable.size;
+    },
     async readActivity(id) {
       const offer = staged.get(id);
       if (!offer) throw new Error("activity is not staged");
@@ -71,6 +77,7 @@ export function createFakeWatchLink(): FakeWatchLink {
     async release(id) {
       releasedIds.push(id);
       staged.delete(id);
+      unreadable.delete(id);
     },
     on(event, fn) {
       const set = listeners[event] as Set<typeof fn>;
@@ -82,6 +89,9 @@ export function createFakeWatchLink(): FakeWatchLink {
     stage(offer) {
       staged.set(offer.activityId, { ...offer });
       emit("activityStaged", { activityId: offer.activityId });
+    },
+    stageUnreadable(id) {
+      unreadable.add(id);
     },
     setStatus(status) {
       currentStatus = { ...status };

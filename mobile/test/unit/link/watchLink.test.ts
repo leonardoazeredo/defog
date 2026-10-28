@@ -4,6 +4,7 @@ import { route } from "../history/fixtures";
 const native = {
   linkStatus: vi.fn(),
   pendingActivities: vi.fn(),
+  unreadableActivities: vi.fn(),
   readActivity: vi.fn(),
   releaseActivity: vi.fn(),
   queueRoute: vi.fn(),
@@ -46,6 +47,15 @@ describe("native watch link", () => {
     await expect(createNativeWatchLink().pendingActivities()).resolves.toEqual([good]);
     expect(JSON.stringify(warn.mock.calls)).not.toContain("secret");
     warn.mockRestore();
+  });
+
+  it("returns the count of unreadable staged items and rejects anything but a whole number", async () => {
+    native.unreadableActivities.mockResolvedValue(2);
+    await expect(createNativeWatchLink().unreadableActivities()).resolves.toBe(2);
+    for (const bad of [-1, 1.5, "2"]) {
+      native.unreadableActivities.mockResolvedValue(bad);
+      await expect(createNativeWatchLink().unreadableActivities()).rejects.toThrow();
+    }
   });
 
   it("reads an activity by parsing the offer JSON the native side returns", async () => {

@@ -7,10 +7,16 @@ interface HandOffResult {
   stored: number;
   /** Staged copies cleared; includes offers whose activity was already in the store. */
   released: number;
+  /**
+   * Staged items that stay staged because they cannot be read: the native count, plus walks the
+   * native side read but that fail the id check or `parseGpx` here. Null when this pass has no count
+   * to give: listing or counting failed, or a restore's hold stopped it early.
+   */
+  unreadable: number | null;
 }
 
 export interface HandOffDeps {
-  link: Pick<WatchLink, "pendingActivities" | "readActivity" | "release">;
+  link: Pick<WatchLink, "pendingActivities" | "unreadableActivities" | "readActivity" | "release">;
   activities: Pick<ActivityStore, "add">;
   parseGpx(text: string): ParsedGpx;
   now(): number;
@@ -37,13 +43,22 @@ export function createHandOffFlow(deps: HandOffDeps): HandOffFlow {
 
   async function handle(
     activityId: string,
-  ): Promise<{ stored: boolean; released: boolean } | null> {
+  ): Promise<{ stored: boolean; released: boolean } | "unreadable" | null> {
     let activity: Activity;
     try {
       const offer = await link.readActivity(activityId);
       // The record is filed under the offer's id but released under the staged id; they must be one.
-      if (offer.activityId !== activityId) throw new Error("offer does not match its staged id");
-      const parsed = deps.parseGpx(offer.gpx);
+      if (offer.activityId !== activityId) {
+        warn("found an offer that does not match its staged id", null);
+        return "unreadable";
+      }
+      let parsed: ParsedGpx;
+      try {
+        parsed = deps.parseGpx(offer.gpx);
+      } catch (e) {
+        warn("could not parse an offer", e);
+        return "unreadable";
+      }
       activity = {
         id: offer.activityId,
         travelMode: offer.travelMode,
@@ -84,7 +99,7 @@ export function createHandOffFlow(deps: HandOffDeps): HandOffFlow {
   }
 
   async function pass(): Promise<HandOffResult> {
-    const result = { stored: 0, released: 0 };
+    const result: HandOffResult = { stored: 0, released: 0, unreadable: null };
     let pending: Awaited<ReturnType<typeof link.pendingActivities>>;
     try {
       pending = await link.pendingActivities();
@@ -92,13 +107,26 @@ export function createHandOffFlow(deps: HandOffDeps): HandOffFlow {
       warn("could not list the staged offers", e);
       return result;
     }
+    let unreadable: number | null;
+    try {
+      unreadable = await link.unreadableActivities();
+    } catch (e) {
+      warn("could not count the unreadable staged items", e);
+      unreadable = null;
+    }
     for (const { activityId } of pending) {
-      if (held > 0) break;
+      // A pass stopped early has no whole count, so `result.unreadable` stays null.
+      if (held > 0) return result;
       const outcome = await handle(activityId);
+      if (outcome === "unreadable") {
+        if (unreadable !== null) unreadable++;
+        continue;
+      }
       if (!outcome) continue;
       if (outcome.stored) result.stored++;
       if (outcome.released) result.released++;
     }
+    result.unreadable = unreadable;
     return result;
   }
 

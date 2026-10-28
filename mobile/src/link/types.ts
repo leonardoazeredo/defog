@@ -33,6 +33,11 @@ export interface WatchLink {
   /** Persists the route on the phone, across the app closing, until the watch confirms it with `routeSaved`. Nothing delivers it yet. */
   queueRoute(route: RouteRecord): Promise<void>;
   pendingActivities(): Promise<PendingActivity[]>;
+  /**
+   * How many staged items cannot be decrypted, parsed or matched to their file name; they are never
+   * listed and stay staged.
+   */
+  unreadableActivities(): Promise<number>;
   /** Rejects for an id that is not staged. */
   readActivity(id: string): Promise<ActivityOffer>;
   /** Only after the activity is committed to the phone's activity store. A well-formed id that is not staged is a no-op; a malformed id rejects. */

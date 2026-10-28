@@ -185,6 +185,12 @@ const nativeToWebSchema = z.union([
     reason: z.enum(["notFound", "readFailed"]),
   }),
   z.object({ v: z.literal(1), type: z.literal("activities"), items: z.array(activitySummary) }),
+  // Activities the watch handed over that stay staged because the phone cannot read them.
+  z.object({
+    v: z.literal(1),
+    type: z.literal("unreadableActivities"),
+    count: z.number().int().min(0),
+  }),
   z
     .object({
       v: z.literal(1),

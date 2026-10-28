@@ -130,6 +130,58 @@ describe("composed flows", () => {
     expect(sent).toEqual([]);
   });
 
+  it("tells the page how many staged items cannot be read, each time the count changes", async () => {
+    const { link, sent, flows } = setup();
+    link.stageUnreadable(A);
+
+    await flows.handOffNow();
+    expect(sent).toEqual([{ v: 1, type: "unreadableActivities", count: 1 }]);
+
+    await flows.handOffNow();
+    expect(sent).toHaveLength(1);
+
+    await link.release(A);
+    await flows.handOffNow();
+    expect(sent.at(-1)).toEqual({ v: 1, type: "unreadableActivities", count: 0 });
+  });
+
+  it("repeats a count above zero when the page is ready, since a new page shows none", async () => {
+    const { link, sent, flows } = setup();
+    link.stageUnreadable(A);
+    await flows.handOffNow();
+    sent.length = 0;
+
+    await flows.ready();
+    expect(sent.map((m) => m.type)).toEqual(["activities", "unreadableActivities", "linkStatus"]);
+  });
+
+  it("keeps the last count when a pass has none to give", async () => {
+    const { link, activities, routes } = setup();
+    link.stageUnreadable(A);
+    const sent: NativeToWeb[] = [];
+    let broken = false;
+    const flaky = {
+      ...link,
+      unreadableActivities: async () => {
+        if (broken) throw new Error("module unavailable");
+        return link.unreadableActivities();
+      },
+    };
+    const flows = createFlows({
+      link: flaky,
+      activities,
+      routes,
+      send: (m) => sent.push(m),
+      now: () => 0,
+    });
+    await flows.handOffNow();
+    broken = true;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await flows.handOffNow();
+    warn.mockRestore();
+    expect(sent).toEqual([{ v: 1, type: "unreadableActivities", count: 1 }]);
+  });
+
   it("hands an export chunk to the export flow when there is one, and drops it otherwise", async () => {
     const chunk = { exportId: "e1", name: "abcd", index: 0, total: 1, files: 1, data: "" };
     const onChunk = vi.fn(async () => {});
