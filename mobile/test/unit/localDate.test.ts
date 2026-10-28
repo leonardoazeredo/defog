@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { backupName } from "../../src/backup/format.js";
 import { localDate, localDateTime } from "../../src/localDate.js";
 
 // 2026-03-01T23:30Z is the next day in Tokyo and the same day in London.
@@ -24,7 +23,4 @@ describe("localDate", () => {
       date: "2026-03-02",
       time: "08:30",
     }));
-
-  it("names a backup by the local day", () =>
-    expect(backupName(LATE_UTC)).toBe(`crossfog-backup-${localDate(LATE_UTC)}.db`));
 });

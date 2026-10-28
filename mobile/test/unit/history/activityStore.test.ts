@@ -66,7 +66,10 @@ describe.each(impls)("activity store (%s)", (_name, make) => {
   });
 
   it("returns null for an unknown id", async () => {
-    expect(await (await make()).get("33333333-3333-4333-8333-333333333333")).toBeNull();
+    const s = await make();
+    const unknown = "33333333-3333-4333-8333-333333333333";
+    expect(await s.get(unknown)).toBeNull();
+    expect(await s.gpx(unknown)).toBeNull();
   });
 
   it("deletes once, then reports nothing to delete", async () => {
