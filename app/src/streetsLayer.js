@@ -82,7 +82,7 @@
     this._pass = 0;                // bumped by each _update, so a pass still reading cannot paint over a newer one
     if (!map.getPane("streets")) {
       map.createPane("streets");
-      map.getPane("streets").style.zIndex = 360; // above the fog (350), below routes (400)
+      map.getPane("streets").style.zIndex = 360; // above the fog (350), below the route overlays (400, and the History routes at 450)
     }
     const renderer = L.canvas({ pane: "streets" });
     // faint stretches first, so the ones you can actually take draw over them

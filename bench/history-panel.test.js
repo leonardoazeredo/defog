@@ -88,8 +88,11 @@ const { formatDuration, formatDistance, paceSecondsPerKm, formatPace, modeLabel,
     let onClick = null;
     const btn = { disabled: true, addEventListener: (_, fn) => { onClick = fn; } }, chip = { textContent: "" };
     const rec = { id: "r1", gpx: "<gpx/>" };
-    const ctl = createSendControl({ button: btn, chip, getRecord: () => rec, canSend: () => true, send });
-    return { ctl, chip, tap: () => onClick() };
+    const route = { has: true, revision: 1 };
+    const ctl = createSendControl({
+      button: btn, chip, getRecord: () => rec, hasRoute: () => route.has, revision: () => route.revision, canSend: () => true, send
+    });
+    return { ctl, chip, btn, route, tap: () => onClick() };
   }
   try {
     const errors = [];
@@ -111,6 +114,22 @@ const { formatDuration, formatDistance, paceSecondsPerKm, formatPace, modeLabel,
     answered.ctl.routeStatus({ routeId: "r1", state: "waiting" });
     fire();
     assert.equal(answered.chip.textContent, "Waiting for watch", "an answered send is never timed out");
+
+    // the button follows hasRoute without building a record; an edit (a new revision) blanks the chip
+    const edited = control(() => {});
+    edited.ctl.update();
+    assert.equal(edited.btn.disabled, false);
+    edited.tap();
+    edited.ctl.routeStatus({ routeId: "r1", state: "onWatch" });
+    assert.equal(edited.chip.textContent, "On the watch");
+    edited.route.revision++;
+    edited.ctl.update();
+    assert.equal(edited.chip.textContent, "", "an edit blanks the chip");
+    edited.ctl.routeStatus({ routeId: "r1", state: "onWatch" });
+    assert.equal(edited.chip.textContent, "", "a status for the route as it was is ignored");
+    edited.route.has = false;
+    edited.ctl.update();
+    assert.equal(edited.btn.disabled, true);
   } finally {
     global.setTimeout = realSetTimeout; global.clearTimeout = realClearTimeout; console.error = realError;
   }

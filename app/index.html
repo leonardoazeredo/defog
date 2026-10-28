@@ -8,7 +8,7 @@
   <style>
     :root {
       --bg: #e7e9ee; --card: #ffffff; --ink: #1f2533; --muted: #8a90a0;
-      --accent: #3b4ad9; --accent-soft: #eaecfb; --label: #a06a54;
+      --danger: #c9384f; --accent: #3b4ad9; --accent-soft: #eaecfb; --label: #a06a54;
       --line: #e4e6ec; --line2: #d3d7e0;
       --mono: ui-monospace, "Cascadia Mono", "Cascadia Code", "SF Mono", "JetBrains Mono", Consolas, "Liberation Mono", monospace;
     }
@@ -136,9 +136,8 @@
     .wp.sugA { background: #3f7d6d; }
     .wp.sugB { background: #a06a54; }
 
-    /* .chip is the suggestion cards' colour swatch; the Send to watch status reuses the class as text, so it drops the swatch size and shape */
-    #sendStatus.chip { width: auto; height: auto; border-radius: 0; flex: 0 1 auto; font-size: 12.5px; color: var(--muted); }
-    #sendStatus.chip:empty { display: none; }
+    .sendStatus { flex: 0 1 auto; font-size: 12.5px; color: var(--muted); }
+    .sendStatus:empty { display: none; }
     #exportWarning { margin: 9px 0; padding: 10px 12px; border: 1px solid #c8932f; border-radius: 10px; background: #fff7e6; font-size: 13px; }
     #exportWarning[hidden] { display: none; }
     #exportWarning p { margin: 0 0 8px; }
@@ -151,7 +150,7 @@
     .histTop b { font-size: 15px; }
     .histFacts { margin-top: 5px; font-size: 12.5px; color: var(--ink); display: flex; flex-wrap: wrap; gap: 4px 12px; }
     .histBack { margin-bottom: 4px; }
-    .histDelete.armed { background: #c9384f; border-color: #c9384f; color: #fff; }
+    .histDelete.armed { background: var(--danger); border-color: var(--danger); color: #fff; }
 
     .wp { width: 100%; height: 100%; border-radius: 50%; background: var(--accent); color: #fff;
       border: 2px solid #fff; box-shadow: 0 1px 4px #0006; font-size: 11px; font-weight: 700;
@@ -424,7 +423,7 @@
           </div>
           <div class="row">
             <button id="sendWatch" class="ghost grow" disabled>Send to watch</button>
-            <span id="sendStatus" class="chip" role="status" aria-live="polite"></span>
+            <span id="sendStatus" class="sendStatus" role="status" aria-live="polite"></span>
           </div>
 
           <div class="row" style="margin-top:16px; justify-content:flex-end;">

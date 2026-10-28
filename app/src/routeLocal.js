@@ -65,17 +65,8 @@
         heights = [];
       }
       const est = estimates.estimate(route.coords, travelMode, heights);
-      // no height arrived at all: a 2D line and unknown climb, not a profile that claims flat ground
-      const known = est.elevationKnown > 0;
-      return {
-        coords: known ? est.coords : route.coords,
-        stats: {
-          km: est.distanceM / 1000,
-          seconds: est.seconds,
-          ascent: known ? est.ascentM : null,
-          descent: known ? est.descentM : null,
-        },
-      };
+      // no height arrived: keep the 2D route.coords (routeStats gives the null climb), not a profile that claims flat ground
+      return { coords: est.elevationKnown > 0 ? est.coords : route.coords, stats: estimates.routeStats(est) };
     };
   }
 
