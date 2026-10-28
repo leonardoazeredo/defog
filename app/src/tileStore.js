@@ -92,7 +92,7 @@
       }, timeoutMs);
       t.oncomplete = () => { clearTimeout(timer); resolve(req ? req.result : undefined); };
       t.onerror = t.onabort = () => { clearTimeout(timer); reject(t.error || new Error("transaction aborted")); };
-      req = work(t.objectStore(storeName));
+      try { req = work(t.objectStore(storeName)); } catch (e) { clearTimeout(timer); reject(e); }
     });
     const tx = async (mode, work, retried) => {
       const d = await connection();

@@ -8,7 +8,7 @@
   // in-memory one. The leading version is the tile grid's: bump it whenever TILE_DEG in streets.js
   // changes, or answers fetched for the old grid are read as tiles of the new one.
   // The same prefix is the schema version of a stored entry: change the answer format and the prefix
-  // together, and old entries are never read (sweepLegacy removes them over successive opens).
+  // together, and old entries are never read (sweepLegacy leaves them; they go only when LRU eviction reaches them, once the store is full).
   const KEY_VERSION = "2:";
   const idOf = (t) => t.x + ":" + t.y;
   const keyOf = (kind, t) => KEY_VERSION + kind + ":" + idOf(t);
@@ -122,12 +122,12 @@
       return out;
     }
 
-    // Removes each entry whose name lacks the current KEY_VERSION prefix, so an older build also clears a newer build's entries (the store is this cache's alone); the caller
+    // Removes each entry whose name has no leading version number (numbered entries stay, so an older build never deletes a newer build's), at most LEGACY_SWEEP_MAX per call; the caller
     // starts it without awaiting. Resolves with how many went and never rejects.
     async function sweepLegacy() {
       let n = 0;
       try {
-        const old = (await store.keys()).filter((k) => !k.startsWith(KEY_VERSION)).slice(0, LEGACY_SWEEP_MAX);
+        const old = (await store.keys()).filter((k) => !/^\d+:/.test(k)).slice(0, LEGACY_SWEEP_MAX);
         for (const k of old) { await store.delete(k); n++; }
       } catch (e) { console.warn("[streets] cache sweep failed", e && e.name); }
       return n;
