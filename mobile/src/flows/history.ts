@@ -1,6 +1,8 @@
 import { type NativeToWeb, type RouteRecord, TRACK_CHUNK_POINTS } from "../bridge/protocol.js";
 import { COPY } from "../copy.js";
+import { HistoryKeyLostError } from "../db/openHistory.js";
 import type { ActivityStore, RouteStore } from "../history/types.js";
+import { warnClass } from "./warn.js";
 
 export interface HistoryDeps {
   activities: Pick<ActivityStore, "list" | "get" | "delete">;
@@ -9,7 +11,10 @@ export interface HistoryDeps {
 }
 
 export interface HistoryFlow {
-  /** Sends the activity summaries, newest first. Never rejects. */
+  /**
+   * Sends the activity summaries, newest first, or a notice that the page's list is out of date (nothing while
+   * the key is lost: the startup alert already says so). Never rejects.
+   */
   publish(): Promise<void>;
   /** Sends one activity's track in chunks, or `trackUnavailable` when the activity is gone or cannot be read. Never rejects. */
   needTrack(id: string): Promise<void>;
@@ -17,18 +22,32 @@ export interface HistoryFlow {
   deleteActivity(id: string): Promise<void>;
 }
 
-function warn(what: string, e: unknown): void {
-  console.warn(`crossfog: history ${what}`, e instanceof Error ? e.name : "unknown");
-}
+const warn = (what: string, e: unknown) => warnClass("history", what, e);
 
 export function createHistoryFlow(deps: HistoryDeps): HistoryFlow {
   const { activities, routes, send } = deps;
 
   async function publish(): Promise<void> {
+    let items: Awaited<ReturnType<typeof activities.list>>;
     try {
-      send({ v: 1, type: "activities", items: await activities.list() });
+      items = await activities.list();
     } catch (e) {
       warn("could not list the activities", e);
+      // The page keeps the last list it was sent, which after a delete still shows the deleted row.
+      // A lost key was already announced by the startup alert, and every page load would repeat it.
+      if (!(e instanceof HistoryKeyLostError)) {
+        trySend({ v: 1, type: "notice", text: COPY.historyListFailed });
+      }
+      return;
+    }
+    trySend({ v: 1, type: "activities", items });
+  }
+
+  function trySend(msg: NativeToWeb): void {
+    try {
+      send(msg);
+    } catch (e) {
+      warn("could not reach the page", e);
     }
   }
 
@@ -88,7 +107,7 @@ export function createHistoryFlow(deps: HistoryDeps): HistoryFlow {
         await activities.delete(id);
       } catch (e) {
         warn("could not delete an activity", e);
-        send({ v: 1, type: "notice", text: COPY.activityDeleteFailed });
+        trySend({ v: 1, type: "notice", text: COPY.activityDeleteFailed });
         return;
       }
       await publish();

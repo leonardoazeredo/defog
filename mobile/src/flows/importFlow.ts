@@ -2,7 +2,9 @@ import type { WebToNative } from "../bridge/protocol.js";
 import { COPY } from "../copy.js";
 import type { FogStore, SourceFile } from "../fog/store.js";
 import { acceptIncoming } from "../import/incoming.js";
+import { warnClass } from "./warn.js";
 
+/** `notify`, `queueNotice` and `setBusy` must not throw: the import's own failure handling calls them. */
 export interface ImportFlowDeps {
   store: FogStore;
   pickFile(): Promise<SourceFile | null>;
@@ -16,6 +18,10 @@ export interface ImportFlowDeps {
   remount(): Promise<void>;
 }
 
+/**
+ * Never rejects on a store, picker or remount failure: it ends any import it started and tells the user, so
+ * busy is never left on; a share that fails before it takes the import leaves a running one alone.
+ */
 export interface ImportFlow {
   /** An import is running (from the pick or the share to the page's verdict). */
   active(): boolean;
@@ -54,13 +60,25 @@ export function createImportFlow(deps: ImportFlowDeps): ImportFlow {
       await deps.releaseSource(file.uri);
       await deps.remount();
       return true;
-    } catch {
+    } catch (e) {
+      warnClass("import", "could not begin an import", e);
       deps.queueNotice(COPY.importFailed);
       return false;
     }
   }
 
   async function handleIncoming(file: SourceFile): Promise<void> {
+    try {
+      await incoming(file);
+    } catch (e) {
+      warnClass("import", "could not take a shared file", e);
+      // Nothing is cleared: a throw comes before this share takes the import (`doImport` catches its own),
+      // so any import active now belongs to a pick or an earlier share.
+      deps.notify(COPY.importFailed);
+    }
+  }
+
+  async function incoming(file: SourceFile): Promise<void> {
     if (!acceptIncoming(file.name)) {
       deps.notify(COPY.zipOnly);
       await deps.releaseSource(file.uri);
@@ -102,7 +120,8 @@ export function createImportFlow(deps: ImportFlowDeps): ImportFlow {
         }
         const ok = await doImport(file, "picker");
         if (!ok) clearImportActive();
-      } catch {
+      } catch (e) {
+        warnClass("import", "could not pick a file", e);
         deps.queueNotice(COPY.importFailed);
         clearImportActive();
       }
@@ -111,25 +130,37 @@ export function createImportFlow(deps: ImportFlowDeps): ImportFlow {
     incoming: handleIncoming,
 
     async loaded(msg) {
-      if (msg.ok) {
-        await store.promotePending();
-        clearImportActive();
-        const queued = pendingShare;
-        pendingShare = null;
-        if (queued) await handleIncoming(queued);
-      } else {
-        await store.discardPending();
-        deps.queueNotice(COPY.notABackup);
+      try {
+        if (msg.ok) await store.promotePending();
+        else await store.discardPending();
+      } catch (e) {
+        // No remount: after a failed discard the page would be handed the same bad copy again, and after a
+        // failed promote the page already shows the import it could not keep.
+        warnClass("import", msg.ok ? "could not keep an import" : "could not drop a bad import", e);
+        deps.notify(COPY.importFailed);
         await endImport();
+        return;
+      }
+      if (!msg.ok) deps.queueNotice(COPY.notABackup);
+      await endImport();
+      if (msg.ok) return;
+      try {
         await deps.remount();
+      } catch (e) {
+        warnClass("import", "could not reload after a bad import", e);
       }
     },
 
     async processGone() {
       if (!importActive) return;
-      const pending = await store.pending();
-      if (pending) {
-        await store.discardPending();
+      try {
+        const pending = await store.pending();
+        if (pending) {
+          await store.discardPending();
+          deps.queueNotice(COPY.importFailed);
+        }
+      } catch (e) {
+        warnClass("import", "could not drop an interrupted import", e);
         deps.queueNotice(COPY.importFailed);
       }
       clearImportActive();

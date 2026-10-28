@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { encode, type NativeToWeb, parseNativeToWeb } from "../../../src/bridge/protocol.js";
 import { COPY } from "../../../src/copy.js";
 import { createSendFlow } from "../../../src/flows/send.js";
@@ -135,6 +135,92 @@ describe("send", () => {
     link.confirmRoute(r.id);
     await vi_flush();
     expect(sent).toEqual([{ v: 1, type: "routeStatus", routeId: r.id, state: "onWatch" }]);
+  });
+
+  it("sends nothing and does not reject when the link status cannot be read", async () => {
+    const { link, sent } = setup(false);
+    const flow = createSendFlow({
+      link: {
+        ...link,
+        status: async () => {
+          throw new Error("module unavailable");
+        },
+      },
+      routes: createMemoryRouteStore(),
+      send: (m) => sent.push(m),
+    });
+    await expect(flow.sendStatus()).resolves.toBeUndefined();
+    expect(sent).toEqual([]);
+  });
+
+  it("tells the page a route the phone does not know is on the watch", async () => {
+    const { link, routes, sent } = setup();
+    await link.queueRoute(route());
+    link.confirmRoute(route().id);
+    await vi_flush();
+    expect(sent).toEqual([{ v: 1, type: "routeStatus", routeId: route().id, state: "onWatch" }]);
+    expect(await routes.get(route().id)).toBeNull();
+  });
+
+  it("keeps one record and one queued copy when a route that failed to queue is sent again", async () => {
+    const { link, routes, sent } = setup(false);
+    let refuse = true;
+    const flow = createSendFlow({
+      link: {
+        ...link,
+        queueRoute: async (r) => {
+          if (refuse) throw new Error("module unavailable");
+          await link.queueRoute(r);
+        },
+      },
+      routes,
+      send: (m) => sent.push(m),
+    });
+    const r = route();
+    await flow.sendRoute(r);
+    refuse = false;
+    await flow.sendRoute(r);
+
+    expect(await routes.list()).toHaveLength(1);
+    expect(link.queued()).toEqual([r]);
+    expect(sent.map((m) => m.type === "routeStatus" && m.state)).toEqual(["failed", "waiting"]);
+  });
+
+  it("logs only the error class of a failure", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const { link, sent } = setup(false);
+      const flow = createSendFlow({
+        link,
+        routes: {
+          ...createMemoryRouteStore(),
+          save: async () => {
+            throw new Error("disk full at 48.1,11.5");
+          },
+        },
+        send: (m) => sent.push(m),
+      });
+      await flow.sendRoute(route());
+      expect(warn.mock.calls).toEqual([[expect.any(String), "Error"]]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("48.1");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not reject when the page cannot be told", async () => {
+    const { link } = setup(false);
+    const flow = createSendFlow({
+      link,
+      routes: createMemoryRouteStore(),
+      send: () => {
+        throw new Error("no web view");
+      },
+    });
+    flow.start();
+    await expect(flow.sendRoute(route())).resolves.toBeUndefined();
+    await expect(flow.sendStatus()).resolves.toBeUndefined();
+    expect(() => link.setStatus({ paired: true, reachable: true })).not.toThrow();
   });
 
   it("stops listening when the returned function is called", async () => {

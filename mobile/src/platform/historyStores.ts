@@ -1,4 +1,5 @@
 import type { SqlDriver } from "../db/driver.js";
+import { HistoryKeyLostError } from "../db/openHistory.js";
 import { createActivityStore } from "../history/activityStore.js";
 import { createRouteStore } from "../history/routeStore.js";
 import type { ActivityStore, RouteStore } from "../history/types.js";
@@ -9,7 +10,7 @@ import { createDatabase, historyGate } from "./database.js";
 // to a database it created empty.
 async function open(): Promise<SqlDriver> {
   const history = await createDatabase();
-  if (history.kind !== "ready") throw new Error("history is unavailable");
+  if (history.kind !== "ready") throw new HistoryKeyLostError();
   return history.db;
 }
 

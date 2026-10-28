@@ -1,6 +1,7 @@
 import { activityStats, type ParsedGpx } from "../history/gpx.js";
 import type { Activity, ActivityStore } from "../history/types.js";
 import type { WatchLink } from "../link/types.js";
+import { warnClass } from "./warn.js";
 
 interface HandOffResult {
   /** Offers the store did not know yet. */
@@ -32,10 +33,7 @@ export interface HandOffFlow {
   hold<R>(fn: () => Promise<R>): Promise<R>;
 }
 
-// Only the error name is logged; messages and ids can tie a walk to a time and a place.
-function warn(what: string, e: unknown): void {
-  console.warn(`crossfog: hand-off ${what}`, e instanceof Error ? e.name : "unknown");
-}
+const warn = (what: string, e: unknown) => warnClass("hand-off", what, e);
 
 export function createHandOffFlow(deps: HandOffDeps): HandOffFlow {
   const { link, activities } = deps;

@@ -9,6 +9,7 @@ import { createHandOffFlow } from "./handOff.js";
 import { createHistoryFlow } from "./history.js";
 import { createSendFlow } from "./send.js";
 import { createNoopFlows, type Flows } from "./types.js";
+import { warnClass } from "./warn.js";
 
 export interface ComposedFlows extends Flows {
   /** Runs the hand-off now and on every staged activity; returns the function that stops listening. */
@@ -48,7 +49,11 @@ export function createFlows(deps: ComposeDeps): ComposedFlows {
   // the last one standing.
   let unreadable = 0;
   function sendUnreadable(): void {
-    deps.send({ v: 1, type: "unreadableActivities", count: unreadable });
+    try {
+      deps.send({ v: 1, type: "unreadableActivities", count: unreadable });
+    } catch (e) {
+      warnClass("hand-off", "could not send the unreadable count", e);
+    }
   }
 
   // The page shows what the store holds, so it hears about every activity the hand-off adds.
@@ -61,6 +66,11 @@ export function createFlows(deps: ComposeDeps): ComposedFlows {
     }
   }
 
+  // The pass does not reject; the catch only keeps a future throw from going unhandled.
+  function runHandOff(): void {
+    handOffAndPublish().catch((e: unknown) => warnClass("hand-off", "failed", e));
+  }
+
   // A restore swaps the database file, so an activity committed to the old one during it would be
   // lost; the hand-off is held for the whole restore and runs again after it, taking what the watch
   // sent meanwhile.
@@ -68,7 +78,7 @@ export function createFlows(deps: ComposeDeps): ComposedFlows {
     try {
       return await handOff.hold(restore);
     } finally {
-      void handOffAndPublish();
+      runHandOff();
     }
   }
 
@@ -95,8 +105,8 @@ export function createFlows(deps: ComposeDeps): ComposedFlows {
     }),
     start() {
       const offSend = sendFlow.start();
-      const offStaged = deps.link.on("activityStaged", () => void handOffAndPublish());
-      void handOffAndPublish();
+      const offStaged = deps.link.on("activityStaged", runHandOff);
+      runHandOff();
       return () => {
         offSend();
         offStaged();

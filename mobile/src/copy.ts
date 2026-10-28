@@ -18,6 +18,7 @@ export const COPY = {
     "Your history could not be opened. Restart the app; if it persists, restore a backup.",
   routeNotSent: "The route couldn't be saved for the watch.",
   activityDeleteFailed: "Couldn't delete that activity.",
+  historyListFailed: "Couldn't refresh your history. The list may be out of date.",
   historyKeyLost: "Your history key is gone; restore a backup to get it back",
   backupSaved: (name: string) => `Backup saved as ${name}.`,
   backupFailed: "Couldn't make the backup. Nothing was saved.",

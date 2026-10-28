@@ -3,6 +3,7 @@ import type { ExportChunk } from "../bridge/protocol.js";
 import { COPY } from "../copy.js";
 import { localDate } from "../localDate.js";
 import { writeZip } from "../platform/zipWriter.js";
+import { warnClass } from "./warn.js";
 
 /** Files under the cache directory, by path relative to it; parents are created on write. */
 export interface ExportFs {
@@ -62,7 +63,7 @@ export function createExportFlow(deps: ExportFlowDeps): ExportFlow {
   const filePath = (id: string, name: string) => `${dir(id)}/Sync/${name}`;
 
   function logCleanupFailure(e: unknown): void {
-    console.warn("crossfog: export cleanup failed", e instanceof Error ? e.name : "unknown");
+    warnClass("export", "cleanup failed", e);
   }
 
   async function drop(id: string): Promise<void> {
@@ -140,7 +141,7 @@ export function createExportFlow(deps: ExportFlowDeps): ExportFlow {
       const run = queue.then(() => handle(chunk));
       queue = run.catch(() => undefined);
       return run.catch(async (e) => {
-        console.warn("crossfog: export failed", e instanceof Error ? e.name : "unknown");
+        warnClass("export", "failed", e);
         await drop(chunk.exportId).catch(logCleanupFailure);
         deps.notify(COPY.fogExportFailed);
       });

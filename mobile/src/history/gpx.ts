@@ -26,7 +26,8 @@ export class GpxError extends Error {
 
 // GlanceMap writes its own fixed output (TraceGpxEncoder.kt), so this reads that, not arbitrary XML:
 // Hermes has no DOMParser and a track can be tens of thousands of points.
-const PREFIXES = ["", "gmap:"];
+// GlanceMap's own elements carry the `gmap:` prefix; the standard GPX ones carry none.
+const PREFIXES = ["", "gmap:"] as const;
 
 function unescapeXml(s: string): string {
   return s
@@ -65,8 +66,9 @@ function attribute(tag: string, name: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-// Optional properties are left out rather than set to undefined (exactOptionalPropertyTypes).
-function defined<R>(o: Record<string, unknown>): R {
+// Optional properties are left out rather than set to undefined (exactOptionalPropertyTypes). It
+// deletes from `o` in place and casts, so `o` must be a fresh literal.
+function dropUndefined<R>(o: Record<string, unknown>): R {
   for (const k of Object.keys(o)) if (o[k] === undefined) delete o[k];
   return o as R;
 }
@@ -80,7 +82,7 @@ function readPoint(tag: string, body: string): TrackPoint {
   const time = elementText(body, "time");
   const t = time === undefined ? Number.NaN : Date.parse(time);
   if (!Number.isFinite(t) || t < 0) throw new GpxError("a track point has no valid time");
-  return defined<TrackPoint>({
+  return dropUndefined<TrackPoint>({
     t,
     lat,
     lon,
@@ -100,7 +102,7 @@ function readSummary(text: string): GpxSummary | undefined {
   const end = text.indexOf("</metadata>", start);
   if (start < 0 || end < 0) return undefined;
   const meta = text.slice(start, end);
-  const summary = defined<GpxSummary>({
+  const summary = dropUndefined<GpxSummary>({
     steps: elementNumber(meta, "stepCount"),
     // Active (gross minus resting), not gross: the resting baseline is not effort. A file without the active figure gives no calories, not gross.
     calories: elementNumber(meta, "caloriesActiveKcal"),
@@ -112,7 +114,7 @@ function readSummary(text: string): GpxSummary | undefined {
   return Object.keys(summary).length > 0 ? summary : undefined;
 }
 
-// CheapRuler's constants (WGS84), without integer rounding: at 3 s sampling a step is only a few metres, and whole-metre rounding would distort it.
+// CheapRuler's constants (WGS84), as in app/src/estimates.js but without its integer rounding: at 3 s sampling a step is only a few metres, and whole-metre rounding would distort it.
 function cheapDistanceM(a: TrackPoint, b: TrackPoint): number {
   const cos = Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
   const cos2 = 2 * cos * cos - 1;
@@ -182,7 +184,7 @@ export function activityStats(parsed: ParsedGpx): ActivitySummary["stats"] {
   const durationS =
     s?.durationS ?? (Date.parse(parsed.endedAt) - Date.parse(parsed.startedAt)) / 1000;
   const distanceM = s?.distanceM ?? parsed.trackDistanceM;
-  return defined<ActivitySummary["stats"]>({
+  return dropUndefined<ActivitySummary["stats"]>({
     durationS,
     distanceM,
     paceSPerKm: distanceM > 0 && durationS > 0 ? durationS / (distanceM / 1000) : undefined,
