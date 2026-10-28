@@ -194,5 +194,23 @@ const held = (s, i) => s.tiles.has("run:" + pos(i));
     assert.equal(told, before + 1);
     consistent(s);
   }
+  { // a fresh read that evicts the only other fresh piece listing a way replaces the way, so it ends fresh, not in staleWays
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async () => new Map(), maxSegs: MAX });
+    s._anchor(51);
+    const shared = line(9, lon(1, 0.002), lon(1, 0.004));
+    const readAs = (i, ways, stale) => {
+      s._read(answer(...ways), { kind: "run", x: 548 + i, y: 2040, stale });
+      (stale ? s.staleTiles : s.tiles).add("run:" + pos(i));
+    };
+    readAs(1, [shared, inPiece(2, 1)]);
+    readAs(0, [shared], true);
+    readAs(2, [inPiece(3, 2)]);
+    readAs(3, [inPiece(4, 3), Object.assign(line(5, lon(3, 0.002), lon(3, 0.012)), { geometry: [{ lat: 51.02, lon: lon(3, 0.002) }, { lat: 51.02, lon: lon(3, 0.012) }] })]);
+    readAs(0, [shared, line(6, lon(0, 0.002), lon(0, 0.01))]);
+    assert.equal(held(s, 1), false, "piece 1 was the least recently used");
+    assert.equal(s.staleWays.has(9), false, "piece 0's fresh answer lists way 9");
+    assert.deepEqual([...s.wayFrom.get(9).from], ["run:" + pos(0)]);
+    consistent(s);
+  }
   console.log("streets-lru.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });

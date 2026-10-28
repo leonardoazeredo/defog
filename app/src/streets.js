@@ -514,32 +514,33 @@
     const pos = from && from.x + ":" + from.y;
     // _dropWays below discards each replaced way's entry, so the expired copies that still list it are
     // carried into the rebuilt one: an eviction of this piece then leaves the way to them
-    const carry = new Map();
-    if (from && !stale) {
-      const mine = (from.kind === "run" ? ["run", "bike"] : [from.kind]).map((k) => StreetIndex.tileKey(k, from.x, from.y));
-      const listed = new Set(answer.ways.map((w) => w.id)), out = new Set();
-      for (const id of listed) {
-        const held = this.staleWays.get(id);
-        if (held) { out.add(id); carry.set(id, held.from); }
-      }
-      // a way an earlier read of this piece listed and this answer lacks is no longer listed by this
-      // piece's kinds; a kind already held fresh keeps its ways (a bike answer lists foot=no ways a run answer lacks)
-      for (const id of this.pieceWays.get(pos) || []) {
-        const entry = this.wayFrom.get(id);
-        if (!entry || listed.has(id)) continue;
-        for (const k of mine) if (!this.tiles.has(k)) entry.from.delete(k);
-        if (!entry.from.size) out.add(id);
-      }
-      this._dropWays([...out]);
-    }
-    const freshHeld = new Set();
+    const carry = new Map(), freshHeld = new Set();
     try {
+      // evicted before the drop below, so a way this answer lists that an evicted piece held fresh, and
+      // expired copies still list, is replaced rather than kept as expired
       if (from) { this._use(pos); this._makeRoom(); }
+      if (from && !stale) {
+        const mine = (from.kind === "run" ? ["run", "bike"] : [from.kind]).map((k) => StreetIndex.tileKey(k, from.x, from.y));
+        const listed = new Set(answer.ways.map((w) => w.id)), out = new Set();
+        for (const id of listed) {
+          const held = this.staleWays.get(id);
+          if (held) { out.add(id); carry.set(id, held.from); }
+        }
+        // a way an earlier read of this piece listed and this answer lacks is no longer listed by this
+        // piece's kinds; a kind already held fresh keeps its ways (a bike answer lists foot=no ways a run answer lacks)
+        for (const id of this.pieceWays.get(pos) || []) {
+          const entry = this.wayFrom.get(id);
+          if (!entry || listed.has(id)) continue;
+          for (const k of mine) if (!this.tiles.has(k)) entry.from.delete(k);
+          if (!entry.from.size) out.add(id);
+        }
+        this._dropWays([...out]);
+      }
       this._addAnswer(answer, stale, key, freshHeld);
+      // the evictions above cleared every evicted piece from these lists, so each tile carried is still held
       for (const [id, keys] of carry) {
         const entry = this.wayFrom.get(id);
-        // a copy this read's _makeRoom evicted has had its keys cleared, and nothing would clear one added now
-        if (entry) for (const k of keys) if (this.tiles.has(k) || this.staleTiles.has(k)) entry.from.add(k);
+        if (entry) for (const k of keys) entry.from.add(k);
       }
     } finally {
       // a throw midway leaves ways dropped: the graphs built before must still rebuild
