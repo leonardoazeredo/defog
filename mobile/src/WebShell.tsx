@@ -25,7 +25,7 @@ import { COPY } from "./copy.js";
 import { pickE2eFixture } from "./e2e/fixturePicker.js";
 import { createBackupFlows } from "./flows/backup.js";
 import { type ComposedFlows, createFlows } from "./flows/compose.js";
-import { createExportFlow } from "./flows/exportFlow.js";
+import { createExportFlow, type ExportFlow } from "./flows/exportFlow.js";
 import { createReloadGuard } from "./fog/reloadGuard.js";
 import { createFogStore } from "./fog/store.js";
 import { CHUNK_BYTES } from "./fog/transfer.js";
@@ -97,7 +97,12 @@ function buildController(
   initialLoadDone: React.RefObject<boolean>,
   setBusy: (on: boolean) => void,
   askPassphrase: (mode: PassphraseRequest["mode"]) => Promise<PassphraseAnswer | null>,
-): { controller: Controller; flows: ComposedFlows; send: (msg: NativeToWeb) => void } {
+): {
+  controller: Controller;
+  flows: ComposedFlows;
+  exportFlow: ExportFlow;
+  send: (msg: NativeToWeb) => void;
+} {
   const fogDir = new Directory(Paths.document, "fog");
   const fs = createExpoFileStore(fogDir);
   const store = createFogStore(fs, { sha256Hex, now: Date.now });
@@ -143,11 +148,12 @@ function buildController(
     }),
     notify,
   });
-  // A crash or a page reload mid-export leaves plaintext tiles in the cache; the next start removes them.
+  // A crash mid-export leaves plaintext tiles in the cache; the next start removes them.
   const exportFlow = createExportFlow({
     fs: createExportFs(),
     saveAs: saveFileAs,
     notify,
+    status: (exportId, state) => send({ v: 1, type: "exportStatus", exportId, state }),
     now: Date.now,
   });
   void exportFlow.clear();
@@ -189,7 +195,7 @@ function buildController(
     flows,
     ...(__DEV__ ? { devAddActivity: devAddActivity(flows, notify) } : {}),
   });
-  return { controller, flows, send };
+  return { controller, flows, exportFlow, send };
 }
 
 export function WebShell(): React.JSX.Element {
@@ -219,7 +225,7 @@ export function WebShell(): React.JSX.Element {
         }),
     );
   }
-  const { controller, flows, send } = builtRef.current;
+  const { controller, flows, exportFlow, send } = builtRef.current;
 
   useEffect(() => {
     void controller.start();
@@ -291,7 +297,7 @@ export function WebShell(): React.JSX.Element {
           if (!isTrustedSource(event.nativeEvent.url)) return;
           const parsed = inspectWebToNative(event.nativeEvent.data);
           if (!parsed.ok) {
-            reportDropped(parsed.drop, send);
+            reportDropped(parsed.drop, send, (id) => void exportFlow.abandon(id));
             return;
           }
           void controller.onWebMessage(parsed.msg);

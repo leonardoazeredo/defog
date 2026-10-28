@@ -212,17 +212,16 @@
   }
   const fowBtn = $("exportFow"), fowStatus = $("exportFowStatus");
   // Only the phone app can save the export; the button shows once the page has loaded with window.crossfog present.
+  const fowExport = FowExport.button({
+    button: fowBtn, status: fowStatus,
+    canExport: () => fogMap.totalVisited() > 0,
+    newId: RouteTool.newUuid,
+    // A frame, then a task: the frame paints "Preparing…" before the writer holds the page.
+    defer: (fn) => requestAnimationFrame(() => setTimeout(fn, 0))
+  });
   function updateFowButton() {
     fowBtn.style.display = window.crossfog ? "" : "none";
-    fowBtn.disabled = !(fogMap.totalVisited() > 0);
-  }
-  let fowStatusTimer = null;
-  const FOW_STATUS_MS = 8000;
-  function showFowResult(n) {
-    fowStatus.textContent = n === null ? "Couldn't write the export." : n === 0 ? "There is no fog to export yet." : "Choose where to save it…";
-    // The page never learns whether the picker saved or was cancelled (the phone app toasts that), so the line can only expire.
-    clearTimeout(fowStatusTimer);
-    fowStatusTimer = setTimeout(() => { fowStatus.textContent = ""; }, FOW_STATUS_MS);
+    fowExport.refresh();
   }
   window.addEventListener("load", updateFowButton);
   function updateDefog() {
@@ -751,10 +750,11 @@
   reverseBtn.addEventListener("click", () => route.reverse());
   // Every plaintext export sits behind its warning; Cancel runs nothing.
   const warn = ExportWarning.install({ doc: document });
-  exportGpxBtn.addEventListener("click", warn.guard("gpx", () => route.downloadGPX(), exportGpxBtn.parentNode));
-  exportKmlBtn.addEventListener("click", warn.guard("kml", () => route.downloadKML(), exportGpxBtn.parentNode));
-  fowBtn.addEventListener("click", warn.guard("fog", () => showFowResult(FowExport.run({ fogMap, phone: window.crossfog, newId: RouteTool.newUuid })), fowBtn.parentNode));
-  gmapsBtn.addEventListener("click", warn.guard("maps", () => { const u = route.googleMapsUrl(); if (u) window.open(u, "_blank", "noopener"); }, exportGpxBtn.parentNode));
+  const planExports = exportGpxBtn.parentNode; // the Plan tab's export row, where the warning card shows for GPX, KML and Maps
+  exportGpxBtn.addEventListener("click", warn.guard("gpx", () => route.downloadGPX(), planExports));
+  exportKmlBtn.addEventListener("click", warn.guard("kml", () => route.downloadKML(), planExports));
+  fowBtn.addEventListener("click", warn.guard("fog", () => fowExport.start((exportId) => FowExport.run({ fogMap, phone: window.crossfog, exportId })), fowBtn.parentNode));
+  gmapsBtn.addEventListener("click", warn.guard("maps", () => { const u = route.googleMapsUrl(); if (u) window.open(u, "_blank", "noopener"); }, planExports));
 
   // The phone app's page adapter adds and removes cells revealed by activities, then calls fogChanged() so
   // the fog and its panels update now and the street fractions are recomputed on next use. The suggestion planners need no reset: they
@@ -778,9 +778,11 @@
       try { step(); } catch (e) { console.warn(`[fog] refresh step ${i} failed:`, e && e.name); }
     });
   }
-  // `history` is the History tab the adapter feeds; `routeStatus` and `linkStatus` carry the phone's answers to the Send button.
+  // `history` is the History tab the adapter feeds; `routeStatus` and `linkStatus` carry the phone's answers to the Send button,
+  // `exportStatus` its answers to the Fog of World export.
   window.CrossfogPage = {
     fogMap, fogChanged, reveal: window.Reveal, history,
-    routeStatus: sendControl.routeStatus, linkStatus: sendControl.linkStatus
+    routeStatus: sendControl.routeStatus, linkStatus: sendControl.linkStatus,
+    exportStatus: fowExport.onStatus
   };
 })();

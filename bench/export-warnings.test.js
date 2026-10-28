@@ -133,7 +133,8 @@ const settle = () => new Promise((r) => setImmediate(r));
   assert.match(ExportWarning.TEXT.kml, /unencrypted and shows the route/);
   assert.match(ExportWarning.TEXT.maps, /Google/);
 
-  // main.js reaches each plaintext sink only through a guard
+  // main.js reaches each plaintext sink only through a guard. A tripwire, not a proof: it matches text, so a sink
+  // reached through an alias, or called outside the guard on the guard's own line, passes unseen.
   const root = path.join(__dirname, "..", "app");
   const main = fs.readFileSync(path.join(root, "src", "main.js"), "utf8").split("\n");
   for (const [sink, kind] of [["route.downloadGPX(", "gpx"], ["route.downloadKML(", "kml"], ["window.open(", "maps"], ["FowExport.run(", "fog"]]) {

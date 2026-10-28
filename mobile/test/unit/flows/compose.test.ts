@@ -229,7 +229,7 @@ describe("composed flows", () => {
       activities: createMemoryActivityStore(),
       routes: createMemoryRouteStore(),
       send: () => {},
-      exportFlow: { onChunk, clear: async () => {} },
+      exportFlow: { onChunk, abandon: async () => {}, clear: async () => {} },
       now: () => 0,
     });
     await withExport.exportBinary(chunk);

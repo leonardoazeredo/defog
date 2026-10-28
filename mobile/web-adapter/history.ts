@@ -50,6 +50,8 @@ export interface CrossfogPageApi {
   /** The Send button's answers from the phone. */
   routeStatus?(msg: { routeId: string; state: string; why?: string | undefined }): void;
   linkStatus?(msg: { paired: boolean; reachable: boolean }): void;
+  /** What became of a Fog of World export the page sent. */
+  exportStatus?(msg: { exportId: string; state: string }): void;
   reveal: {
     RULES: RevealRules;
     reveal(

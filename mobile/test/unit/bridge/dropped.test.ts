@@ -60,7 +60,12 @@ describe("inspectWebToNative", () => {
 
   it("gives no route id for a message that is not a sendRoute", () => {
     const drop = dropOf(JSON.stringify({ v: 1, type: "needTrack", activityId: 7, route }));
-    expect(drop).toEqual({ type: "needTrack", paths: ["activityId"], routeId: null });
+    expect(drop).toEqual({
+      type: "needTrack",
+      paths: ["activityId"],
+      routeId: null,
+      exportId: null,
+    });
   });
 
   it("does not repeat a type the app does not know, since it could be any text", () => {
@@ -68,12 +73,14 @@ describe("inspectWebToNative", () => {
       type: null,
       paths: [],
       routeId: null,
+      exportId: null,
     });
   });
 
   it("drops text that is not JSON with nothing to name", () => {
-    expect(dropOf("{not json")).toEqual({ type: null, paths: [], routeId: null });
-    expect(dropOf("null")).toEqual({ type: null, paths: [], routeId: null });
+    const nothing = { type: null, paths: [], routeId: null, exportId: null };
+    expect(dropOf("{not json")).toEqual(nothing);
+    expect(dropOf("null")).toEqual(nothing);
   });
 
   it("names a broken cross-field check by the message", () => {
@@ -89,7 +96,29 @@ describe("inspectWebToNative", () => {
         data: "",
       }),
     );
-    expect(drop).toEqual({ type: "exportBinary", paths: ["(message)"], routeId: null });
+    expect(drop).toEqual({
+      type: "exportBinary",
+      paths: ["(message)"],
+      routeId: null,
+      exportId: "e",
+    });
+  });
+
+  it("gives no export id when the id itself would not be a safe path segment", () => {
+    const drop = dropOf(
+      JSON.stringify({
+        v: 1,
+        type: "exportBinary",
+        exportId: "../x",
+        name: "abcd",
+        index: 0,
+        total: 1,
+        files: 1,
+        data: "",
+      }),
+    );
+    expect(drop.exportId).toBeNull();
+    expect(drop.paths).toContain("exportId");
   });
 });
 
@@ -117,6 +146,28 @@ describe("reportDropped", () => {
     );
     expect(sent).toEqual([{ v: 1, type: "routeStatus", routeId, state: "failed" }]);
     for (const m of sent) expect(parseNativeToWeb(encode(m))).toEqual(m);
+  });
+
+  it("abandons the export a dropped chunk belonged to, so it does not wait for the missing part", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const abandoned: string[] = [];
+    const over = "A".repeat(Math.ceil(1_048_576 / 3) * 4 + 4);
+    const raw = JSON.stringify({
+      v: 1,
+      type: "exportBinary",
+      exportId: "e-1",
+      name: "abcd",
+      index: 0,
+      total: 1,
+      files: 1,
+      data: over,
+    });
+    reportDropped(
+      dropOf(raw),
+      () => {},
+      (id) => abandoned.push(id),
+    );
+    expect(abandoned).toEqual(["e-1"]);
   });
 
   it("answers nothing when there is no route id to answer", () => {

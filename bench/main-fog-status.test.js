@@ -1,5 +1,5 @@
 // main.js is a browser IIFE, so these tests lift single functions out of its source and run them
-// against stubs: the Fog of World export status line expires, fogChanged survives a throwing step and
+// against stubs: the Fog of World export button is wired to its controller, fogChanged survives a throwing step and
 // drops stale suggestions, finishLoad goes through fogChanged, and activity-only fog fits the map once.
 //   node bench/main-fog-status.test.js
 "use strict";
@@ -19,27 +19,12 @@ function line(re, what) {
   return m[0];
 }
 
-// ---- showFowResult: the page cannot learn the outcome of the picker, so the line expires
+// ---- the Fog of World export button: FowExport.button owns it (bench/fow-export.test.js); main.js must hand it
+// the phone's answers and let it decide when the button is enabled
 {
-  const timers = [];
-  const cleared = [];
-  const scope = {
-    fowStatus: { textContent: "" },
-    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
-    clearTimeout: (id) => cleared.push(id),
-  };
-  const code = [line(/^ {2}let fowStatusTimer\b.*$/m, "fowStatusTimer"), line(/^ {2}const FOW_STATUS_MS\b.*$/m, "FOW_STATUS_MS"), fnText("showFowResult")].join("\n");
-  const show = new Function(...Object.keys(scope), `${code}\nreturn showFowResult;`)(...Object.values(scope));
-  show(3);
-  assert.equal(scope.fowStatus.textContent, "Choose where to save it…");
-  assert.equal(timers.length, 1);
-  timers[0].fn();
-  assert.equal(scope.fowStatus.textContent, "", "the line clears after the timeout");
-  show(null);
-  assert.equal(scope.fowStatus.textContent, "Couldn't write the export.");
-  show(0);
-  assert.equal(cleared.length, 3, "each result cancels the timer before it starts its own");
-  assert.equal(scope.fowStatus.textContent, "There is no fog to export yet.");
+  assert.match(src, /exportStatus: fowExport\.onStatus/);
+  assert.match(fnText("updateFowButton"), /fowExport\.refresh\(\)/);
+  assert.doesNotMatch(fnText("updateFowButton"), /fowBtn\.disabled/, "only the controller sets disabled");
 }
 
 // ---- fogChanged

@@ -3,13 +3,16 @@ import * as Sharing from "expo-sharing";
 import { safeExportName, utiFor } from "../bridge/exportFile.js";
 import { isDisposableCopy } from "../import/incoming.js";
 
+// One name for both, so the cleanup at start cannot miss the folder shareExport writes to.
+const SHARE_DIR = "exports";
+
 export async function shareExport(file: {
   filename: string;
   mime: string;
   text: string;
 }): Promise<void> {
   const safe = safeExportName(file.filename);
-  const exportsDir = new Directory(Paths.cache, "exports");
+  const exportsDir = new Directory(Paths.cache, SHARE_DIR);
   if (!exportsDir.exists) exportsDir.create();
   const dest = new File(exportsDir, safe);
   await dest.write(file.text);
@@ -34,7 +37,7 @@ export async function shareExport(file: {
 /** Removes the share copies a crash left behind. */
 export function clearShareCopies(): void {
   try {
-    const dir = new Directory(Paths.cache, "exports");
+    const dir = new Directory(Paths.cache, SHARE_DIR);
     if (dir.exists) dir.delete();
   } catch (e) {
     console.warn("crossfog: share copies not removed", e instanceof Error ? e.name : "unknown");
