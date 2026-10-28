@@ -260,6 +260,126 @@ describe("a cached reveal is reused unless the rules or the activity end time or
   });
 });
 
+describe("a track request that is never answered", () => {
+  const chunk = (activityId: string, index: number, total: number) => ({
+    activityId,
+    index,
+    total,
+    points: walk(index * 100, index * 100 + 90),
+  });
+
+  it("is asked for again by the second later list that came with no chunk", async () => {
+    const { lists, needTrack, sync } = await setup();
+    lists(WALKER);
+    await sync.settled();
+    lists(WALKER);
+    await sync.settled();
+    expect(needTrack).toHaveBeenCalledTimes(1);
+    lists(WALKER);
+    await sync.settled();
+    expect(needTrack).toHaveBeenCalledTimes(2);
+  });
+
+  it("is not asked again while chunks keep arriving", async () => {
+    const { lists, needTrack, sync } = await setup();
+    lists(WALKER);
+    lists(WALKER);
+    sync.onTrack(chunk(WALKER, 0, 3));
+    lists(WALKER);
+    sync.onTrack(chunk(WALKER, 1, 3));
+    lists(WALKER);
+    await sync.settled();
+    expect(needTrack).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the half-received chunks and takes the whole track from the new request", async () => {
+    const { lists, needTrack, sync, fogMap } = await setup();
+    lists(WALKER);
+    sync.onTrack(chunk(WALKER, 0, 3));
+    lists(WALKER);
+    lists(WALKER);
+    lists(WALKER);
+    await sync.settled();
+    expect(needTrack).toHaveBeenCalledTimes(2);
+    // same total, so only forgetting the old chunk 0 keeps its cells (x 0-90) off the overlay
+    sync.onTrack({ activityId: WALKER, index: 0, total: 3, points: walk(1000, 1090) });
+    sync.onTrack({ activityId: WALKER, index: 1, total: 3, points: walk(1100, 1190) });
+    sync.onTrack({ activityId: WALKER, index: 2, total: 3, points: walk(1200, 1290) });
+    await sync.settled();
+    expect(visitedAt(fogMap, 1050)).toBe(true);
+    expect(visitedAt(fogMap, 50)).toBe(false);
+  });
+
+  it("is not kept waiting by chunks of another activity's track", async () => {
+    const { lists, needTrack, sync } = await setup();
+    lists(WALKER, RIDER);
+    lists(WALKER, RIDER);
+    sync.onTrack(chunk(RIDER, 0, 3));
+    lists(WALKER, RIDER);
+    await sync.settled();
+    expect(needTrack.mock.calls.filter((c) => c[0] === WALKER)).toHaveLength(2);
+    expect(needTrack.mock.calls.filter((c) => c[0] === RIDER)).toHaveLength(1);
+  });
+});
+
+describe("a track the phone could not send", () => {
+  it.each(["notFound", "readFailed"] as const)(
+    "is asked for again by the next list after %s, not at once",
+    async (reason) => {
+      const { sync, lists, needTrack } = await setup();
+      lists(WALKER);
+      await sync.settled();
+      sync.onTrackUnavailable({ activityId: WALKER, reason });
+      await sync.settled();
+      expect(needTrack).toHaveBeenCalledTimes(1);
+      lists(WALKER);
+      await sync.settled();
+      expect(needTrack).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("drops the chunks of a half-received track", async () => {
+    const { sync, lists, fogMap } = await setup();
+    lists(WALKER);
+    sync.onTrack({ activityId: WALKER, index: 0, total: 3, points: walk(0, 90) });
+    sync.onTrackUnavailable({ activityId: WALKER, reason: "readFailed" });
+    lists(WALKER);
+    sendTrack(sync, WALKER, walk(0, 300), 100);
+    await sync.settled();
+    expect(visitedAt(fogMap, 250)).toBe(true);
+  });
+});
+
+describe("a track replaced under the same id in a live session", () => {
+  it("is asked for again and its old cells are taken off the overlay", async () => {
+    const { sync, lists, needTrack, fogMap } = await setup();
+    lists(WALKER);
+    sendTrack(sync, WALKER, walk(0, 300));
+    await sync.settled();
+    expect(visitedAt(fogMap, 50)).toBe(true);
+
+    sync.onActivities({ items: [summary(WALKER, { distanceM: 2500 })] });
+    await sync.settled();
+    expect(needTrack).toHaveBeenCalledTimes(2);
+    expect(visitedAt(fogMap, 50)).toBe(false);
+
+    sendTrack(sync, WALKER, walk(1000, 1300));
+    await sync.settled();
+    expect(visitedAt(fogMap, 1050)).toBe(true);
+    expect(visitedAt(fogMap, 50)).toBe(false);
+  });
+
+  it("is left alone when the list repeats the activity unchanged", async () => {
+    const { sync, lists, needTrack } = await setup();
+    lists(WALKER);
+    sendTrack(sync, WALKER, walk(0, 300));
+    await sync.settled();
+    lists(WALKER);
+    await sync.settled();
+    expect(needTrack).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("revealing", () => {
   it("adds the cells of both activities to the overlay once their tracks are in", async () => {
     const { lists, sync, fogMap } = await setup();
