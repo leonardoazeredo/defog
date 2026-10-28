@@ -11,7 +11,7 @@ const native = {
 };
 vi.mock("../../../src/platform/watchLinkModule", () => native);
 
-const { createNativeWatchLink } = await import("../../../src/link/watchLink");
+const { createNativeWatchLink, routeName } = await import("../../../src/link/watchLink");
 
 const id = "0b6b7a6e-4a53-4d6e-9a53-1f3f1d3a0001";
 const routeId = "0b6b7a6e-4a53-4d6e-9a53-1f3f1d3a0002";
@@ -82,15 +82,23 @@ describe("native watch link", () => {
 
   it("queues a route as the routeOffer of the link contract", async () => {
     native.queueRoute.mockResolvedValue(undefined);
-    const r = route({ createdAt: "2026-03-01T09:00:00Z", travelMode: "run", gpx: "<gpx>r</gpx>" });
+    const r = route({ createdAt: "2026-03-01T23:30:00Z", travelMode: "run", gpx: "<gpx>r</gpx>" });
     await createNativeWatchLink().queueRoute(r);
-    expect(JSON.parse(native.queueRoute.mock.calls[0]?.[0])).toEqual({
+    const offer = JSON.parse(native.queueRoute.mock.calls[0]?.[0]);
+    expect(offer).toEqual({
       routeId: r.id,
-      name: "Route 2026-03-01",
+      name: expect.stringMatching(/^Route \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/),
       travelMode: "run",
-      createdAt: "2026-03-01T09:00:00Z",
+      createdAt: "2026-03-01T23:30:00Z",
       gpx: "<gpx>r</gpx>",
     });
+  });
+
+  it.each([
+    ["Asia/Tokyo", "2026-03-01T23:05:00Z", "Route 2026-03-02 08:05"],
+    ["America/Los_Angeles", "2026-03-01T03:15:00Z", "Route 2026-02-28 19:15"],
+  ])("names a route in local time (%s, %s)", (timeZone, createdAt, name) => {
+    expect(routeName(route({ createdAt }), timeZone)).toBe(name);
   });
 
   it("refuses to pair before the transport exists", async () => {

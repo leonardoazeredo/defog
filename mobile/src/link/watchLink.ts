@@ -16,9 +16,21 @@ const eventSchemas: { [E in keyof WatchLinkEvents]: z.ZodType<WatchLinkEvents[E]
   routeSaved: z.object({ routeId: z.uuid() }),
 };
 
-// The watch lists a saved route under this name; a route has none of its own.
-function routeName(route: RouteRecord): string {
-  return `Route ${route.createdAt.slice(0, 10)}`;
+// The watch lists a saved route under this name; a route has none of its own. Local time, as the
+// day the rider lived it, while createdAt stays UTC on the wire. `timeZone` lets a test pin a zone
+// without touching the process TZ; production omits it and gets device-local time.
+export function routeName(route: RouteRecord, timeZone?: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(route.createdAt));
+  const at = (type: string) => parts.find((p) => p.type === type)?.value;
+  return `Route ${at("year")}-${at("month")}-${at("day")} ${at("hour")}:${at("minute")}`;
 }
 
 export function createNativeWatchLink(): WatchLink {
