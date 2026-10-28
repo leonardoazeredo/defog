@@ -21,7 +21,7 @@ function fakeLayer(fetchStreets, view = TWO) {
   const streets = new StreetIndex({ newFrac: () => 1, fetchStreets });
   const line = () => ({ setLatLngs: () => {}, addTo: () => {}, setStyle: () => {} });
   Object.assign(layer, {
-    enabled: true, look: "light", color: "#4fd6e6", opacity: 1, _busy: false, _dirty: false, _fetching: false, _failure: null, _missingRects: [], _known: 0, _tooBig: false, _view: 0, _pass: 0,
+    enabled: true, look: "light", color: "#4fd6e6", opacity: 1, _busy: false, _dirty: false, _fetching: false, _failure: null, _missingRects: [], _known: 0, _tooBig: false, _view: 0, _pass: 0, _judged: new Map(),
     _visibleTiles: () => tilesOf(view),
     _say: (text, action) => { state.said.push([text, action ? action.label : null]); state.action = action || null; },
     _classifyNew: async () => {}, _draw: () => { state.drawn++; },
@@ -433,6 +433,84 @@ function source(held, net) {
     await streets.ensureRects([{ s: 51.0, w: 13.7, n: 51.025, e: 13.725 }], "run");
     await new Promise((r) => setTimeout(r, 20)); // onWaysChanged -> refresh() -> _update() repaints the layer; the timer lets that microtask run
     assert.deepEqual([lats(), lats(layer.doneRuns)], [["1@300"], []], "the replaced way is drawn once, at its new place, the dropped one is gone, and the defogged stretch of the old line no longer counts");
+  }
+  { // a tap in a new view while the last view's download still winds down starts its own download; the
+    // old one, failing after the move, neither words the new view nor ends the new download's state
+    let fail, release, calls = 0;
+    const gates = [new Promise((r, j) => { fail = j; }), new Promise((r) => { release = r; })];
+    gates[0].catch(() => {});
+    const { layer, state, streets } = fakeLayer(source(new Set(), () => gates[calls++ ? 1 : 0]).fn);
+    const runs = countRuns(streets);
+    await layer._update();
+    const old = layer._download();
+    await tick();
+    layer._moved();
+    await tick();
+    const now = layer._download();
+    await tick();
+    assert.equal(runs.n, 2, "the new view's tap is not swallowed by the old download");
+    fail(Object.assign(new Error("overpass HTTP 429"), { reason: "busy" }));
+    await old;
+    assert.equal(layer._fetching, 1, "the new view's download still runs");
+    assert.equal(layer._failure, null, "the old failure is not worded in the new view");
+    release();
+    await now;
+    assert.equal(layer._fetching, false);
+    assert.deepEqual(state.said.pop(), ["", null]);
+  }
+  { // a suggestion's or route's run brings pieces of the view: the badge recounts without a pan
+    const { layer, state, streets } = fakeLayer(source(new Set(), async () => {}).fn);
+    await layer._update();
+    assert.deepEqual(state.said.pop(), ["Street map known for 0 of 2 pieces here.", "Download this area"]);
+    await streets.ensureRects([{ s: 51.0, w: 13.7, n: 51.025, e: 13.725 }], "run");
+    await tick(); await tick();
+    assert.deepEqual(state.said.pop(), ["Street map known for 1 of 2 pieces here.", "Download this area"]);
+  }
+  { // a fresh piece replacing an expired one's ways judges only the ways that changed, not every way
+    const KY = 110540, KX = 111320 * Math.cos(51 * Math.PI / 180);
+    const line = (id, lon, y) => ({ id, nodes: [id, id + 1], geometry: [{ lat: 51 + y / KY, lon }, { lat: 51 + y / KY, lon: lon + 400 / KX }] });
+    const fetchStreets = async (tiles, kind, onTile, opts) => {
+      const out = new Map();
+      for (const t of tiles) {
+        const cacheOnly = opts && opts.cacheOnly;
+        const answer = { ways: [t.x === 548 ? line(1, 13.701, cacheOnly ? 100 : 300) : line(2, 13.726, 500)], groups: {} };
+        if (cacheOnly) out.set(t.x + ":" + t.y, answer); else onTile(t, answer);
+      }
+      return out;
+    };
+    const { layer, streets } = fakeLayer(fetchStreets);
+    delete layer._classifyNew;
+    const judged = [];
+    Object.assign(layer, { runs: [], doneRuns: [], _cursor: 0, isNew: (lon, lat) => { judged.push(Math.round((lat - 51) * KY)); return true; } });
+    await layer._update();
+    assert.deepEqual([...new Set(judged)].sort(), [100, 500]);
+    judged.length = 0;
+    await streets.ensureRects([{ s: 51.0, w: 13.7, n: 51.025, e: 13.725 }], "run");
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual([...new Set(judged)], [300], "only the replaced way is judged again");
+    assert.deepEqual(layer.runs.map((r) => r.id).sort(), [1, 2], "the untouched way keeps its runs, the replaced one has new ones");
+    assert.equal(layer.runs.length, 2);
+    judged.length = 0;
+    layer.invalidateFog();
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual([...new Set(judged)].sort(), [300, 500], "the fog moved: every way is judged again");
+    assert.equal(layer.runs.length, 2);
+  }
+  { // a download still running after the map moved does not put its count on the new view's badge
+    const { layer, state, streets } = fakeLayer(source(new Set(), () => new Promise(() => {})).fn);
+    let progress;
+    const ensure = streets.ensureRects.bind(streets);
+    streets.ensureRects = (rects, kind, opts) => { if (opts && opts.onProgress) progress = opts.onProgress; return ensure(rects, kind, opts); };
+    await layer._update();
+    layer._download();
+    await tick();
+    progress({ done: 0, total: 2 });
+    assert.match(state.said[state.said.length - 1][0], /0 of 2/, "the download's own view shows its count");
+    layer._moved();
+    await tick();
+    const said = state.said.length;
+    progress({ done: 1, total: 2 });
+    assert.equal(state.said.length, said, "nothing is said in the new view");
   }
   console.log("streets-layer-cache.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });

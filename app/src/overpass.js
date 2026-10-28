@@ -35,6 +35,7 @@
   const STALL_HOLD_MS = 600000;
   const BAN_HOLD_MS = 3600000;
   const BUSY_STATUS = { 429: true, 502: true, 504: true };
+  const STALE_POLL_MS = 1000; // see acquire
   // most actionable first: when the endpoints disagree, the rejection carries the first of these
   const REASONS = ["blocked", "busy", "stalled", "offline", "server"];
 
@@ -53,10 +54,25 @@
 
   const stateOf = (url) => state[url] || (state[url] = { until: 0, heldAt: -Infinity, why: null, error: null, stalls: 0 });
   const slotOf = (name) => slots[name] || (slots[name] = { open: 0, waiting: [] });
-  function acquire(name) {
+  // A post waiting for a slot checks its caller's stale() every STALE_POLL_MS and leaves the queue once
+  // it is true (rejecting with superseded(), or with what stale() threw): its run hears of it without
+  // waiting minutes for a slot to free.
+  function acquire(name, stale, superseded) {
     const s = slotOf(name);
     if (s.open < CAPS[name]) { s.open++; return Promise.resolve(); }
-    return new Promise((resolve) => s.waiting.push(resolve));
+    return new Promise((resolve, reject) => {
+      let timer = null;
+      const waiter = () => { if (timer) Overpass._clearTimeout(timer); resolve(); };
+      // a waiter already handed its slot is out of the queue, and splice(-1) would drop another post's
+      const leave = (e) => { const i = s.waiting.indexOf(waiter); if (i >= 0) s.waiting.splice(i, 1); reject(e); };
+      const poll = () => {
+        let gone;
+        try { gone = stale(); } catch (e) { leave(e); return; }
+        if (gone) leave(superseded()); else timer = Overpass._setTimeout(poll, STALE_POLL_MS);
+      };
+      s.waiting.push(waiter);
+      if (stale) timer = Overpass._setTimeout(poll, STALE_POLL_MS);
+    });
   }
   // a freed slot passes straight to the next waiter, so open never exceeds the cap
   function release(name) {
@@ -140,7 +156,8 @@
   //
   // A post waits for a free slot on the endpoint it is about to ask, and a fallback for one on the
   // next; one that waited is not sent where a request finished meanwhile set a hold. opts.stale() true
-  // (the caller's run was replaced) before a request goes out sends nothing and rejects at once with
+  // (the caller's run was replaced) before a request goes out, or within STALE_POLL_MS while the post
+  // waits for a slot, sends nothing and rejects with
   // reason "superseded", outside the list above and whatever earlier endpoints answered, releasing the
   // slot when it held one: a replaced run's posts still waiting for a slot would otherwise go out
   // ahead of the run that replaced it. A throw from opts.stale() rejects as itself, releasing the slot if the post holds one.
@@ -158,7 +175,7 @@
       const name = names[i], url = urls[i], s = stateOf(url);
       if (stale && stale()) throw superseded();
       if (s.until > Overpass._now()) { heldOnly.push({ why: s.why, error: s.error }); continue; }
-      await acquire(name);
+      await acquire(name, stale, superseded);
       // the slot goes back whatever stale() does, a throw included: a lost slot is lost for the page's life
       let gone;
       try { gone = stale && stale(); } catch (e) { release(name); throw e; }

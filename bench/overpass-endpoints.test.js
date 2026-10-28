@@ -602,6 +602,38 @@ const realFetch = global.fetch;
     const already = await Overpass.post("data=5", { stale: () => true }).then(() => assert.fail("expected a rejection"), (x) => x);
     assert.deepEqual([already.reason, calls], ["superseded", []]);
   }
+  { // a post waiting for a slot whose caller goes stale drops out within a second, while both slots are
+    // still busy: its run need not wait for a slot to free to hear it; the next post keeps its place
+    reset({ key: null, order: null });
+    const f = heldFetch();
+    let stale = false, e = null;
+    const open = [1, 2].map((i) => Overpass.post("data=" + i));
+    Overpass.post("data=3", { stale: () => stale }).catch((x) => { e = x; });
+    const after = Overpass.post("data=4");
+    await settle();
+    await advance(5000);
+    assert.equal(e, null, "not stale: it waits on");
+    stale = true;
+    await advance(1000);
+    assert.deepEqual([e && e.reason, calls.length], ["superseded", 2], "dropped out with nothing sent");
+    f.pending.shift().answer();
+    await settle();
+    assert.equal(calls.length, 3, "the freed slot went to the next post");
+    while (f.pending.length) { f.pending.shift().answer(); await settle(); }
+    await Promise.all([...open, after]);
+    stale = false;
+    let bugged = null;
+    const bug = new Error("stale broke");
+    const more = [5, 6].map((i) => Overpass.post("data=" + i));
+    Overpass.post("data=7", { stale: () => { if (stale) throw bug; return false; } }).catch((x) => { bugged = x; });
+    await settle();
+    stale = true;
+    await advance(1000);
+    assert.equal(bugged, bug, "a stale() that throws while waiting rejects as itself");
+    while (f.pending.length) { f.pending.shift().answer(); await settle(); }
+    await Promise.all(more);
+    assert.equal(f.most[M], 2);
+  }
   { // a stale() that throws once the post holds its slot gives the slot back: both slots
     // still take the next two posts at once
     reset({ key: null, order: null });

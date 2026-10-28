@@ -48,8 +48,9 @@ const held = (s, i) => s.tiles.has("run:" + pos(i));
   { // the least recently used piece goes: its segments come back, the look hears of it, and a run asks for it again
     const src = source({ fresh: { [pos(0)]: answer(inPiece(1, 0)), [pos(1)]: answer(inPiece(2, 1)), [pos(2)]: answer(inPiece(3, 2)), [pos(3)]: answer(inPiece(4, 3)) } });
     const s = new StreetIndex({ newFrac: () => 1, fetchStreets: src.fetchStreets, maxSegs: MAX });
-    let told = 0;
-    s.onWaysChanged = () => told++;
+    // each run's end is told too (the badge recounts); counted here are the calls that come with dropped ways
+    let told = 0, seen = s.wayEpoch;
+    s.onWaysChanged = () => { if (s.wayEpoch !== seen) { seen = s.wayEpoch; told++; } };
     for (const i of [0, 1, 2]) await s.ensureRects([rect(i)], "run");
     assert.equal(s.segCount, 87);
     const epoch = s.wayEpoch, version = s.version;
@@ -191,7 +192,7 @@ const held = (s, i) => s.tiles.has("run:" + pos(i));
     assert.deepEqual([0, 1, 2, 3, 4].map((i) => held(s, i)), [false, true, true, true, true]);
     assert.ok(s.wayEpoch > epoch);
     await Promise.resolve();
-    assert.equal(told, before + 1);
+    assert.equal(told, before + 2, "once for the eviction, once as the run that read piece 4 ends");
     consistent(s);
   }
   { // a fresh read that evicts the only other fresh piece listing a way replaces the way, so it ends fresh, not in staleWays
