@@ -157,5 +157,42 @@ const held = (s, i) => s.tiles.has("run:" + pos(i));
     assert.equal(s.staleWays.size, 0);
     consistent(s);
   }
+  { // a failed run, and a bad rect, protect nothing afterwards
+    const plain = source({ fresh: four }).fetchStreets;
+    const s = new StreetIndex({ newFrac: () => 1, maxSegs: MAX, fetchStreets: async (tiles, kind, onTile, opts) => {
+      if (tiles.some((t) => t.x === 548) && !(opts && opts.cacheOnly)) throw Object.assign(new Error("offline"), { reason: "offline" });
+      return plain(tiles, kind, onTile, opts);
+    } });
+    await s.ensureRects([rect(1)], "run");
+    await assert.rejects(s.ensureRects([rect(0), rect(1)], "run"), (e) => StreetIndex.isDownloadError(e));
+    await assert.rejects(s.ensureRects(null, "run"), TypeError);
+    for (const i of [2, 3, 4]) await s.ensureRects([rect(i)], "run");
+    assert.equal(held(s, 1), false, "the failed run's piece goes like any other");
+    consistent(s);
+  }
+  { // every kind of an evicted piece goes, so none of them reads as known but empty
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: source({ fresh: four }).fetchStreets, maxSegs: MAX });
+    await s.ensureRects([rect(0)], "bike");
+    await s.ensureRects([rect(0)], "car");
+    for (const i of [1, 2, 3]) await s.ensureRects([rect(i)], "run");
+    assert.deepEqual([...s.tiles.keys()].filter((k) => k.endsWith(":" + pos(0))), []);
+    assert.equal(s.wayIds.has(1), false);
+    consistent(s);
+  }
+  { // a piece that brought no way still goes, and the look still hears of it
+    const s = new StreetIndex({ newFrac: () => 1, maxSegs: MAX, fetchStreets: source({ fresh: Object.assign({}, four, { [pos(0)]: answer() }) }).fetchStreets });
+    let told = 0;
+    s.onWaysChanged = () => told++;
+    await s.ensureRects([rect(0)], "run");
+    await s.ensureRects([rect(1), rect(2), rect(3)], "run", { holdAs: "suggest" });
+    await Promise.resolve();
+    const epoch = s.wayEpoch, before = told;
+    await s.ensureRects([rect(4)], "run");
+    assert.deepEqual([0, 1, 2, 3, 4].map((i) => held(s, i)), [false, true, true, true, true]);
+    assert.ok(s.wayEpoch > epoch);
+    await Promise.resolve();
+    assert.equal(told, before + 1);
+    consistent(s);
+  }
   console.log("streets-lru.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });

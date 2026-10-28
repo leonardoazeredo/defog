@@ -821,7 +821,7 @@ async function testCase(body) {
     const logged = [], orig = console.warn;
     console.warn = (...a) => logged.push(a);
     try { assert.deepEqual(await s.ensureRects(fiveTiles, "run"), { done: 5, total: 5, missing: [] }); } finally { console.warn = orig; }
-    assert.deepEqual(logged, [["[streets] a street source failed after every piece it was asked for arrived", "RangeError"]]);
+    assert.deepEqual(logged, [["[streets] a street source failed after every piece it was asked for arrived", "RangeError", "busy"]]);
   });
   await testCase(async () => { // the same failure on a run replaced meanwhile: it rejects superseded and logs nothing
     let replaced = false;

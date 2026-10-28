@@ -391,9 +391,9 @@
           // nothing: the call is whole. A replaced run still rejects, so its caller does no more work.
           if (tiles.some((t) => !read.has(tid(t))) || (e && e.reason === "superseded")) throw short(e);
           // nothing this call asked for is missing, so its failure is not the run's to show, but a source that
-          // fails after handing every tile is worth seeing; not for a replaced run (never logged), the class
-          // only, as a message can name a tile
-          if (!ownStops.has(e) && !stale()) console.warn("[streets] a street source failed after every piece it was asked for arrived", e && e.name);
+          // fails after handing every tile is worth seeing; not for a replaced run (never logged). The class
+          // and the street reason (download errors are all Error) only, as a message can name a tile
+          if (!ownStops.has(e) && !stale()) console.warn("[streets] a street source failed after every piece it was asked for arrived", e && e.name, e && e.reason);
         }
         // a source that swallowed the caller's throw and resolved anyway still hands the bug on
         if (broke) throw broke;
