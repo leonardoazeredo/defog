@@ -7,7 +7,7 @@
 // over; a browser and the bench have none, and tests set a made-up one). The key is part of its URL,
 // so no message or log names the keyed URL. An endpoint that sends no response headers within
 // FIRST_BYTE_MS, or not the whole answer within REQUEST_TIMEOUT_MS, is abandoned (a stall) and held
-// 30 s, ten minutes from the third stall in a row. A network failure with no readable status (no
+// 30 s, ten minutes from the third stall in a row. A 401 or 403 (a revoked or mistyped key) holds that endpoint an hour. A network failure with no readable status (no
 // connection, or an answer without CORS headers, which can hide a 429) is held 30 s. The rejection
 // names the kind of failure in `reason`, one of five words, for the page to put into words (or
 // "superseded" when the caller's run was replaced, which the page never words).
@@ -48,6 +48,7 @@
     return typeof key === "string" && key ? "https://overpass.nextgis.com/" + encodeURIComponent(key) + "/api/interpreter" : undefined;
   }
   let state = {}; // url -> {until: time before which it is not asked again, heldAt: when that hold was set, why: its reason, error: the failure that earned it, stalls: in a row}
+  let warned = {}; // endpoint name -> true once a 401/403 from it was logged; keyed on the name, the URL holds the key
   let slots = {}; // endpoint name -> {open: requests in flight, waiting: resolvers, first come first served}
 
   const stateOf = (url) => state[url] || (state[url] = { until: 0, heldAt: -Infinity, why: null, error: null, stalls: 0 });
@@ -93,11 +94,15 @@
         signal: ctrl.signal
       });
     } catch (e) {
-      Overpass._clearTimeout(timer);
       return { error: e, kind: ctrl.signal.aborted ? "stall" : "network" };
+    } finally {
+      Overpass._clearTimeout(timer);
     }
-    Overpass._clearTimeout(timer);
-    if (!res.ok) return { status: res.status, error: new Error("overpass HTTP " + res.status), retryAfter: retryAfterMs(res) };
+    if (!res.ok) {
+      // an unread body can hold the socket until GC in Node's fetch (the bench)
+      if (res.body && res.body.cancel) res.body.cancel().catch(() => {});
+      return { status: res.status, error: new Error("overpass HTTP " + res.status), retryAfter: retryAfterMs(res) };
+    }
     timer = Overpass._setTimeout(stall("body stopped"), Math.max(0, Overpass._timeoutMs - (Overpass._now() - started)));
     try {
       const json = await res.json();
@@ -174,6 +179,13 @@
       else if (r.kind === "network") { why = "offline"; holdMs = MIN_BACKOFF_MS; }
       else if (r.status === 406) { why = "blocked"; holdMs = Math.max(BAN_HOLD_MS, r.retryAfter); }
       else if (r.status === 429) { why = "busy"; holdMs = Math.max(MIN_BACKOFF_MS, r.retryAfter); }
+      else if (r.status === 401 || r.status === 403) {
+        // a key that is revoked or mistyped stays so until the owner fixes it: ask elsewhere for an
+        // hour instead of paying a failed round trip first on every request
+        why = "server"; holdMs = BAN_HOLD_MS;
+        // the name and status only: the URL holds the key
+        if (!warned[name]) { warned[name] = true; console.warn("[overpass] endpoint answered", name, r.status); }
+      }
       else why = BUSY_STATUS[r.status] ? "busy" : "server";
       // a hold that a request open beside this one earned is never cut short (a 406's hour by a stall),
       // and this post reports that hold's reason and error
@@ -181,10 +193,15 @@
       if (holdMs) { s.until = Overpass._now() + holdMs; s.heldAt = Overpass._now(); s.why = why; s.error = r.error; }
       failures.push({ why, error: r.error });
     }
-    if (!failures.length) failures.push(...heldOnly);
+    const asked = failures.length > 0;
+    if (!asked) failures.push(...heldOnly);
     // a failed fetch means offline only when nothing answered at all: a status proves the network up
     for (const f of failures) if (f.why === "offline" && anyStatus) f.why = "server";
-    if (typeof navigator !== "undefined" && navigator.onLine === false) failures.push({ why: "offline", error: new Error("overpass: the browser is offline") });
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      const offline = { why: "offline", error: new Error("overpass: the browser is offline") };
+      // with nothing asked, the holds are left from earlier posts and say nothing about the network now
+      if (asked) failures.push(offline); else failures.splice(0, failures.length, offline);
+    }
     const reason = REASONS.find((r) => failures.some((f) => f.why === r)) || "server";
     const winner = failures.find((f) => f.why === reason);
     // a copy, with the stored error as its cause: a held endpoint's error comes back in every later
@@ -202,6 +219,15 @@
     throw err;
   }
 
+  // one source for the hooks' initial values and for _reset, so the two cannot drift
+  const defaultHooks = () => ({
+    _now: () => Date.now(),
+    _setTimeout: (fn, ms) => setTimeout(fn, ms),
+    _clearTimeout: (timer) => clearTimeout(timer),
+    _firstByteMs: FIRST_BYTE_MS,
+    _timeoutMs: REQUEST_TIMEOUT_MS
+  });
+
   const Overpass = {
     ENDPOINTS,
     // the names given first, in their order and without repeats, then the rest of the default. An
@@ -215,21 +241,20 @@
     // page holds no key
     has: (name) => !!urlOf(name),
     post,
-    // the cap of the endpoint asked first, read at each use since the key and the order can change;
-    // its slots are every caller's together, so a caller keeps at most this many open
-    cap: () => CAPS[order.find((name) => urlOf(name))],
+    // the cap of the endpoint asked first that is not on hold (the first one when all are), read at
+    // each use since the key, the order and the holds change; its slots are every caller's together,
+    // so a caller keeps at most this many open. A held NextGIS sends every post to overpass-api.de's
+    // 2 slots, so counting 4 would leave 2 posts queued with no first-byte timer running.
+    cap: () => {
+      const names = order.filter((name) => urlOf(name));
+      return CAPS[names.find((name) => stateOf(urlOf(name)).until <= Overpass._now()) || names[0]];
+    },
     // test-only hooks, used between settled posts: a fake clock, fake timers, the two limits, and a
     // way back to the initial state
-    _now: () => Date.now(),
-    _setTimeout: (fn, ms) => setTimeout(fn, ms),
-    _clearTimeout: (timer) => clearTimeout(timer),
-    _firstByteMs: FIRST_BYTE_MS,
-    _timeoutMs: REQUEST_TIMEOUT_MS,
+    ...defaultHooks(),
     _reset() {
-      order = DEFAULT_ORDER.slice(); state = {}; slots = {};
-      Overpass._now = () => Date.now();
-      Overpass._setTimeout = (fn, ms) => setTimeout(fn, ms); Overpass._clearTimeout = (timer) => clearTimeout(timer);
-      Overpass._firstByteMs = FIRST_BYTE_MS; Overpass._timeoutMs = REQUEST_TIMEOUT_MS;
+      order = DEFAULT_ORDER.slice(); state = {}; slots = {}; warned = {};
+      Object.assign(Overpass, defaultHooks());
     }
   };
   global.Overpass = Overpass;
