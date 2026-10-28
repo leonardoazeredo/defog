@@ -958,6 +958,64 @@ async function testCase(body) {
     assert.deepEqual(calls, [1, 1], "asked again once given up");
     assert.equal(s.inFlight.size, 0);
   });
+  await testCase(async () => { // two runs waiting for a tile the first run gives up: one of them asks again, the other waits for it
+    const answer = { ways: [], groups: {} };
+    const one = [{ s: 51.0, w: 13.7, n: 51.02, e: 13.72 }];
+    const calls = [];
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const fetchStreets = async (tiles, kind, onTile, opts) => {
+      calls.push(tiles.length);
+      if (calls.length === 1) { await gate; if (opts.stale()) throw Object.assign(new Error("replaced"), { reason: "superseded" }); }
+      tiles.forEach((t) => onTile(t, answer));
+      return new Map();
+    };
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets });
+    let replaced = false;
+    const first = s.ensureRects(one, "run", { stale: () => replaced }).then(() => assert.fail("expected a rejection"), (e) => e);
+    const second = s.ensureRects(one, "run"), third = s.ensureRects(one, "bike");
+    await settle();
+    replaced = true;
+    release();
+    assert.ok(StreetIndex.isSuperseded(await within(first)));
+    assert.deepEqual(await within(Promise.all([second, third])), [{ done: 1, total: 1, missing: [] }, { done: 1, total: 1, missing: [] }]);
+    assert.deepEqual(calls, [1, 1], "asked again once, not once per waiting run");
+    assert.equal(s.inFlight.size, 0);
+  });
+  await testCase(async () => { // a bug thrown by the caller's stale() while the run waits for another run's tile rejects as itself
+    const answer = { ways: [], groups: {} };
+    const one = [{ s: 51.0, w: 13.7, n: 51.02, e: 13.72 }];
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const fetchStreets = async (tiles, kind, onTile) => { await gate; tiles.forEach((t) => onTile(t, answer)); return new Map(); };
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets });
+    const bug = new TypeError("stale() broke");
+    let armed = false;
+    const first = s.ensureRects(one, "run");
+    const second = s.ensureRects(one, "run", { stale: () => { if (armed) throw bug; return false; } }).then(() => assert.fail("expected a rejection"), (e) => e);
+    await settle();
+    armed = true;
+    release();
+    assert.equal(await within(second), bug);
+    await within(first);
+  });
+  await testCase(async () => { // a cache-only read beside a run with the tile in flight neither waits for it nor claims it
+    const answer = { ways: [], groups: {} };
+    const one = [{ s: 51.0, w: 13.7, n: 51.02, e: 13.72 }];
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const fetchStreets = async (tiles, kind, onTile, opts) => {
+      if (opts && opts.cacheOnly) return new Map();
+      await gate; tiles.forEach((t) => onTile(t, answer)); return new Map();
+    };
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets });
+    const run = s.ensureRects(one, "run");
+    const [t] = StreetIndex.tilesOf(one);
+    assert.deepEqual(await within(s.ensureRects(one, "run", { cacheOnly: true })), { done: 0, total: 1, missing: [t] });
+    assert.equal(s.inFlight.size, 1, "only the run's claim");
+    release();
+    await within(run);
+  });
   await testCase(async () => { // a run replaced while it waits for another run's tile rejects superseded; the other run still gets the tile
     const answer = { ways: [], groups: {} };
     const one = [{ s: 51.0, w: 13.7, n: 51.02, e: 13.72 }];

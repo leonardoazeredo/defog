@@ -283,13 +283,15 @@
     return !stale();
   };
 
+  const travelClass = (profile) => global.StreetIndex.MODE_CLASS[profile] || "foot";
+
   // The street graph for a profile: what planning and routing (suggestions and the route editor)
   // run on. One per travel class, because each may use different ways;
   // built lazily, rebuilt when new streets arrive or the fog changes.
   SuggestTool.prototype.plannerFor = function (profile) {
     if (!this.streets || !global.GraphPlanner || !this.streets.ways.length) return null;
     // usableFor and onewayFor depend only on the travel class, so profiles sharing one share the graph
-    const key = global.StreetIndex.MODE_CLASS[profile] || "foot";
+    const key = travelClass(profile);
     const had = this._planners[key];
     // a held graph stays with its suggestion: once the streets or the fog outgrew it, the slot gets a
     // fresh planner; any other one is rebuilt in place by build()
@@ -308,7 +310,7 @@
     if (!planner) return null;
     planner.build();
     planner.held = true;
-    this._hold = { runId, key: global.StreetIndex.MODE_CLASS[profile] || "foot", planner };
+    this._hold = { runId, key: travelClass(profile), planner };
     return planner;
   };
   // runId: let go only of that run's graph (undefined: of whichever run holds one)
@@ -320,7 +322,7 @@
   };
   SuggestTool.prototype._graphFor = function (profile) {
     const h = this._hold;
-    return h && h.key === (global.StreetIndex.MODE_CLASS[profile] || "foot") ? h.planner : this.plannerFor(profile);
+    return h && h.key === travelClass(profile) ? h.planner : this.plannerFor(profile);
   };
 
   // Defoggable area (m²) reachable via the ways within rM of the point, or

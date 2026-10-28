@@ -331,47 +331,67 @@
 
     // the tiles another run is already bringing (a run tile stands in for bike, as in _uncovered); the
     // rest this run asks for itself. A cache-only read waits for nothing and claims nothing.
-    const shared = [], ask = [];
-    for (const t of todo) {
-      const entry = !cacheOnly && (this.inFlight.get(StreetIndex.tileKey(kind, t.x, t.y)) ||
-        (kind !== "car" && this.inFlight.get(StreetIndex.tileKey("run", t.x, t.y))));
-      if (entry) shared.push({ t, entry }); else ask.push(t);
-    }
+    const split = (tiles) => {
+      const shared = [], ask = [];
+      for (const t of tiles) {
+        const entry = !cacheOnly && (this.inFlight.get(StreetIndex.tileKey(kind, t.x, t.y)) ||
+          (kind !== "car" && this.inFlight.get(StreetIndex.tileKey("run", t.x, t.y))));
+        if (entry) shared.push({ t, entry }); else ask.push(t);
+      }
+      return { shared, ask };
+    };
     let settled = false;
     // Settles once every shared tile is read or given up by the run bringing it. Rejects superseded
     // at the first one that lands after this run went stale, leaving the other run's request alone: a
     // run that waits only on shared tiles has no other moment to notice it was replaced.
-    const sharedIn = new Promise((resolve, reject) => {
+    const waitFor = (shared) => new Promise((resolve, reject) => {
       let left = shared.length;
-      if (!left) resolve();
       for (const { t, entry } of shared) entry.promise.then((via) => {
         if (settled) return;
         const id = tid(t);
-        // covered: the other run read it; else it gave the tile up, and this run asks for it below
-        if (!read.has(id) && holds(this.tiles, kind, t)) {
-          read.add(id);
-          if (via && !via.cached) downloaded++;
-          try { progress(); } catch (e) { if (!broke) broke = e; }
+        // a throw here (onProgress, the caller's stale) is a bug: the wait rejects with it rather than never settling
+        try {
+          // covered: the other run read it; else it gave the tile up, and this run asks for it again
+          if (!read.has(id) && holds(this.tiles, kind, t)) {
+            read.add(id);
+            if (via && !via.cached) downloaded++;
+            progress();
+          }
+          if (stale()) reject(short(superseded()));
+          else if (!--left) resolve();
+        } catch (e) {
+          if (!broke) broke = e;
+          reject(e);
         }
-        if (stale()) reject(short(superseded()));
-        else if (!--left) resolve();
       });
     });
-    sharedIn.catch(() => {}); // awaited only after this run's own call, so a rejection before then is not reported as unhandled
     progress();
     let answers;
     try {
-      if (ask.length) answers = await fetchSome(ask);
-      if (shared.length) {
-        await sharedIn;
-        if (broke) throw broke;
-        // what the other run gave up on (it failed, or was replaced, before reading it)
-        const left = shared.map((x) => x.t).filter((t) => !read.has(tid(t)));
-        if (left.length) {
-          if (stale()) throw short(superseded());
-          if (this.now() - started >= deadlineMs) throw short(deadlinePassed());
-          await fetchSome(left);
+      let { shared, ask } = split(todo);
+      for (let pass = 0; ; pass++) {
+        // started before this run's own call, which can outlast every shared tile
+        const sharedIn = shared.length ? waitFor(shared) : null;
+        if (sharedIn) sharedIn.catch(() => {}); // awaited only after this run's own call, so a rejection before then is not reported as unhandled
+        if (ask.length) {
+          const got = await fetchSome(ask);
+          if (!pass) answers = got;
         }
+        if (!sharedIn) break;
+        // a bug beside the wait's superseded rejection is still the run's rejection
+        try { await sharedIn; } catch (e) { throw broke || e; }
+        if (broke) throw broke;
+        // what the other run gave up on (it failed, or was replaced, before reading it); split again,
+        // so of several runs waiting for it one asks and the rest wait for that one
+        const left = shared.map((x) => x.t).filter((t) => !read.has(tid(t)));
+        if (!left.length) break;
+        if (stale()) throw short(superseded());
+        if (this.now() - started >= deadlineMs) throw short(deadlinePassed());
+        // a run that waited beside this one may have asked and read it already; not counted as
+        // downloaded, as this run cannot tell whether the street cache answered that run
+        for (const t of left) if (holds(this.tiles, kind, t)) { read.add(tid(t)); progress(); }
+        ({ shared, ask } = split(left.filter((t) => !read.has(tid(t)))));
+        if (!shared.length && !ask.length) break;
       }
     } finally {
       settled = true;

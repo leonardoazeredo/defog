@@ -57,5 +57,31 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]],
     await t.suggest("hiking-mountain", { buffer: 0.15 });
     assert.equal(held.held, false);
   }
+  { // an older run that ends while a newer one plans leaves the newer run's graph held
+    const st = streetsWith(street);
+    const t = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0 }, computeGain: () => ({ area: 1, newPct: 1 }), streets: st });
+    t.mode = "p2p"; t.a = pin(0, 0); t.b = pin(1000, 0);
+    let openOld, openNew;
+    const oldGate = new Promise((r) => { openOld = r; }), newGate = new Promise((r) => { openNew = r; });
+    let calls = 0;
+    st.ensureRects = async () => { if (++calls === 1) await oldGate; return { done: 1, total: 1, missing: [] }; };
+    const orig = t._route;
+    let parked = null;
+    t._route = async function (...a) {
+      if (!parked) { parked = this._hold; await newGate; }
+      return orig.apply(this, a);
+    };
+    const older = t.suggest("hiking-mountain", { buffer: 0.15 });
+    const newer = t.suggest("hiking-mountain", { buffer: 0.15 });
+    await new Promise((r) => setImmediate(r));
+    assert.ok(parked && parked.planner.held, "the newer run holds its graph");
+    openOld();
+    await older;
+    assert.equal(t._hold, parked, "still the newer run's");
+    assert.equal(parked.planner.held, true);
+    openNew();
+    await newer;
+    assert.equal(t._hold, null);
+  }
   console.log("suggest-graph-hold: ok");
 })().catch((e) => { console.error(e); process.exit(1); });
