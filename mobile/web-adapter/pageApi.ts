@@ -3,7 +3,13 @@ import type { Send } from "./bridge.js";
 
 type PageMessage<E extends PageEvent> = Extract<NativeToWeb, { type: E }>;
 
-type PageEvent = "routeStatus" | "linkStatus" | "activities" | "track" | "trackUnavailable";
+type PageEvent =
+  | "routeStatus"
+  | "linkStatus"
+  | "activities"
+  | "track"
+  | "trackUnavailable"
+  | "unreadableActivities";
 
 // The page never sees the bridge envelope (`v`, `type`), only the payload.
 type PageListener<E extends PageEvent> = (payload: Omit<PageMessage<E>, "v" | "type">) => void;
@@ -38,6 +44,7 @@ export function installPageApi(win: Window, send: Send, handlers: PageHandlers =
     activities: new Set(),
     track: new Set(),
     trackUnavailable: new Set(),
+    unreadableActivities: new Set(),
   };
 
   function on<E extends PageEvent>(event: E, fn: PageListener<E>): () => void {
@@ -86,7 +93,8 @@ export function installPageApi(win: Window, send: Send, handlers: PageHandlers =
         case "linkStatus":
         case "activities":
         case "track":
-        case "trackUnavailable": {
+        case "trackUnavailable":
+        case "unreadableActivities": {
           const { v: _v, type, ...payload } = msg;
           emit(type, payload);
           break;

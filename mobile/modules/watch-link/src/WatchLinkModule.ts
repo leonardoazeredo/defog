@@ -12,6 +12,7 @@ declare class WatchLinkModule extends NativeModule<WatchLinkNativeEvents> {
   copyFromUri(uri: string, destPath: string): Promise<{ size: number; head: string }>;
   status(): Promise<unknown>;
   pendingActivities(): Promise<unknown>;
+  unreadableActivities(): Promise<unknown>;
   readActivity(id: string): Promise<string>;
   release(id: string): Promise<void>;
   queueRoute(routeJson: string): Promise<void>;

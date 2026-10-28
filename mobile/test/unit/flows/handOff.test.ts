@@ -38,7 +38,7 @@ describe("hand-off", () => {
     const { link, activities, flow } = setup();
     link.stage(offer(A, "2026-03-01T10:00:00Z", { routeId: ROUTE }));
 
-    expect(await flow.run()).toEqual({ stored: 1, released: 1 });
+    expect(await flow.run()).toEqual({ stored: 1, released: 1, unreadable: 0 });
 
     const stored = await activities.get(A);
     expect(stored).toMatchObject({
@@ -59,7 +59,7 @@ describe("hand-off", () => {
 
   it("does nothing when nothing is staged", async () => {
     const { flow, link } = setup();
-    expect(await flow.run()).toEqual({ stored: 0, released: 0 });
+    expect(await flow.run()).toEqual({ stored: 0, released: 0, unreadable: 0 });
     expect(link.released()).toEqual([]);
   });
 
@@ -84,10 +84,10 @@ describe("hand-off", () => {
     });
     link.stage(offer(A, "2026-03-01T10:00:00Z"));
 
-    expect(await flow.run()).toEqual({ stored: 1, released: 0 });
+    expect(await flow.run()).toEqual({ stored: 1, released: 0, unreadable: 0 });
     expect(await link.pendingActivities()).toHaveLength(1);
 
-    expect(await flow.run()).toEqual({ stored: 0, released: 1 });
+    expect(await flow.run()).toEqual({ stored: 0, released: 1, unreadable: 0 });
     expect(await link.pendingActivities()).toEqual([]);
     expect(await activities.list()).toHaveLength(1);
   });
@@ -107,11 +107,11 @@ describe("hand-off", () => {
     const flow = createHandOffFlow({ link, activities: flaky, parseGpx, now: () => NOW });
     link.stage(offer(A, "2026-03-01T10:00:00Z"));
 
-    expect(await flow.run()).toEqual({ stored: 0, released: 0 });
+    expect(await flow.run()).toEqual({ stored: 0, released: 0, unreadable: 0 });
     expect(link.released()).toEqual([]);
     expect(await link.pendingActivities()).toHaveLength(1);
 
-    expect(await flow.run()).toEqual({ stored: 1, released: 1 });
+    expect(await flow.run()).toEqual({ stored: 1, released: 1, unreadable: 0 });
   });
 
   it("stores one activity when the same offer is staged twice", async () => {
@@ -119,9 +119,9 @@ describe("hand-off", () => {
     link.stage(offer(A, "2026-03-01T10:00:00Z"));
     link.stage(offer(A, "2026-03-01T10:00:00Z"));
 
-    expect(await flow.run()).toEqual({ stored: 1, released: 1 });
+    expect(await flow.run()).toEqual({ stored: 1, released: 1, unreadable: 0 });
     link.stage(offer(A, "2026-03-01T10:00:00Z"));
-    expect(await flow.run()).toEqual({ stored: 0, released: 1 });
+    expect(await flow.run()).toEqual({ stored: 0, released: 1, unreadable: 0 });
     expect(await activities.list()).toHaveLength(1);
   });
 
@@ -130,7 +130,7 @@ describe("hand-off", () => {
     link.stage(offer(B, "2026-03-01T12:00:00Z"));
     link.stage(offer(A, "2026-03-01T10:00:00Z"));
 
-    expect(await flow.run()).toEqual({ stored: 2, released: 2 });
+    expect(await flow.run()).toEqual({ stored: 2, released: 2, unreadable: 0 });
     expect((await activities.list()).map((a) => a.id)).toEqual([B, A]);
   });
 
@@ -140,7 +140,7 @@ describe("hand-off", () => {
     link.stage(offer(A, "2026-03-01T10:00:00Z", { gpx: "<gpx></gpx>" }));
     link.stage(offer(B, "2026-03-01T12:00:00Z"));
 
-    expect(await flow.run()).toEqual({ stored: 1, released: 1 });
+    expect(await flow.run()).toEqual({ stored: 1, released: 1, unreadable: 1 });
     expect((await link.pendingActivities()).map((p) => p.activityId)).toEqual([A]);
     expect((await activities.list()).map((a) => a.id)).toEqual([B]);
     expect(link.released()).toEqual([B]);
@@ -161,7 +161,7 @@ describe("hand-off", () => {
     };
     const flow = createHandOffFlow({ link: vanishing, activities, parseGpx, now: () => NOW });
 
-    expect(await flow.run()).toEqual({ stored: 1, released: 1 });
+    expect(await flow.run()).toEqual({ stored: 1, released: 1, unreadable: 0 });
   });
 
   it("leaves an offer staged when it names a different id than the staged one", async () => {
@@ -170,9 +170,35 @@ describe("hand-off", () => {
     const mismatched = { ...link, readActivity: async () => offer(B, "2026-03-01T10:00:00Z") };
     const flow = createHandOffFlow({ link: mismatched, activities, parseGpx, now: () => NOW });
 
-    expect(await flow.run()).toEqual({ stored: 0, released: 0 });
+    expect(await flow.run()).toEqual({ stored: 0, released: 0, unreadable: 1 });
     expect(await activities.list()).toEqual([]);
     expect(link.released()).toEqual([]);
+  });
+
+  it("counts the staged items the phone cannot read, leaves them staged and handles the others", async () => {
+    const { link, activities, flow } = setup();
+    link.stageUnreadable(A);
+    link.stage(offer(B, "2026-03-01T12:00:00Z"));
+
+    expect(await flow.run()).toEqual({ stored: 1, released: 1, unreadable: 1 });
+    expect((await activities.list()).map((a) => a.id)).toEqual([B]);
+    expect(link.released()).toEqual([B]);
+    expect(await flow.run()).toEqual({ stored: 0, released: 0, unreadable: 1 });
+  });
+
+  it("gives no count when the phone cannot say how many items it cannot read", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { link, activities } = setup();
+    link.stage(offer(A, "2026-03-01T10:00:00Z"));
+    const broken = {
+      ...link,
+      unreadableActivities: async () => {
+        throw new Error("module unavailable");
+      },
+    };
+    const flow = createHandOffFlow({ link: broken, activities, parseGpx, now: () => NOW });
+    expect(await flow.run()).toEqual({ stored: 1, released: 1, unreadable: null });
+    warn.mockRestore();
   });
 
   it("does not reject when the list of staged offers cannot be read", async () => {
@@ -184,7 +210,7 @@ describe("hand-off", () => {
       },
     };
     const flow = createHandOffFlow({ link: broken, activities, parseGpx, now: () => NOW });
-    expect(await flow.run()).toEqual({ stored: 0, released: 0 });
+    expect(await flow.run()).toEqual({ stored: 0, released: 0, unreadable: null });
   });
 
   it("never runs two passes at once, and an offer staged mid-pass is picked up after it", async () => {
@@ -216,8 +242,8 @@ describe("hand-off", () => {
     const third = flow.run();
     gate();
 
-    expect(await first).toEqual({ stored: 1, released: 1 });
-    expect(await second).toEqual({ stored: 1, released: 1 });
+    expect(await first).toEqual({ stored: 1, released: 1, unreadable: 0 });
+    expect(await second).toEqual({ stored: 1, released: 1, unreadable: 0 });
     expect(await third).toEqual(await second);
     expect(overlap).toBe(false);
     expect((await activities.list()).map((a) => a.id)).toEqual([B, A]);
@@ -245,7 +271,7 @@ describe("hand-off", () => {
       return await pass;
     });
 
-    expect(await restore).toEqual({ stored: 1, released: 0 });
+    expect(await restore).toEqual({ stored: 1, released: 0, unreadable: 0 });
     expect(link.released()).toEqual([]);
     expect((await link.pendingActivities()).map((p) => p.activityId)).toEqual([A]);
   });
@@ -254,11 +280,15 @@ describe("hand-off", () => {
     const { link, activities, flow } = setup();
     link.stage(offer(A, "2026-03-01T10:00:00Z"));
 
-    expect(await flow.hold(() => flow.run())).toEqual({ stored: 0, released: 0 });
+    expect(await flow.hold(() => flow.run())).toEqual({
+      stored: 0,
+      released: 0,
+      unreadable: null,
+    });
     expect(await activities.list()).toEqual([]);
     expect(await link.pendingActivities()).toHaveLength(1);
 
-    expect(await flow.run()).toEqual({ stored: 1, released: 1 });
+    expect(await flow.run()).toEqual({ stored: 1, released: 1, unreadable: 0 });
     expect(link.released()).toEqual([A]);
   });
 
@@ -272,6 +302,6 @@ describe("hand-off", () => {
     ).rejects.toThrow("restore failed");
 
     link.stage(offer(A, "2026-03-01T10:00:00Z"));
-    expect(await flow.run()).toEqual({ stored: 1, released: 1 });
+    expect(await flow.run()).toEqual({ stored: 1, released: 1, unreadable: 0 });
   });
 });

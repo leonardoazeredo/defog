@@ -55,6 +55,13 @@ export function createNativeWatchLink(): WatchLink {
         return [];
       });
     },
+    async unreadableActivities() {
+      return z
+        .number()
+        .int()
+        .min(0)
+        .parse(await native.unreadableActivities());
+    },
     async readActivity(id) {
       const text = await native.readActivity(id);
       let offer: unknown;

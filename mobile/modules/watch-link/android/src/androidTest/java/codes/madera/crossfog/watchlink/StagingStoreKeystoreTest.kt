@@ -4,10 +4,12 @@ import android.content.Context
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
+import java.security.KeyStore
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -52,5 +54,24 @@ class StagingStoreKeystoreTest {
     store().stage(id, "payload".toByteArray())
     store().release(id)
     assertEquals(emptyList<String>(), store().list())
+  }
+
+  // A Keystore reset takes the staging alias and leaves the files: the next entry is a new one, so
+  // the old items fail to authenticate; they must be counted as unreadable, not silently left out,
+  // and stay on disk.
+  @Test
+  fun aLostStagingAliasLeavesItsItemsCountedAndKept() {
+    val offer = """{"activityId":"$id","travelMode":"walk","encoderVersion":"1","gpx":"<gpx/>"}"""
+    store().stage(id, offer.toByteArray())
+    assertEquals(listOf(id), readStagedActivities(store()).readable.map { it.activityId })
+
+    KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(Keys.STAGING_ALIAS)
+    val staged = readStagedActivities(
+      StagingStore(dir, Keys(context).stagingKey(listOf(dir)), ::fsyncDirectory),
+    )
+
+    assertEquals(0, staged.readable.size)
+    assertEquals(1, staged.unreadable)
+    assertTrue(File(dir, "$id.bin").exists())
   }
 }

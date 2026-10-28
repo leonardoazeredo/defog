@@ -73,8 +73,10 @@
   function create(opts) {
     const root = opts.root, doc = root.ownerDocument, map = opts.map;
     const listEl = root.querySelector("#historyList"), detailEl = root.querySelector("#historyDetail"), emptyEl = root.querySelector("#historyEmpty");
+    const unreadableEl = root.querySelector("#historyUnreadable");
     const units = () => (opts.getUnits ? opts.getUnits() : "metric");
     let items = [];
+    let unreadable = 0;
     let open = null; // { id, points, route, trackNote, deleteNote } while a card is open
     let overlay = null; // the lines "Show on map" drew
     let armTimer = null;
@@ -183,6 +185,10 @@
       listEl.style.display = inDetail ? "none" : "";
       detailEl.style.display = inDetail ? "" : "none";
       emptyEl.style.display = !inDetail && items.length === 0 ? "" : "none";
+      if (unreadableEl) {
+        unreadableEl.style.display = !inDetail && unreadable > 0 ? "" : "none";
+        unreadableEl.textContent = unreadable === 1 ? "1 walk could not be read." : unreadable + " walks could not be read.";
+      }
       if (inDetail) { renderDetail(); return; }
       listEl.textContent = "";
       items.forEach((s) => {
@@ -242,6 +248,8 @@
       },
       // The phone's answer to a needTrack it has no track for; reason is notFound or readFailed.
       trackUnavailable(activityId, reason) { noteTrack(activityId, TRACK_NOTES[reason] || TRACK_NOTES.readFailed); },
+      // Walks the watch handed over that the phone keeps but cannot read; 0 hides the line.
+      setUnreadable(count) { unreadable = count; render(); },
       // Card text formats distances and paces in the chosen units, so a toggle needs a re-render.
       refresh() { render(); },
     };

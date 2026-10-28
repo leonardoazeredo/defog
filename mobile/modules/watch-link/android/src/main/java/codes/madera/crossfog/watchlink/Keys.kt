@@ -5,6 +5,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
+import android.util.Log
 import java.io.File
 import java.security.UnrecoverableKeyException
 import java.security.KeyStore
@@ -121,8 +122,21 @@ class Keys(
     File(databaseKeyFile.path + ".new").delete()
   }
 
-  fun stagingKey(): SecretKey =
-    synchronized(LOCK) { existingKey(STAGING_ALIAS) ?: generateKey(STAGING_ALIAS) }
+  /**
+   * The staging Keystore entry, minted when the alias is absent. Unlike the database key, a lost one
+   * is replaced: refusing would turn away every walk the watch hands over from now on. Items sealed
+   * under the lost entry cannot be read under the new one; they stay on disk, the staging ones are
+   * counted by `readStagedActivities` (outbox ones are not), and a replacement that finds a `.bin`
+   * in `sealedDirs` logs a fixed line with no file name.
+   */
+  fun stagingKey(sealedDirs: List<File> = emptyList()): SecretKey = synchronized(LOCK) {
+    existingKey(STAGING_ALIAS) ?: run {
+      if (sealedDirs.any { dir -> dir.listFiles().orEmpty().any { it.name.endsWith(".bin") } }) {
+        Log.w(TAG, "staging alias was missing; items staged before it cannot be read")
+      }
+      generateKey(STAGING_ALIAS)
+    }
+  }
 
   private fun createDatabaseKey(): ByteArray =
     ByteArray(DATABASE_KEY_BYTES).also {
@@ -192,6 +206,7 @@ class Keys(
     // per-instance lock would not serialize two first runs racing on them.
     private val LOCK = Any()
     private const val PROVIDER = "AndroidKeyStore"
+    private const val TAG = "WatchLink"
     const val KEK_ALIAS = "crossfog.kek.v1"
     const val STAGING_ALIAS = "crossfog.staging.v1"
     const val DATABASE_KEY_BYTES = 32

@@ -43,10 +43,22 @@ export function createFlows(deps: ComposeDeps): ComposedFlows {
     parseGpx,
     now: deps.now,
   });
+  // Only a change is sent, since the page keeps the last count it was told; `ready` sends a count
+  // above zero again because a reloaded page starts at zero. A pass with no count to give leaves
+  // the last one standing.
+  let unreadable = 0;
+  function sendUnreadable(): void {
+    deps.send({ v: 1, type: "unreadableActivities", count: unreadable });
+  }
+
   // The page shows what the store holds, so it hears about every activity the hand-off adds.
   async function handOffAndPublish(): Promise<void> {
-    const { stored } = await handOff.run();
-    if (stored > 0) await history.publish();
+    const result = await handOff.run();
+    if (result.stored > 0) await history.publish();
+    if (result.unreadable !== null && result.unreadable !== unreadable) {
+      unreadable = result.unreadable;
+      sendUnreadable();
+    }
   }
 
   // A restore swaps the database file, so an activity committed to the old one during it would be
@@ -65,6 +77,7 @@ export function createFlows(deps: ComposeDeps): ComposedFlows {
     ...createNoopFlows(),
     async ready() {
       await history.publish();
+      if (unreadable > 0) sendUnreadable();
       await sendFlow.sendStatus();
     },
     handOffNow: handOffAndPublish,

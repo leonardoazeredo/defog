@@ -8,7 +8,6 @@ import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
-import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -20,12 +19,11 @@ class WatchLinkModule : Module() {
 
   // Both stores live in noBackupFilesDir for the same reason as the database key: a restored copy
   // would be undecryptable.
-  private val staging by lazy {
-    StagingStore(File(context.noBackupFilesDir, "staging"), keys.stagingKey(), ::fsyncDirectory)
-  }
-  private val outbox by lazy {
-    StagingStore(File(context.noBackupFilesDir, "outbox"), keys.stagingKey(), ::fsyncDirectory)
-  }
+  private val stagingDir by lazy { File(context.noBackupFilesDir, "staging") }
+  private val outboxDir by lazy { File(context.noBackupFilesDir, "outbox") }
+  private val stagingKey by lazy { keys.stagingKey(listOf(stagingDir, outboxDir)) }
+  private val staging by lazy { StagingStore(stagingDir, stagingKey, ::fsyncDirectory) }
+  private val outbox by lazy { StagingStore(outboxDir, stagingKey, ::fsyncDirectory) }
 
   private val saveAs by lazy { SaveAs(context.contentResolver, context.cacheDir) }
   private lateinit var createLauncher: AppContextActivityResultLauncher<CreateInput, Uri?>
@@ -95,7 +93,16 @@ class WatchLinkModule : Module() {
     AsyncFunction("status") { mapOf("paired" to false, "reachable" to false) }
 
     AsyncFunction("pendingActivities") {
-      staging.list().mapNotNull { id -> summaryOf(id) }
+      readStagedActivities(staging).readable.map { it.summary() }
+    }
+
+    // Counted on its own because an unreadable item is neither listed nor deleted, so without the
+    // count the page would never learn it exists.
+    AsyncFunction("unreadableActivities") {
+      val unreadable = readStagedActivities(staging).unreadable
+      // Fixed text: nothing of an item reaches the log.
+      if (unreadable > 0) Log.w(TAG, "staged items that cannot be read: $unreadable")
+      unreadable
     }
 
     AsyncFunction("readActivity") { id: String ->
@@ -122,22 +129,6 @@ class WatchLinkModule : Module() {
     staging.stage(offer.activityId, bytes)
     // sendEvent is a no-op while no JS runtime is attached; JS then finds the item through pendingActivities on start.
     sendEvent("activityStaged", mapOf("activityId" to offer.activityId))
-  }
-
-  private fun summaryOf(id: String): Map<String, Any?>? {
-    // An item that cannot be read, parsed or matched to its file name is skipped so it does not hide
-    // the others. A key failure is not caught here, so it propagates to the caller.
-    val offer = try {
-      staging.read(id)?.let { Frames.parseActivityOffer(it) }?.takeIf { it.activityId == id }
-    } catch (e: FrameException) {
-      null
-    } catch (e: IOException) {
-      null
-    }
-    // A staged item that no longer authenticates or parses is skipped, not deleted: it is the only
-    // copy the watch has already given up. Nothing of it is logged.
-    if (offer == null) Log.w(TAG, "skipping an unreadable staged item")
-    return offer?.summary()
   }
 
   private inline fun <T> coded(block: () -> T): T =
