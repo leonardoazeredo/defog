@@ -56,6 +56,10 @@
   // ---- fog layer + appearance -------------------------------------------------
   const fogMap = new FogParser.FogMap();
   let fogLayer = null;
+  // The map opens on a wide view, so activity-only fog (no import, which fits in finishLoad) would sit out of sight: fit it
+  // once, but never over any other map move since load (a gesture, "Show on map", a waypoint): Leaflet's movestart covers them all.
+  let fitted = false, mapTouched = false;
+  map.on("movestart", () => { mapTouched = true; });
   const SWATCHES = ["#2d3a4a", "#40639c", "#68509f", "#6a6f8a"]; // slate · blue · purple · blue-grey
   const WIDEN_MAX = 4;
 
@@ -212,8 +216,13 @@
     fowBtn.style.display = window.crossfog ? "" : "none";
     fowBtn.disabled = !(fogMap.totalVisited() > 0);
   }
+  let fowStatusTimer = null;
+  const FOW_STATUS_MS = 8000;
   function showFowResult(n) {
     fowStatus.textContent = n === null ? "Couldn't write the export." : n === 0 ? "There is no fog to export yet." : "Choose where to save it…";
+    // The page never learns whether the picker saved or was cancelled (the phone app toasts that), so the line can only expire.
+    clearTimeout(fowStatusTimer);
+    fowStatusTimer = setTimeout(() => { fowStatus.textContent = ""; }, FOW_STATUS_MS);
   }
   window.addEventListener("load", updateFowButton);
   function updateDefog() {
@@ -266,14 +275,10 @@
   const setLoad = (m) => { loadStatus.textContent = m; };
   const inflateToTile = (name, buf) => fogMap.addTile(name, pako.inflate(new Uint8Array(buf)));
   function finishLoad() {
-    ensureLayer();
     const b = fogMap.latLngBounds();
     if (b) map.fitBounds(b, { padding: [20, 20] });
     setLoad(`${fogMap.tileCount} tiles loaded ✓`);
-    updateDefog();
-    streets.invalidateFrac(); // the street index remembers each segment's fogged share, from the old fog
-    streetsLayer.invalidateFog(); // streets must be judged against the fog that just arrived
-    syncSug(); // fog just arrived, so the Suggest button can wake up
+    fogChanged();
   }
   async function loadFromInput(fileList) {
     const files = Array.from(fileList); if (!files.length) return;
@@ -753,12 +758,23 @@
   // the fog and its panels update now and the street fractions are recomputed on next use. The suggestion planners need no reset: they
   // stamp their graph with fogMap.version and rebuild on their own.
   function fogChanged() {
-    if (fogLayer) fogLayer.redraw();
-    else if (fogMap.hasFog()) ensureLayer(); // activities alone, no import: the first cells create the layer
-    streets.invalidateFrac();
-    streetsLayer.invalidateFog();
-    updateDefog();
-    syncSug();
+    // Each step runs on its own so one that throws cannot leave the later panels stale; only the class is logged.
+    const steps = [
+      () => { if (fogLayer) fogLayer.redraw(); else if (fogMap.hasFog()) ensureLayer(); }, // activities alone, no import: the first cells create the layer
+      () => {
+        const b = !fitted && !mapTouched && fogMap.tileCount === 0 && fogMap.hasFog() ? fogMap.latLngBounds() : null;
+        if (b) { fitted = true; map.fitBounds(b, { padding: [20, 20] }); mapTouched = false; } // movestart fired for our own fit
+      },
+      () => streets.invalidateFrac(), // the street index remembers each segment's fogged share, from the old fog
+      () => streetsLayer.invalidateFog(), // streets must be judged against the fog that just arrived
+      () => updateDefog(),
+      () => syncSug(), // fog just arrived, so the Suggest button can wake up
+      // A shown suggestion's gain numbers were scored on the old fog; only a finished result has a `list` (a run in flight emits loading states and scores on the live fog), so do not make this unconditional: clearResults would cancel the run.
+      () => { if (lastSug && lastSug.list) suggest.clearResults(); }
+    ];
+    steps.forEach((step, i) => {
+      try { step(); } catch (e) { console.warn(`[fog] refresh step ${i} failed:`, e && e.name); }
+    });
   }
   // `history` is the History tab the adapter feeds; `routeStatus` and `linkStatus` carry the phone's answers to the Send button.
   window.CrossfogPage = {
