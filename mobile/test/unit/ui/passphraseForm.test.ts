@@ -17,6 +17,29 @@ describe("backup form", () => {
     expect(s).toEqual({ problem: "tooShort", answer: null, showWarning: false });
   });
 
+  it.each([`x'${"ab".repeat(32)}'`, `X'${"AB".repeat(32)}'`, `x'${"aB09".repeat(16)}'`])(
+    "rejects %s, which SQLCipher would read as a raw key",
+    (raw) => {
+      const s = backupFormState({ passphrase: raw, confirm: raw, noEncryption: false });
+      expect(s).toEqual({ problem: "rawKey", answer: null, showWarning: false });
+    },
+  );
+
+  it("rejects the 96-digit form with a salt too", () => {
+    const raw = `x'${"ab".repeat(48)}'`;
+    expect(backupFormState({ passphrase: raw, confirm: raw, noEncryption: false }).problem).toBe(
+      "rawKey",
+    );
+  });
+
+  it("accepts text that only looks like a raw key", () => {
+    for (const p of [`x'${"ab".repeat(31)}'`, `x'${"zz".repeat(32)}'`, ` x'${"ab".repeat(32)}'`]) {
+      expect(
+        backupFormState({ passphrase: p, confirm: p, noEncryption: false }).problem,
+      ).toBeNull();
+    }
+  });
+
   it("cannot be submitted when the two fields differ", () => {
     const s = backupFormState({ passphrase: long, confirm: `${long}!`, noEncryption: false });
     expect(s.problem).toBe("mismatch");

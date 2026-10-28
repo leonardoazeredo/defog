@@ -8,6 +8,12 @@ export interface PassphraseRequest {
   resolve(answer: PassphraseAnswer | null): void;
 }
 
+const PROBLEM_COPY = {
+  tooShort: COPY.passphraseTooShort,
+  rawKey: COPY.passphraseRawKey,
+  mismatch: COPY.passphraseMismatch,
+} as const;
+
 const styles = StyleSheet.create({
   scrim: {
     flex: 1,
@@ -85,9 +91,7 @@ function PassphraseForm({ request }: { request: PassphraseRequest }): React.JSX.
             />
           ) : null}
           {backup && passphrase.length > 0 && form.problem !== null ? (
-            <Text style={styles.problem}>
-              {form.problem === "tooShort" ? COPY.passphraseTooShort : COPY.passphraseMismatch}
-            </Text>
+            <Text style={styles.problem}>{PROBLEM_COPY[form.problem]}</Text>
           ) : null}
           {backup ? (
             <View style={styles.row}>
