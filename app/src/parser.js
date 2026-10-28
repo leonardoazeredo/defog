@@ -6,7 +6,7 @@
 //   Each file is zlib-compressed. Decompressed:
 //     - header: 128*128 uint16 (little-endian) mapping block position -> 1-based block index (0 = absent)
 //     - then blocks, each 515 bytes: 512-byte bitmap (64x64 bits) + 3 bytes extra (region + checksum)
-//   A set bit = a defogged cell. Grid is 512 tiles * (128 blocks * 64 bits) = 2^22 cells per axis.
+//   A set bit = an explored cell. Grid is 512 tiles * (128 blocks * 64 bits) = 2^22 cells per axis.
 //   The 3 extra bytes hold 10 region bits and the checksum 2*popcount+1; the writer (fogWriter.js) needs the region bits
 //   back, so Tile hands them out. Cells added by the app live in a per-FogMap overlay beside the imported tiles.
 (function (global) {
@@ -25,47 +25,76 @@
   const POPCNT = new Uint8Array(256);
   for (let i = 0; i < 256; i++) POPCNT[i] = (i & 1) + POPCNT[i >> 1];
 
+  function popcount(bitmap) {
+    let n = 0;
+    for (let i = 0; i < bitmap.length; i++) n += POPCNT[bitmap[i]];
+    return n;
+  }
+
+  // A block bitmap is 64 rows of 8 bytes, the most significant bit of a byte the westmost cell.
+  const bitByte = (x, y) => (x >> 3) + y * 8;
+  const bitMask = (x) => 1 << (7 - (x & 7));
+  // A block's place in its tile, as the header orders it; also the overlay's key.
+  const blockKey = (bx, by) => by * TILE_WIDTH + bx;
+  const keyBx = (key) => key % TILE_WIDTH;
+  const keyBy = (key) => Math.floor(key / TILE_WIDTH);
+  const tileX = (id) => id % MAP_WIDTH;
+  const tileY = (id) => Math.floor(id / MAP_WIDTH);
+
+  // The suffix masks the id's last two digits, so a one-digit id has a one-letter suffix: 6 characters in all.
   function parseTileId(filename) {
-    const core = filename.slice(4, -2);
+    const core = filename.length === 6 ? filename.slice(4, 5) : filename.slice(4, -2);
+    if (core.length === 0) return null;
     let id = 0;
     for (const ch of core) {
       const v = FILENAME_MASK1.indexOf(ch);
       if (v < 0) return null;
       id = id * 10 + v;
     }
-    return id;
+    return id < MAP_WIDTH * MAP_WIDTH ? id : null;
   }
 
   class Tile {
+    // Throws, naming the tile, when the data is too short for the header or a header index points past the blocks:
+    // read on, a cut file would hand out short bitmaps, and the error would surface far from the bad file (NaN counts,
+    // a RangeError in the writer).
     constructor(id, data) {
       this.id = id;
-      this.x = id % MAP_WIDTH;
-      this.y = Math.floor(id / MAP_WIDTH);
+      this.x = tileX(id);
+      this.y = tileY(id);
+      if (data.length < TILE_HEADER_SIZE) throw new Error(`tile ${id}: ${data.length} bytes, shorter than its header`);
       this.data = data;
       const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
       this.header = new Uint16Array(TILE_HEADER_LEN);
-      for (let i = 0; i < TILE_HEADER_LEN; i++) this.header[i] = dv.getUint16(i * 2, true);
+      const stored = Math.floor((data.length - TILE_HEADER_SIZE) / BLOCK_SIZE);
+      for (let i = 0; i < TILE_HEADER_LEN; i++) {
+        const idx = dv.getUint16(i * 2, true);
+        if (idx > stored) throw new Error(`tile ${id}: block index ${idx}, but only ${stored} blocks stored`);
+        this.header[i] = idx;
+      }
     }
+
+    // byte offset of the block with the header's 1-based index idx
+    _blockAt(idx) { return TILE_HEADER_SIZE + (idx - 1) * BLOCK_SIZE; }
+
     // blockX,blockY in 0..127 ; bitX,bitY in 0..63
     isVisited(blockX, blockY, bitX, bitY) {
-      const idx = this.header[blockY * TILE_WIDTH + blockX];
+      const idx = this.header[blockKey(blockX, blockY)];
       if (idx === 0) return false;
-      const start = TILE_HEADER_SIZE + (idx - 1) * BLOCK_SIZE;
-      const byte = this.data[start + (bitX >> 3) + bitY * 8];
-      return (byte & (1 << (7 - (bitX & 7)))) !== 0;
+      return (this.data[this._blockAt(idx) + bitByte(bitX, bitY)] & bitMask(bitX)) !== 0;
     }
 
     // idx is the header's 1-based block index; a view onto the 3 bytes after that block's bitmap.
     blockExtra(idx) {
-      const at = TILE_HEADER_SIZE + (idx - 1) * BLOCK_SIZE + BLOCK_BITMAP_SIZE;
+      const at = this._blockAt(idx) + BLOCK_BITMAP_SIZE;
       return this.data.subarray(at, at + 3);
     }
 
     // The block's 512-byte bitmap (a view), or null when the tile has no such block.
     blockBitmap(blockX, blockY) {
-      const idx = this.header[blockY * TILE_WIDTH + blockX];
+      const idx = this.header[blockKey(blockX, blockY)];
       if (idx === 0) return null;
-      const at = TILE_HEADER_SIZE + (idx - 1) * BLOCK_SIZE;
+      const at = this._blockAt(idx);
       return this.data.subarray(at, at + BLOCK_BITMAP_SIZE);
     }
 
@@ -74,25 +103,20 @@
       for (let k = 0; k < TILE_HEADER_LEN; k++) {
         const idx = this.header[k];
         if (idx === 0) continue;
-        const at = TILE_HEADER_SIZE + (idx - 1) * BLOCK_SIZE;
-        yield { bx: k % TILE_WIDTH, by: k >> 7, bitmap: this.data.subarray(at, at + BLOCK_BITMAP_SIZE), extra: this.blockExtra(idx) };
+        const at = this._blockAt(idx);
+        yield { bx: keyBx(k), by: keyBy(k), bitmap: this.data.subarray(at, at + BLOCK_BITMAP_SIZE), extra: this.blockExtra(idx) };
       }
     }
 
-    // Total defogged cells in the whole tile (popcount every present block), cached.
+    // Total explored cells in the whole tile (popcount every present block), cached.
     totalVisited() {
       if (this._tv != null) return this._tv;
       let c = 0;
-      for (let i = 0; i < TILE_HEADER_LEN; i++) {
-        const idx = this.header[i];
-        if (idx === 0) continue;
-        const start = TILE_HEADER_SIZE + (idx - 1) * BLOCK_SIZE;
-        for (let k = 0; k < BLOCK_BITMAP_SIZE; k++) c += POPCNT[this.data[start + k]];
-      }
+      for (const b of this.blocks()) c += popcount(b.bitmap);
       return (this._tv = c);
     }
 
-    // Count defogged cells in local cell rect [lx0,lx1) x [ly0,ly1), clamped to the tile.
+    // Count explored cells in local cell rect [lx0,lx1) x [ly0,ly1), clamped to the tile.
     countVisited(lx0, ly0, lx1, ly1) {
       lx0 = Math.max(0, lx0); ly0 = Math.max(0, ly0);
       lx1 = Math.min(BITS_PER_TILE_EDGE, lx1); ly1 = Math.min(BITS_PER_TILE_EDGE, ly1);
@@ -102,38 +126,29 @@
       let count = 0;
       for (let by = by0; by <= by1; by++) {
         for (let bx = bx0; bx <= bx1; bx++) {
-          const idx = this.header[by * TILE_WIDTH + bx];
-          if (idx === 0) continue;
-          const start = TILE_HEADER_SIZE + (idx - 1) * BLOCK_SIZE;
+          const bitmap = this.blockBitmap(bx, by);
+          if (!bitmap) continue;
           const cbx = bx << 6, cby = by << 6;
           const x0 = Math.max(lx0, cbx) - cbx, x1 = Math.min(lx1, cbx + 64) - cbx;
           const y0 = Math.max(ly0, cby) - cby, y1 = Math.min(ly1, cby + 64) - cby;
-          if (x0 === 0 && x1 === 64) {
-            for (let bitY = y0; bitY < y1; bitY++) { const r = start + bitY * 8; for (let k = 0; k < 8; k++) count += POPCNT[this.data[r + k]]; }
-          } else {
-            for (let bitY = y0; bitY < y1; bitY++) {
-              const r = start + bitY * 8;
-              for (let bitX = x0; bitX < x1; bitX++) if (this.data[r + (bitX >> 3)] & (1 << (7 - (bitX & 7)))) count++;
-            }
-          }
+          count += countNewBits(bitmap, null, x0, y0, x1, y1);
         }
       }
       return count;
     }
   }
 
-  // Set bits of `bitmap` that `masked` (an imported bitmap, or null) does not already have, inside the local
-  // cell rect [x0,x1) x [y0,y1) of one 64x64 block.
+  // Counts the set bits of `bitmap` that `masked` (an imported bitmap, or null) does not already have, inside the
+  // local cell rect [x0,x1) x [y0,y1) of one 64x64 block.
   function countNewBits(bitmap, masked, x0, y0, x1, y1) {
     let count = 0;
     for (let y = y0; y < y1; y++) {
-      const row = y * 8;
       if (x0 === 0 && x1 === 64) {
-        for (let k = 0; k < 8; k++) count += POPCNT[masked ? bitmap[row + k] & ~masked[row + k] : bitmap[row + k]];
+        for (let k = bitByte(0, y), end = k + 8; k < end; k++) count += POPCNT[masked ? bitmap[k] & ~masked[k] : bitmap[k]];
       } else {
         for (let x = x0; x < x1; x++) {
-          const bit = 1 << (7 - (x & 7));
-          if ((bitmap[row + (x >> 3)] & bit) && !(masked && (masked[row + (x >> 3)] & bit))) count++;
+          const at = bitByte(x, y), bit = bitMask(x);
+          if ((bitmap[at] & bit) && !(masked && (masked[at] & bit))) count++;
         }
       }
     }
@@ -147,7 +162,7 @@
       this.bounds = null; // {minX,minY,maxX,maxY} in tile-grid units
       // cells added by the app, Map<tileId, Map<by*128+bx, Uint8Array(512)>>; addCells skips cells the import covers, but a later addTile can cover overlay cells, so readers OR the two (see blocks())
       this.overlay = new Map();
-      // bumped by every addTile, addCells and clearOverlay so caches built on the fog can tell it moved
+      // bumped by addTile, clearOverlay and any addCells that added a cell, so caches built on the fog can tell it moved
       this.version = 0;
       this._total = null;
     }
@@ -160,12 +175,14 @@
       this.bounds = b;
     }
 
+    // false for a name that is not a tile's; throws (see Tile) for a body that is not one. A second copy of a tile
+    // replaces the first.
     addTile(filename, decompressed) {
       const id = parseTileId(filename);
       if (id === null) return false;
       const t = new Tile(id, decompressed);
       this.tiles.set(this._key(t.x, t.y), t);
-      this.tileCount++;
+      this.tileCount = this.tiles.size;
       this._extendBounds(t.x, t.y);
       this.version++;
       return true;
@@ -186,14 +203,14 @@
         let blocks = this.overlay.get(tid);
         if (!blocks) { blocks = new Map(); this.overlay.set(tid, blocks); }
         const lx = cx & 8191, ly = cy & 8191;
-        const key = (ly >> 6) * TILE_WIDTH + (lx >> 6);
+        const key = blockKey(lx >> 6, ly >> 6);
         let bitmap = blocks.get(key);
         if (!bitmap) { bitmap = new Uint8Array(BLOCK_BITMAP_SIZE); blocks.set(key, bitmap); }
-        bitmap[((lx & 63) >> 3) + (ly & 63) * 8] |= 1 << (7 - (lx & 7));
+        bitmap[bitByte(lx & 63, ly & 63)] |= bitMask(lx);
         this._extendBounds(tx, ty);
         added++;
       }
-      this.version++;
+      if (added > 0) this.version++;
       return added;
     }
 
@@ -215,11 +232,11 @@
       const t = this.tiles.get(tid);
       if (t && t.isVisited(lx >> 6, ly >> 6, lx & 63, ly & 63)) return true;
       if (this.overlay.size === 0) return false;
-      const bitmap = this.overlay.get(tid)?.get((ly >> 6) * TILE_WIDTH + (lx >> 6));
-      return !!bitmap && (bitmap[((lx & 63) >> 3) + (ly & 63) * 8] & (1 << (7 - (lx & 7)))) !== 0;
+      const bitmap = this.overlay.get(tid)?.get(blockKey(lx >> 6, ly >> 6));
+      return !!bitmap && (bitmap[bitByte(lx & 63, ly & 63)] & bitMask(lx)) !== 0;
     }
 
-    // Every defogged cell, imported or overlay, counted once.
+    // Every explored cell, imported or overlay, counted once.
     totalVisited() {
       if (this._total && this._total.version === this.version) return this._total.value;
       let count = 0;
@@ -232,19 +249,33 @@
     // Overlay cells of one tile inside the local cell rect that the import does not already have.
     _overlayCount(tid, blocks, lx0, ly0, lx1, ly1) {
       const t = this.tiles.get(tid);
+      const bx0 = Math.max(0, lx0) >> 6, bx1 = (Math.min(BITS_PER_TILE_EDGE, lx1) - 1) >> 6;
+      const by0 = Math.max(0, ly0) >> 6, by1 = (Math.min(BITS_PER_TILE_EDGE, ly1) - 1) >> 6;
+      if (bx1 < bx0 || by1 < by0) return 0;
       let count = 0;
-      for (const [key, bitmap] of blocks) {
-        const bx = key % TILE_WIDTH, by = key >> 7;
+      const countBlock = (key, bitmap) => {
+        const bx = keyBx(key), by = keyBy(key);
         const cbx = bx << 6, cby = by << 6;
         const x0 = Math.max(lx0, cbx) - cbx, x1 = Math.min(lx1, cbx + 64) - cbx;
         const y0 = Math.max(ly0, cby) - cby, y1 = Math.min(ly1, cby + 64) - cby;
-        if (x1 <= x0 || y1 <= y0) continue;
+        if (x1 <= x0 || y1 <= y0) return;
         count += countNewBits(bitmap, t ? t.blockBitmap(bx, by) : null, x0, y0, x1, y1);
+      };
+      // a small rect over a busy tile looks up its own blocks instead of walking all of them
+      if ((bx1 - bx0 + 1) * (by1 - by0 + 1) < blocks.size) {
+        for (let by = by0; by <= by1; by++) {
+          for (let bx = bx0; bx <= bx1; bx++) {
+            const key = blockKey(bx, by), bitmap = blocks.get(key);
+            if (bitmap) countBlock(key, bitmap);
+          }
+        }
+      } else {
+        for (const [key, bitmap] of blocks) countBlock(key, bitmap);
       }
       return count;
     }
 
-    // Count defogged cells whose global coords fall in [cx0,cx1) x [cy0,cy1).
+    // Count explored cells whose global coords fall in [cx0,cx1) x [cy0,cy1).
     countVisitedInCellRect(cx0, cy0, cx1, cy1) {
       cx0 = Math.max(0, Math.floor(cx0)); cy0 = Math.max(0, Math.floor(cy0));
       cx1 = Math.min(WORLD_CELLS, Math.ceil(cx1)); cy1 = Math.min(WORLD_CELLS, Math.ceil(cy1));
@@ -264,7 +295,7 @@
       return count;
     }
 
-    // Every block with at least one defogged cell, tiles in ascending id and blocks in header order. An overlay
+    // Every block with at least one explored cell, tiles in ascending id and blocks in header order. An overlay
     // block that lands on an imported one is ORed into a copy and keeps the imported `extra`; a block only the
     // overlay has gets `extra: null`. Bitmaps of untouched imported blocks are views onto the tile data.
     *blocks() {
@@ -272,19 +303,19 @@
       for (const tid of Array.from(ids).sort((a, b) => a - b)) {
         const t = this.tiles.get(tid), over = this.overlay.get(tid);
         const merged = new Map();
-        if (t) for (const b of t.blocks()) merged.set(b.by * TILE_WIDTH + b.bx, b);
+        if (t) for (const b of t.blocks()) merged.set(blockKey(b.bx, b.by), b);
         if (over) {
           for (const [key, bitmap] of over) {
             const imported = merged.get(key);
-            const bitmapOut = new Uint8Array(bitmap);
-            if (imported) for (let i = 0; i < BLOCK_BITMAP_SIZE; i++) bitmapOut[i] |= imported.bitmap[i];
-            merged.set(key, { bx: key % TILE_WIDTH, by: key >> 7, bitmap: bitmapOut, extra: imported ? imported.extra : null });
+            const union = new Uint8Array(bitmap);
+            if (imported) for (let i = 0; i < BLOCK_BITMAP_SIZE; i++) union[i] |= imported.bitmap[i];
+            merged.set(key, { bx: keyBx(key), by: keyBy(key), bitmap: union, extra: imported ? imported.extra : null });
           }
         }
         for (const key of Array.from(merged.keys()).sort((a, b) => a - b)) {
           const b = merged.get(key);
           if (!b.bitmap.some((v) => v !== 0)) continue;
-          yield { tx: tid % MAP_WIDTH, ty: Math.floor(tid / MAP_WIDTH), bx: b.bx, by: b.by, bitmap: b.bitmap, extra: b.extra };
+          yield { tx: tileX(tid), ty: tileY(tid), bx: b.bx, by: b.by, bitmap: b.bitmap, extra: b.extra };
         }
       }
     }
@@ -320,8 +351,11 @@
     return { cx, cy };
   }
 
+  // The Sync format, for the writer (fogWriter.js), which loads after this file.
+  const FORMAT = Object.freeze({ FILENAME_MASK1, TILE_WIDTH, TILE_HEADER_SIZE, BLOCK_BITMAP_SIZE, BLOCK_SIZE, blockKey, popcount });
+
   global.FogParser = {
     FogMap, parseTileId, tileToLngLat, cellToLngLat, lngLatToCell,
-    WORLD_CELLS, MAP_WIDTH, BITS_PER_TILE_EDGE
+    WORLD_CELLS, MAP_WIDTH, BITS_PER_TILE_EDGE, FORMAT
   };
 })(window);
