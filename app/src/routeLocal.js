@@ -40,7 +40,7 @@
         rects.push(legRect(points[i - 1], points[i]));
       }
       // a failed download logs its reason, a bug its class, never a message: messages name tiles
-      try { await streets.ensureRects(rects, streetKind(travelMode), { onProgress, stale }); } catch (e) {
+      try { await streets.ensureRects(rects, streetKind(travelMode), { onProgress, stale, holdAs: "route" }); } catch (e) {
         if (global.StreetIndex.isSuperseded(e)) return SUPERSEDED; // replaced by a newer request, which _recalc ignores; nothing to log
         // a bug is logged even when the request is stale: staleness only keeps it from being shown
         if (!global.StreetIndex.isDownloadError(e)) {

@@ -807,7 +807,35 @@ async function testCase(body) {
     const serve = global.fetch;
     global.fetch = async (url, opts) => { clock.t += 1300000; return serve(url, opts); };
     const s = new StreetIndex({ newFrac: () => 1, now: () => clock.t });
-    assert.deepEqual(await s.ensureRects(fiveTiles, "run"), { done: 5, total: 5, missing: [] });
+    const logged = [], orig = console.warn;
+    console.warn = (...a) => logged.push(a);
+    try { assert.deepEqual(await s.ensureRects(fiveTiles, "run"), { done: 5, total: 5, missing: [] }); } finally { console.warn = orig; }
+    assert.deepEqual(logged, [], "the run's own deadline is not a source failure");
+  });
+  await testCase(async () => { // a source that fails once every tile it was asked for is in: the run is whole, the error's class is logged, never its text
+    const cause = Object.assign(new RangeError("overpass: busy near 548:2040"), { reason: "busy" });
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async (tiles, kind, onTile) => {
+      for (const t of tiles) onTile(t, { ways: [], groups: {} });
+      throw cause;
+    } });
+    const logged = [], orig = console.warn;
+    console.warn = (...a) => logged.push(a);
+    try { assert.deepEqual(await s.ensureRects(fiveTiles, "run"), { done: 5, total: 5, missing: [] }); } finally { console.warn = orig; }
+    assert.deepEqual(logged, [["[streets] a street source failed after every piece it was asked for arrived", "RangeError", "busy"]]);
+  });
+  await testCase(async () => { // the same failure on a run replaced meanwhile: it rejects superseded and logs nothing
+    let replaced = false;
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async (tiles, kind, onTile) => {
+      for (const t of tiles) onTile(t, { ways: [], groups: {} });
+      replaced = true;
+      throw Object.assign(new RangeError("busy"), { reason: "busy" });
+    } });
+    const logged = [], orig = console.warn;
+    console.warn = (...a) => logged.push(a);
+    let err;
+    try { await s.ensureRects(fiveTiles, "run", { stale: () => replaced }); } catch (e) { err = e; } finally { console.warn = orig; }
+    assert.ok(StreetIndex.isSuperseded(err));
+    assert.deepEqual(logged, []);
   });
   await testCase(async () => { // a run replaced on an earlier answer rejects though the open requests landed every tile, which
     // are kept

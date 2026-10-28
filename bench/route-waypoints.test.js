@@ -16,7 +16,7 @@ const planner = new GraphPlanner({ ways: ways.map(([a, b, p, q], i) => ({ id: 10
 function setup(over) {
   const calls = { ensure: [], planner: [], elevation: [] };
   const deps = Object.assign({
-    streets: { ensureRects: async (rects, kind) => { calls.ensure.push({ rects, kind }); } },
+    streets: { ensureRects: async (rects, kind, opts) => { calls.ensure.push({ rects, kind, opts }); } },
     plannerFor: (mode) => { calls.planner.push(mode); return planner; },
     elevation: { elevationAt: async (pts) => { calls.elevation.push(pts); return pts.map((_, i) => 10 * (i + 1)); } },
     estimates: Estimates,
@@ -43,6 +43,7 @@ function setup(over) {
     const pins = [pt(0, 0), pt(500, 0), pt(500, 400)];
     await route(pins, "trekking");
     assert.equal(calls.ensure.length, 1, "one street request per route");
+    assert.equal(calls.ensure[0].opts.holdAs, "route", "its pieces stay held until the next route request");
     const { rects, kind } = calls.ensure[0];
     assert.equal(kind, "bike");
     assert.equal(rects.length, 2, "one rect per leg");

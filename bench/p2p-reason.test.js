@@ -49,9 +49,10 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]]]
     s.tiles.clear();
     const tool = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0, hasFog: () => false }, computeGain: () => null, streets: s });
     tool.mode = "p2p"; tool.a = pin(0, 0); tool.b = pin(1000, 0);
-    let handed = null;
+    let handed = null, holdAs = null;
     s.ensureRects = async (rects, kind, opts) => {
       handed = opts.stale;
+      holdAs = opts.holdAs;
       tool._runId++; // a newer run started
       throw StreetIndex.downloadError(0, 5, Object.assign(new Error("superseded"), { reason: "superseded" }));
     };
@@ -62,6 +63,7 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]]]
     console.warn = orig;
     assert.equal(typeof handed, "function");
     assert.equal(handed(), true);
+    assert.equal(holdAs, "suggest", "its pieces stay held while it plans on them");
     assert.ok(!seen.some((r) => r && r.error), "no error state for a replaced run");
     assert.deepEqual(logged, []);
   }
