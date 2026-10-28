@@ -100,7 +100,11 @@
     if (!res.ok) return { status: res.status, error: new Error("overpass HTTP " + res.status), retryAfter: retryAfterMs(res) };
     timer = Overpass._setTimeout(stall("body stopped"), Math.max(0, Overpass._timeoutMs - (Overpass._now() - started)));
     try {
-      return { status: res.status, json: await res.json() };
+      const json = await res.json();
+      // JSON that is not an object (a proxy's remark that happens to parse) is no answer: like a 200
+      // that is not JSON, it moves on
+      if (json === null || typeof json !== "object") return { status: res.status, error: new Error("overpass: the answer is not an object"), kind: "notJson" };
+      return { status: res.status, json };
     } catch (e) {
       // A SyntaxError before our abort means a 200 whose body is not JSON (a captive portal, a
       // proxy): like a 500, it moves on at once. After our abort the parser can also report a
@@ -180,7 +184,11 @@
     if (typeof navigator !== "undefined" && navigator.onLine === false) failures.push({ why: "offline", error: new Error("overpass: the browser is offline") });
     const reason = REASONS.find((r) => failures.some((f) => f.why === r)) || "server";
     const winner = failures.find((f) => f.why === reason);
-    const err = (winner && winner.error) || new Error("overpass: no endpoint to ask");
+    // a copy, with the stored error as its cause: a held endpoint's error comes back in every later
+    // post and each sets its own reason and retryAt, so sharing one object would let a post change
+    // the values a caller is about to read after an await
+    const cause = winner && winner.error;
+    const err = cause ? Object.assign(new Error(cause.message), { name: cause.name, cause }) : new Error("overpass: no endpoint to ask");
     err.reason = reason;
     // a held endpoint's error is thrown again by later posts, so a retry time from an earlier one must go
     const held = urls.map(stateOf).filter((s) => s.until > Overpass._now());

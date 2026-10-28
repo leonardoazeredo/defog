@@ -370,6 +370,36 @@ const realFetch = global.fetch;
     await Overpass.post("data=x");
     assert.deepEqual(calls, [M, N], "main is not on hold after a " + bad.constructor.name);
   }
+  // 15b. a 200 whose JSON is not an object (null, a string, a number: a proxy's remark that happens to
+  //      parse) is no answer either: it moves on and holds nothing, like one that is not JSON
+  for (const body of [null, "busy", 3]) {
+    reset();
+    global.fetch = routed({ [M]: () => Promise.resolve({ ok: true, status: 200, headers: headers(), json: async () => body }), [N]: answer });
+    assert.deepEqual(await Overpass.post("data=x"), { from: N }, JSON.stringify(body));
+    calls = [];
+    await Overpass.post("data=x");
+    assert.deepEqual(calls, [M, N], "main is not on hold after a body of " + JSON.stringify(body));
+    reset();
+    global.fetch = routed({ [M]: () => Promise.resolve({ ok: true, status: 200, headers: headers(), json: async () => body }), [N]: status(500) });
+    const e = await rejection(Overpass.post("data=x"));
+    assert.equal(e.reason, "server", "every endpoint answered something that is no answer");
+  }
+  { // 15c. every post throws its own error: a held endpoint's stored error is the cause, so a second post
+    //      setting its reason and retryAt cannot change what the first one's caller reads later
+    reset({ key: null });
+    global.fetch = routed({ [M]: status(429) });
+    const first = await rejection(Overpass.post("data=x"));
+    const retryAt = first.retryAt;
+    t += 10_000;
+    const second = await rejection(Overpass.post("data=x"));
+    assert.notEqual(first, second);
+    assert.equal(second.cause, first.cause, "both carry the stored error");
+    assert.notEqual(first.cause, first);
+    assert.equal(second.retryAt, retryAt, "one hold, one end");
+    second.retryAt = 5;
+    assert.equal(first.retryAt, retryAt, "the first caller's retry time is its own");
+    assert.equal(first.message, "overpass HTTP 429");
+  }
   { // 16. a body that stops after the headers is abandoned 120 s after the request began: the 90 s
     //     first-byte guard ends when the headers arrive, and the body then runs to the 120 s limit
     //     from the request start; the endpoint is held 30 s
