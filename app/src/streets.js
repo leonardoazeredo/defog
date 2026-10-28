@@ -80,6 +80,7 @@
                                  // route planner its graph connectivity for free
     this.segCount = 0;
     this.version = 0;            // bumped by every tile read into the index, so graphs built from this notice list changes
+    this.inFlight = new Map();   // StreetIndex.tileKey -> {key, promise, done}: a tile a running ensureRects is asking for, which a later run waits for
     this.kx = null; this.ky = 110540; // metre frame, anchored on first fetch
   }
 
@@ -189,9 +190,10 @@
     return L.latLng(Math.round(latlng.lat / g) * g, Math.round(latlng.lng / g) * g);
   };
 
-  // Fetch streets for the tiles under the given rects (skipping ones already covered), in one
-  // call to the street source, nearest the centre of the rects first. kind: "run" | "bike" |
-  // "car". Each tile is read into the index as it arrives, so a failed run keeps what came and
+  // Fetch streets for the tiles under the given rects (skipping ones already covered), nearest the
+  // centre of the rects first, in one call to the street source. A tile an earlier run is still asking
+  // for is waited for instead, and asked for in a second call only if that run gives it up.
+  // kind: "run" | "bike" | "car". Each tile is read into the index as it arrives, so a failed run keeps what came and
   // the next run asks only for the rest. opts.onProgress({done, total}) hears the start (done = the
   // tiles already held, total = every tile under the rects; nothing when all are held) and every
   // tile, and {done, total, waitUntil} when the source waits out a busy server (then {done, total}
@@ -204,7 +206,7 @@
   // not wrapped in a download error (a bug reading a tile, in the caller's onProgress or in sleep
   // during a busy wait, or a source error with no street reason), so callers tell a bug from a
   // "streets-partial" shortfall (StreetIndex.isDownloadError); of several bugs the first is the
-  // rejection, unless, outside a cache-only read, the source rejects with a bug of its own (see the catch
+  // rejection, unless, outside a cache-only read, the source rejects with a bug of its own (see fetchSome's catch
   // below). Resolves with {done, total, missing}.
   // opts.cacheOnly reads only what the street source already holds and resolves with the tiles
   // still missing (nearest first) instead of rejecting: what the Streets in fog look draws from.
@@ -222,14 +224,20 @@
     StreetIndex.nearestFirst(todo, rects);
     const deadlineMs = opts.deadlineMs == null ? RUN_DEADLINE_MS : opts.deadlineMs;
     const started = this.now();
-    const read = new Set(), want = new Set(todo.map((t) => t.x + ":" + t.y));
-    let broke = null; // the first bug thrown by code this run drives (reading a tile, onProgress, sleep): what the run rejects with, unless the source rejects with a bug of its own outside a cache-only read (see the catch below)
+    const tid = (t) => t.x + ":" + t.y;
+    const read = new Set(), want = new Set(todo.map(tid));
+    // tiles read here that were not a fresh street-cache answer (onTile's {cached: true}): what
+    // downloadError takes as `arrived`
+    let downloaded = 0;
+    let broke = null; // the first bug thrown by code this run drives (reading a tile, onProgress, sleep): what the run rejects with, unless the source has a bug of its own (see fetchSome's catch)
     const progress = (waitUntil) => {
       if (!opts.onProgress) return;
       opts.onProgress(waitUntil === undefined ? { done: held + read.size, total } : { done: held + read.size, total, waitUntil });
     };
     const stale = () => !cacheOnly && !!opts.stale && opts.stale();
     const superseded = () => Object.assign(new Error("streets: a newer run replaced this one"), { reason: "superseded" });
+    const deadlinePassed = () => Object.assign(new Error("streets: run deadline passed"), { reason: "stalled" });
+    const short = (cause) => StreetIndex.downloadError(held + read.size, total, cause, downloaded);
     // the source's wait before asking again: false when it would end past the deadline
     const wait = async (until) => {
       if (stale()) throw superseded();
@@ -250,8 +258,29 @@
       }
       return true;
     };
-    const take = (t, answer) => {
-      const id = t.x + ":" + t.y;
+    // A tile a normal run asks for is in flight from then until it is read or the run's call to the
+    // source ends, and a later run that needs it waits for it instead of asking again. A run
+    // waits only for runs that started before it, so two runs never wait on each other.
+    const claims = new Map(); // "x:y" -> this run's in-flight entry for it
+    const claim = (tiles) => {
+      for (const t of tiles) {
+        const entry = { key: StreetIndex.tileKey(kind, t.x, t.y) };
+        entry.promise = new Promise((resolve) => { entry.done = resolve; });
+        claims.set(tid(t), entry);
+        this.inFlight.set(entry.key, entry);
+      }
+    };
+    // via: what the source said of the tile it read ({cached: true} from the street cache), or
+    // nothing when the run gave the tile up
+    const unclaim = (id, via) => {
+      const entry = claims.get(id);
+      if (!entry) return;
+      claims.delete(id);
+      if (this.inFlight.get(entry.key) === entry) this.inFlight.delete(entry.key);
+      entry.done(via);
+    };
+    const take = (t, answer, via) => {
+      const id = tid(t);
       // a street block's tile that came in its box unasked: read and covered unless already held, so a later
       // run need not ask for it, but not counted in this run's progress
       if (answer && !want.has(id) && !this.tiles.has(StreetIndex.tileKey(kind, t.x, t.y))) {
@@ -262,40 +291,120 @@
       this._read(answer, { kind, x: t.x, y: t.y });
       this._cover([t], kind);
       read.add(id);
+      if (!(via && via.cached)) downloaded++;
+      unclaim(id, via || {});
       progress();
     };
+    const onTile = (t, answer, via) => {
+      try { take(t, answer, via); } catch (e) { if (!broke) broke = e; throw e; }
+      if (cacheOnly || read.size === todo.length) return;
+      if (stale()) throw superseded();
+      if (this.now() - started >= deadlineMs) throw deadlinePassed();
+    };
+    // One call to the street source; its tiles are in flight for this run until it ends.
+    const fetchSome = async (tiles) => {
+      if (!cacheOnly) claim(tiles);
+      try {
+        let answers;
+        try {
+          if (stale()) throw superseded();
+          answers = await this.fetchStreets(tiles, kind, onTile, cacheOnly ? { cacheOnly } : { now: this.now, wait, stale });
+        } catch (e) {
+          // a source's own bug is thrown ahead of the run's (see the docstring); `broke` covers a run
+          // bug the source rejects as a download error
+          if (!cacheOnly && !StreetIndex.isDownloadError(e) && !STREET_REASONS.has(e && e.reason)) throw e;
+          if (broke) throw broke;
+          if (cacheOnly) throw e;
+          // a deadline raised on an earlier answer while the open requests landed the rest loses
+          // nothing: the call is whole. A replaced run still rejects, so its caller does no more work.
+          if (tiles.some((t) => !read.has(tid(t))) || (e && e.reason === "superseded")) throw short(e);
+        }
+        // a source that swallowed the caller's throw and resolved anyway still hands the bug on
+        if (broke) throw broke;
+        // a source may hand tiles over in its Map alone
+        if (!cacheOnly) for (const t of tiles) take(t, answers && answers.get(tid(t)));
+        return answers;
+      } finally {
+        for (const t of tiles) unclaim(tid(t));
+      }
+    };
+
+    // the tiles another run is already bringing (a run tile stands in for bike, as in _uncovered); the
+    // rest this run asks for itself. A cache-only read waits for nothing and claims nothing.
+    const split = (tiles) => {
+      const shared = [], ask = [];
+      for (const t of tiles) {
+        const entry = !cacheOnly && (this.inFlight.get(StreetIndex.tileKey(kind, t.x, t.y)) ||
+          (kind !== "car" && this.inFlight.get(StreetIndex.tileKey("run", t.x, t.y))));
+        if (entry) shared.push({ t, entry }); else ask.push(t);
+      }
+      return { shared, ask };
+    };
+    let settled = false;
+    // Settles once every shared tile is read or given up by the run bringing it. Rejects superseded
+    // at the first one that lands after this run went stale, leaving the other run's request alone: a
+    // run that waits only on shared tiles has no other moment to notice it was replaced.
+    const waitFor = (shared) => new Promise((resolve, reject) => {
+      let left = shared.length;
+      for (const { t, entry } of shared) entry.promise.then((via) => {
+        if (settled) return;
+        const id = tid(t);
+        // a throw here (onProgress, the caller's stale) is a bug: the wait rejects with it rather than never settling
+        try {
+          // covered: the other run read it; else it gave the tile up, and this run asks for it again
+          if (!read.has(id) && holds(this.tiles, kind, t)) {
+            read.add(id);
+            if (via && !via.cached) downloaded++;
+            progress();
+          }
+          if (stale()) reject(short(superseded()));
+          else if (!--left) resolve();
+        } catch (e) {
+          if (!broke) broke = e;
+          reject(e);
+        }
+      });
+    });
     progress();
     let answers;
     try {
-      if (stale()) throw superseded();
-      answers = await this.fetchStreets(todo, kind, (t, answer) => {
-        try { take(t, answer); } catch (e) { if (!broke) broke = e; throw e; }
-        if (cacheOnly || read.size === todo.length) return;
-        if (stale()) throw superseded();
-        if (this.now() - started >= deadlineMs) throw Object.assign(new Error("streets: run deadline passed"), { reason: "stalled" });
-      }, cacheOnly ? { cacheOnly } : { now: this.now, wait, stale });
-    } catch (e) {
-      // outside a cache-only read, a source's own bug (not a download error, no street reason) is
-      // thrown ahead of one the run's own code hit. overpassFetch rejects with the first failure it
-      // recorded, the run's bug included, and StreetCache rethrows that error; `broke` covers a run bug whose source rejection
-      // is a download error.
-      if (!cacheOnly && !StreetIndex.isDownloadError(e) && !STREET_REASONS.has(e && e.reason)) throw e;
-      if (broke) throw broke;
-      if (cacheOnly) throw e;
-      // a deadline raised on an earlier answer while the open requests landed the rest loses
-      // nothing: the run is whole. A replaced run still rejects, so its caller does no more work.
-      if (read.size < todo.length || (e && e.reason === "superseded")) throw StreetIndex.downloadError(held + read.size, total, e, read.size);
+      let { shared, ask } = split(todo);
+      for (let pass = 0; ; pass++) {
+        // started before this run's own call, which can outlast every shared tile
+        const sharedIn = shared.length ? waitFor(shared) : null;
+        if (sharedIn) sharedIn.catch(() => {}); // awaited only after this run's own call, so a rejection before then is not reported as unhandled
+        if (ask.length) {
+          const got = await fetchSome(ask);
+          if (!pass) answers = got;
+        }
+        if (!sharedIn) break;
+        // a bug beside the wait's superseded rejection is still the run's rejection
+        try { await sharedIn; } catch (e) { throw broke || e; }
+        if (broke) throw broke;
+        // what the other run gave up on (it failed, or was replaced, before reading it); split again,
+        // so of several runs waiting for it one asks and the rest wait for that one
+        const left = shared.map((x) => x.t).filter((t) => !read.has(tid(t)));
+        if (!left.length) break;
+        if (stale()) throw short(superseded());
+        if (this.now() - started >= deadlineMs) throw short(deadlinePassed());
+        // a run that waited beside this one may have asked and read it already; not counted as
+        // downloaded, as this run cannot tell whether the street cache answered that run
+        for (const t of left) if (holds(this.tiles, kind, t)) { read.add(tid(t)); progress(); }
+        ({ shared, ask } = split(left.filter((t) => !read.has(tid(t)))));
+        if (!shared.length && !ask.length) break;
+      }
+    } finally {
+      settled = true;
     }
-    // a source that swallowed the caller's throw and resolved anyway still hands the bug on
     if (broke) throw broke;
     // replaced while its last request was open (onTile stops checking once every tile is read): it
     // still rejects, so its caller does no more work
-    if (stale()) throw StreetIndex.downloadError(held + read.size, total, superseded(), read.size);
+    if (stale()) throw short(superseded());
     if (cacheOnly) {
       // an answer in the Map alone is an expired copy: drawn from, but left uncovered so a
       // suggestion's run still asks for it; that run's fresh answer then replaces the ways read here
       for (const t of todo) {
-        const id = t.x + ":" + t.y, answer = answers && answers.get(id);
+        const id = tid(t), answer = answers && answers.get(id);
         if (read.has(id) || !answer) continue;
         // a run that covered the tile while this read was open already holds fresher ways: an expired
         // copy added now would leave ways the fresh answer lacks, and nothing would ask for the tile again
@@ -305,13 +414,11 @@
         read.add(id);
         progress();
       }
-      return { done: held + read.size, total, missing: todo.filter((t) => !read.has(t.x + ":" + t.y)) };
+      return { done: held + read.size, total, missing: todo.filter((t) => !read.has(tid(t))) };
     }
-    // a source may hand tiles over in its Map alone
-    for (const t of todo) take(t, answers && answers.get(t.x + ":" + t.y));
-    const lost = todo.find((t) => !read.has(t.x + ":" + t.y));
+    const lost = todo.find((t) => !read.has(tid(t)));
     // the source answered but left a tile out: a server's fault, not the network's, worded generically
-    if (lost) throw StreetIndex.downloadError(held + read.size, total, Object.assign(new Error(`street source: no answer for tile ${lost.x}:${lost.y} (${kind})`), { reason: "server" }), read.size);
+    if (lost) throw short(Object.assign(new Error(`street source: no answer for tile ${lost.x}:${lost.y} (${kind})`), { reason: "server" }));
     return { done: total, total, missing: [] };
   };
 
@@ -600,9 +707,10 @@
 
   // The error a street source or ensureRects rejects with when a tile is missing: how many of the
   // tiles are in (done of total), the failure that stopped the run as `cause`, its
-  // retryAt, and reason "streets-partial" once any tile arrived (else the cause's own reason).
-  // `arrived` is how many came in this run and defaults to done: ensureRects counts tiles the index
-  // already held in done, which must not turn an offline run into a partial one.
+  // retryAt, and reason "streets-partial" once any tile was downloaded (else the cause's own reason).
+  // `arrived` is how many this run downloaded and defaults to done: ensureRects counts neither the
+  // tiles the index already held nor fresh street-cache answers (onTile's {cached: true}), so an
+  // offline run in a partly cached area still says offline.
   // A cause that is itself such an error is unwrapped, so `cause` is always the first failure.
   StreetIndex.downloadError = function (done, total, cause, arrived) {
     const first = cause && typeof cause.total === "number" && cause.cause ? cause.cause : cause;

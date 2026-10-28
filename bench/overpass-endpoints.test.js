@@ -565,6 +565,20 @@ const realFetch = global.fetch;
     const already = await Overpass.post("data=5", { stale: () => true }).then(() => assert.fail("expected a rejection"), (x) => x);
     assert.deepEqual([already.reason, calls], ["superseded", []]);
   }
+  { // a stale() that throws once the post holds its slot gives the slot back: both slots
+    // still take the next two posts at once
+    reset({ key: null, order: null });
+    const f = heldFetch();
+    let asked = 0;
+    const bug = new Error("stale broke");
+    const e = await Overpass.post("data=1", { stale: () => { if (asked++) throw bug; return false; } }).then(() => assert.fail("expected a rejection"), (x) => x);
+    assert.equal(e, bug, "the throw passes through as itself");
+    const next = [2, 3].map((i) => Overpass.post("data=" + i));
+    await settle();
+    assert.deepEqual(calls, [M, M], "both of overpass-api.de's slots are free");
+    while (f.pending.length) { f.pending.shift().answer(); await settle(); }
+    await Promise.all(next);
+  }
   { // a remapped offline and the browser's own offline each throw an error of their own reason's
     reset();
     global.fetch = routed({ [M]: unreachable, [N]: status(500) });

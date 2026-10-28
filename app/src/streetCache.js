@@ -60,14 +60,15 @@
       const missing = [];
       const expired = new Map(); // "x:y" -> an out-of-date answer, the fallback if the network is down
       let stopped = false; // the caller's onTile or busy wait threw (its stop, or a bug): no more tiles, stale ones included
-      const deliver = (t, answer) => {
+      // a stored answer goes to onTile with {cached: true}: ensureRects counts only the others as downloaded
+      const deliver = (t, answer, cached) => {
         out.set(t.x + ":" + t.y, answer);
         if (!onTile) return;
-        try { onTile(t, answer); } catch (e) { stopped = true; throw e; }
+        try { if (cached) onTile(t, answer, { cached: true }); else onTile(t, answer); } catch (e) { stopped = true; throw e; }
       };
       for (const t of tiles) {
         const hit = await lookup(t, kind, state);
-        if (hit && !hit.stale) deliver(t, hit.answer);
+        if (hit && !hit.stale) deliver(t, hit.answer, true);
         else {
           missing.push(t);
           if (hit) expired.set(t.x + ":" + t.y, hit.answer);
