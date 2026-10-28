@@ -6,7 +6,12 @@ import { unzlibSync } from "fflate";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ActivitySummary, TrackPoint } from "../../src/bridge/protocol.js";
 import { type FogCache, openFogCache } from "../../web-adapter/fogCache.js";
-import { type CrossfogPageApi, createHistorySync, stampFor } from "../../web-adapter/history.js";
+import {
+  type CrossfogPageApi,
+  createHistorySync,
+  type RevealRules,
+  stampFor,
+} from "../../web-adapter/history.js";
 import { installFakeUpstream } from "./support/fakeUpstream.js";
 
 interface UpstreamFogMap {
@@ -380,6 +385,192 @@ describe("a track replaced under the same id in a live session", () => {
   });
 });
 
+describe("a track whose activity changed while it was on its way", () => {
+  it("is not revealed under the new stamp: the request is made again", async () => {
+    const { sync, lists, needTrack, fogMap } = await setup();
+    lists(WALKER);
+    sync.onActivities({ items: [summary(WALKER, { endedAt: "2026-01-02T11:00:00Z" })] });
+    sendTrack(sync, WALKER, walk(0, 300));
+    await sync.settled();
+    expect(visitedAt(fogMap, 50)).toBe(false);
+    expect(needTrack).toHaveBeenCalledTimes(2);
+
+    sendTrack(sync, WALKER, walk(1000, 1300));
+    await sync.settled();
+    expect(visitedAt(fogMap, 1050)).toBe(true);
+    expect(visitedAt(fogMap, 50)).toBe(false);
+  });
+
+  it("does not cache the old track under either stamp", async () => {
+    const { sync, lists, cache } = await setup();
+    lists(WALKER);
+    sync.onActivities({ items: [summary(WALKER, { distanceM: 2500 })] });
+    sendTrack(sync, WALKER, walk(0, 300));
+    await sync.settled();
+    expect(await cache.getReveal(WALKER)).toBeNull();
+  });
+});
+
+describe("a replaced track whose new stamp is already cached", () => {
+  it("is restored without a request and the old cells leave the overlay", async () => {
+    const { sync, lists, needTrack, fogMap, cache, rules } = await setup();
+    const changed = summary(WALKER, { distanceM: 2500 });
+    const cells = Reveal.reveal(
+      walk(1000, 1300).map((p) => ({ t: p.t, lat: p.lat, lon: p.lon, accuracy: p.accuracy })),
+      rules,
+    );
+    lists(WALKER);
+    sendTrack(sync, WALKER, walk(0, 300));
+    await sync.settled();
+    expect(visitedAt(fogMap, 50)).toBe(true);
+    // written after the first reveal, which stored its own entry under the old stamp
+    await cache.putReveal(WALKER, stampFor(rules, changed), cells);
+    sync.onActivities({ items: [changed] });
+    await sync.settled();
+    expect(needTrack).toHaveBeenCalledTimes(1);
+    expect(visitedAt(fogMap, 50)).toBe(false);
+    expect(visitedAt(fogMap, 1050)).toBe(true);
+  });
+});
+
+describe("the reveal rules the adapter types", () => {
+  it("name exactly the fields of the page's Reveal.RULES", () => {
+    // Record makes the compiler list every field of RevealRules here.
+    const fields: Record<keyof RevealRules, true> = {
+      version: true,
+      maxAccuracyM: true,
+      maxGapS: true,
+      maxGapM: true,
+      halfWidthM: true,
+    };
+    expect(Object.keys(Reveal.RULES).sort()).toEqual(Object.keys(fields).sort());
+  });
+});
+
+describe("tracks that arrive oddly", () => {
+  it("reveals nothing and stays quiet for a track whose points are all dropped", async () => {
+    const { sync, lists, fogChanged, cache } = await setup();
+    lists(WALKER);
+    sendTrack(
+      sync,
+      WALKER,
+      walk(0, 300).map((p) => ({ ...p, accuracy: 5000 })),
+    );
+    await sync.settled();
+    expect(fogChanged).not.toHaveBeenCalled();
+    expect((await cache.getReveal(WALKER))?.cells.byteLength).toBe(0);
+  });
+
+  it("starts over when total changes mid-stream", async () => {
+    const { sync, lists, fogMap } = await setup();
+    lists(WALKER);
+    const points = walk(0, 300);
+    sync.onTrack({ activityId: WALKER, index: 0, total: 3, points: points.slice(0, 10) });
+    sendTrack(sync, WALKER, points, 16);
+    await sync.settled();
+    expect(visitedAt(fogMap, 250)).toBe(true);
+  });
+
+  it("takes a chunk delivered twice once", async () => {
+    const { sync, lists, fogChanged, history } = await setup();
+    lists(WALKER);
+    const points = walk(0, 300);
+    const first = { activityId: WALKER, index: 0, total: 2, points: points.slice(0, 16) };
+    sync.onTrack(first);
+    sync.onTrack(first);
+    sync.onTrack({ ...first, index: 1, points: points.slice(16) });
+    await sync.settled();
+    expect(history.setTrack).toHaveBeenCalledTimes(1);
+    expect(history.setTrack.mock.calls[0]?.[1]).toHaveLength(points.length);
+    expect(fogChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a route that comes with a later chunk", async () => {
+    const { sync, lists, history } = await setup();
+    lists(WALKER);
+    const points = walk(0, 300);
+    const route = { coords: [[13.7, 51] as [number, number], [13.71, 51] as [number, number]] };
+    sync.onTrack({ activityId: WALKER, index: 0, total: 2, points: points.slice(0, 16) });
+    sync.onTrack({ activityId: WALKER, index: 1, total: 2, points: points.slice(16), route });
+    await sync.settled();
+    expect(history.setTrack.mock.calls[0]?.[2]).toEqual(route);
+  });
+});
+
+describe("a list that deletes one activity and restores another", () => {
+  it("does both in one message", async () => {
+    const first = await setup();
+    first.lists(WALKER);
+    sendTrack(first.sync, WALKER, walk(0, 300));
+    await first.sync.settled();
+    // RIDER is in the cache, as if revealed in an earlier session
+    await first.cache.putReveal(
+      RIDER,
+      stampFor(first.rules, summary(RIDER)),
+      Reveal.reveal(walk(200, 500), first.rules),
+    );
+    first.lists(RIDER);
+    await first.sync.settled();
+    expect(visitedAt(first.fogMap, 50)).toBe(false);
+    expect(visitedAt(first.fogMap, 450)).toBe(true);
+    expect(first.needTrack).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a list that fails midway", () => {
+  it("leaves no ghost cells: the next list rebuilds the overlay", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const s = await setup();
+    s.lists(WALKER, RIDER);
+    sendTrack(s.sync, WALKER, walk(0, 300));
+    sendTrack(s.sync, RIDER, walk(200, 500));
+    await s.sync.settled();
+    const real = s.fogMap.clearOverlay.bind(s.fogMap);
+    s.fogMap.clearOverlay = () => {
+      s.fogMap.clearOverlay = real;
+      throw new Error("boom");
+    };
+    s.lists(WALKER);
+    await s.sync.settled();
+    s.lists(WALKER);
+    await s.sync.settled();
+    expect(visitedAt(s.fogMap, 450)).toBe(false);
+    expect(visitedAt(s.fogMap, 50)).toBe(true);
+    error.mockRestore();
+  });
+
+  it("names the job and the error class in the log, never the message", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const s = await setup();
+    s.lists(WALKER);
+    s.fogMap.addCells = () => {
+      throw new TypeError("at 51.123456,13.654321");
+    };
+    sendTrack(s.sync, WALKER, walk(0, 300));
+    await s.sync.settled();
+    expect(error).toHaveBeenCalledWith(
+      "crossfog: updating the fog from the history failed (track, TypeError)",
+    );
+    error.mockRestore();
+  });
+});
+
+describe("removing an activity that revealed nothing", () => {
+  it("does not tell the page", async () => {
+    const { sync, lists, fogChanged } = await setup();
+    lists(WALKER);
+    sendTrack(
+      sync,
+      WALKER,
+      walk(0, 300).map((p) => ({ ...p, accuracy: 5000 })),
+    );
+    await sync.settled();
+    lists();
+    await sync.settled();
+    expect(fogChanged).not.toHaveBeenCalled();
+  });
+});
+
 describe("revealing", () => {
   it("adds the cells of both activities to the overlay once their tracks are in", async () => {
     const { lists, sync, fogMap } = await setup();
@@ -497,6 +688,16 @@ describe("restoring from the cache", () => {
     expect(await restarted.cache.revealIds()).toEqual([WALKER]);
     expect(visitedAt(restarted.fogMap, 450)).toBe(false);
     expect(visitedAt(restarted.fogMap, 50)).toBe(true);
+  });
+});
+
+describe("a damaged cache entry", () => {
+  it("is deleted when it is found", async () => {
+    const { sync, lists, cache, rules } = await setup();
+    await cache.putReveal(WALKER, stampFor(rules, summary(WALKER)), new Int32Array(3));
+    lists(WALKER);
+    await sync.settled();
+    expect(await cache.revealIds()).not.toContain(WALKER);
   });
 });
 
