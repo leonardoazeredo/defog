@@ -1,4 +1,5 @@
 import type { SqlDriver } from "../db/driver.js";
+import { deflateGpx, inflateGpx } from "./gpxBlob.js";
 import type { Activity, ActivityStore, ActivitySummary } from "./types.js";
 
 interface Row {
@@ -7,7 +8,7 @@ interface Row {
   started_at: string;
   ended_at: string;
   route_id: string | null;
-  gpx: string;
+  gpx_deflated: Uint8Array;
   track_json: string;
   stats_json: string;
   received_at: string;
@@ -34,7 +35,7 @@ export function createActivityStore(db: SqlDriver): ActivityStore {
     async add(a) {
       const { changes } = await db.run(
         `INSERT INTO activities
-           (id, travel_mode, started_at, ended_at, route_id, gpx, track_json, stats_json, received_at, encoder_version)
+           (id, travel_mode, started_at, ended_at, route_id, gpx_deflated, track_json, stats_json, received_at, encoder_version)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO NOTHING`,
         [
@@ -43,7 +44,7 @@ export function createActivityStore(db: SqlDriver): ActivityStore {
           a.startedAt,
           a.endedAt,
           a.routeId ?? null,
-          a.gpx,
+          deflateGpx(a.gpx),
           JSON.stringify(a.track),
           JSON.stringify(a.stats),
           a.receivedAt,
@@ -66,7 +67,7 @@ export function createActivityStore(db: SqlDriver): ActivityStore {
       if (!r) return null;
       const full: Activity = {
         ...toSummary(r),
-        gpx: r.gpx,
+        gpx: inflateGpx(r.gpx_deflated),
         track: JSON.parse(r.track_json),
         receivedAt: r.received_at,
         encoderVersion: r.encoder_version,

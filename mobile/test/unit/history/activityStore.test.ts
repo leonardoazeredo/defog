@@ -83,3 +83,17 @@ describe.each(impls)("activity store (%s)", (_name, make) => {
     expect((await s.get(a.id))?.track).toHaveLength(2);
   });
 });
+
+describe("activity store (sqlite) at rest", () => {
+  it("keeps the GPX deflated, not as text", async () => {
+    const db = createNodeSqliteDriver(":memory:");
+    await migrate(db);
+    const gpx = `<gpx>${'<trkpt lat="48.1" lon="11.5"/>'.repeat(100)}</gpx>`;
+    await createActivityStore(db).add(activity({ gpx }));
+    const [row] = await db.all<{ gpx_deflated: Uint8Array }>("SELECT gpx_deflated FROM activities");
+    expect(row?.gpx_deflated).toBeInstanceOf(Uint8Array);
+    expect(row?.gpx_deflated.length).toBeLessThan(gpx.length / 4);
+    expect(new TextDecoder().decode(row?.gpx_deflated)).not.toContain("<gpx>");
+    expect((await createActivityStore(db).get(activity().id))?.gpx).toBe(gpx);
+  });
+});
