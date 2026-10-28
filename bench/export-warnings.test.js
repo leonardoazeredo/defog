@@ -154,7 +154,8 @@ const settle = () => new Promise((r) => setImmediate(r));
     assert.ok(html.includes('id="' + id + '"'), "index.html has #" + id);
   }
 
-  // no console call in the page prints a reason's `why`, an explanation of a failed route, or a position
+  // no console call in the page prints a reason's `why`, an explanation of a failed route, or a position.
+  // Also a tripwire: it reads only the console call's own line, so a value renamed first or a call split over lines passes.
   const srcDir = path.join(root, "src");
   const risky = /\b(why|explain|latlng|lat|lng|lon|coords|wps|bounds)\b/;
   for (const file of fs.readdirSync(srcDir).filter((f) => f.endsWith(".js"))) {

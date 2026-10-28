@@ -1,4 +1,9 @@
-import type { ActivitySummary, RouteRecord, TrackPoint } from "../src/bridge/protocol.js";
+import type {
+  ActivitySummary,
+  ExportState,
+  RouteRecord,
+  TrackPoint,
+} from "../src/bridge/protocol.js";
 import type { FogCache, RevealStamp } from "./fogCache.js";
 
 // app/src/reveal.js `Reveal.RULES`: a cached reveal is reused only while a hash of all these fields matches.
@@ -51,7 +56,7 @@ export interface CrossfogPageApi {
   routeStatus?(msg: { routeId: string; state: string; why?: string | undefined }): void;
   linkStatus?(msg: { paired: boolean; reachable: boolean }): void;
   /** What became of a Fog of World export the page sent. */
-  exportStatus?(msg: { exportId: string; state: string }): void;
+  exportStatus?(msg: { exportId: string; state: ExportState }): void;
   reveal: {
     RULES: RevealRules;
     reveal(
