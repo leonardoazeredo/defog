@@ -632,19 +632,20 @@
   }
 
   // The editor shows the previewed line at once, with a distance and time but no climb; heights
-  // arrive later and refine it unless the route was edited meanwhile.
+  // arrive later and refine it unless the route was edited meanwhile; Send waits for them, so the watch never gets the flat line.
   async function adoptRoute({ wps, coords }) {
     let token;
     try {
       const flat = Estimates.estimate(coords, profile, []);
-      token = route.setFixedRoute(wps, coords, { km: flat.distanceM / 1000, seconds: flat.seconds, ascent: null, descent: null });
+      token = route.setFixedRoute(wps, coords, { km: flat.distanceM / 1000, seconds: flat.seconds, ascent: null, descent: null }, { refining: true });
       const heights = await elevation.elevationAt(coords);
       const est = Estimates.estimate(coords, profile, heights);
-      if (!est.elevationKnown) return;
-      route.refineFixedRoute(token, est.coords, { km: est.distanceM / 1000, seconds: est.seconds, ascent: est.ascentM, descent: est.descentM });
+      if (est.elevationKnown) route.refineFixedRoute(token, est.coords, { km: est.distanceM / 1000, seconds: est.seconds, ascent: est.ascentM, descent: est.descentM });
     } catch (e) {
       console.warn("[route] adopting a suggestion failed", e && e.name); // the class only: no positions in a log
       if (token === undefined) clearRouteInfo("Couldn't open this route in the editor.");
+    } finally {
+      if (token !== undefined) route.settleFixedRoute(token); // if the heights did not refine it, the flat route can be sent
     }
   }
 

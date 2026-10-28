@@ -58,6 +58,7 @@
     this.segOld = L.polyline([], { color: "#ff2d55", weight: 3.5, opacity: 0.85, dashArray: "2 8", lineCap: "round" }).addTo(map);
     this.active = false;
     this._reqId = 0;
+    this._refiningToken = null; // the _reqId of a fixed route whose heights are pending
     this._suppressClick = false;
     this._grabbing = false;
 
@@ -139,13 +140,16 @@
   // Like setWaypoints, but the route is the given geometry as it is (a suggested
   // route handed over from the preview): no routing request until the user edits a pin.
   // stats: {km, seconds, ascent, descent}, as routeWaypoints returns them. Returns a token for
-  // refineFixedRoute.
-  RouteTool.prototype.setFixedRoute = function (latlngs, coords, stats) {
+  // refineFixedRoute. `{refining: true}` says better geometry is on its way: routeRecord gives
+  // nothing until refineFixedRoute or settleFixedRoute is called for the token, or the route is edited,
+  // so a Send cannot hand the watch the flat line that the heights then replace.
+  RouteTool.prototype.setFixedRoute = function (latlngs, coords, stats, opts) {
     this._newRoute();
     this.wps.forEach((w) => this.map.removeLayer(w.marker));
     this.wps = latlngs.map((ll, i) => this._makeWp(L.latLng(ll), i));
     this._emitWps();
     ++this._reqId; // a request still in flight must not replace this route
+    this._refiningToken = opts && opts.refining ? this._reqId : null;
     this._applyRoute(coords, stats);
     return this._reqId;
   };
@@ -154,7 +158,19 @@
   // that arrived late); ignored once the route was edited, replaced or cleared since.
   RouteTool.prototype.refineFixedRoute = function (token, coords, stats) {
     if (token !== this._reqId) return false;
+    this._refiningToken = null;
     this._applyRoute(coords, stats);
+    return true;
+  };
+
+  // The refinement for the token will not come (no heights): the route as handed over is final.
+  // An edit or clear bumps _reqId, which also ends the wait, so nothing can stay blocked.
+  RouteTool.prototype.settleFixedRoute = function (token) {
+    if (token !== this._reqId) return false;
+    if (this._refiningToken === token) {
+      this._refiningToken = null;
+      this._emit(Object.assign({ points: this.wps.length }, this.stats));
+    }
     return true;
   };
 
@@ -390,6 +406,7 @@ ${pts}
   // route the watch has; clear or a different route starts over.
   RouteTool.prototype.routeRecord = function () {
     const s = this.stats;
+    if (this._refiningToken === this._reqId) return null; // heights pending: see setFixedRoute
     if (!s || !Number.isFinite(s.km) || this.wps.length < 2 || this.routeCoords.length < 2) return null;
     if (!this.routeId) { this.routeId = newUuid(); this.routeCreatedAt = new Date().toISOString(); }
     const num = (v) => (Number.isFinite(v) ? v : null);
