@@ -147,5 +147,12 @@
     return create({ ...opts, store });
   }
 
-  global.Elevation = { create, open, tileOf, decodeHeight };
+  // the heights if they come within ms, else fallback: a wait for them must end even when a tile never does
+  function within(promise, ms, fallback) {
+    let timer;
+    const late = new Promise((resolve) => { timer = setTimeout(() => resolve(fallback), ms); });
+    return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+  }
+
+  global.Elevation = { create, open, within, tileOf, decodeHeight };
 })(window);

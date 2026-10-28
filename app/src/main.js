@@ -641,14 +641,16 @@
     }));
   }
 
+  const HEIGHTS_WAIT_MS = 60000;
   // The editor shows the previewed line at once, with a distance and time but no climb; heights
   // arrive later and refine it unless the route was edited meanwhile; Send waits for them, so the watch never gets the flat line.
+  // The wait is bounded: heights that come after it are dropped, and the flat route settles.
   async function adoptRoute({ wps, coords }) {
     let token;
     try {
       const flat = Estimates.estimate(coords, profile, []);
       token = route.setFixedRoute(wps, coords, Estimates.routeStats(flat), { refining: true });
-      const heights = await elevation.elevationAt(coords);
+      const heights = await Elevation.within(elevation.elevationAt(coords), HEIGHTS_WAIT_MS, []);
       const est = Estimates.estimate(coords, profile, heights);
       if (est.elevationKnown) route.refineFixedRoute(token, est.coords, Estimates.routeStats(est));
     } catch (e) {
