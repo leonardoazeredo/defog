@@ -5,6 +5,7 @@ declare class WatchLinkModule extends NativeModule<WatchLinkNativeEvents> {
   getDatabaseKeyHex(): Promise<string>;
   keyState(): Promise<KeyState>;
   replaceLostDatabaseKey(keyHex: string): Promise<void>;
+  resetKeys(): Promise<void>;
   createDocument(name: string, mime: string): Promise<string | null>;
   displayNameOf(uri: string): Promise<string | null>;
   copyToUri(sourcePath: string, uri: string): Promise<number>;

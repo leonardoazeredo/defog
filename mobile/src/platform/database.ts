@@ -11,7 +11,7 @@ import { type HistoryDatabase, openHistory } from "../db/openHistory.js";
 import { migrate } from "../db/schema.js";
 import { createDatabaseFiles } from "./backupPlatform.js";
 import { createExpoSqliteDriver } from "./expoSqliteDriver.js";
-import { getDatabaseKeyHex, KeyLostError, keyState } from "./watchLinkModule.js";
+import { getDatabaseKeyHex, KeyLostError, keyState, resetKeys } from "./watchLinkModule.js";
 
 let opened: Promise<HistoryDatabase> | undefined;
 // Only the first open of the process keeps, puts back or discards a replaced copy; a missing live file is recovered on every open.
@@ -30,8 +30,11 @@ export function createDatabase(): Promise<HistoryDatabase> {
       openHistory({
         keyState,
         getDatabaseKeyHex,
-        // expo-sqlite's default directory is `SQLite` under the document directory.
-        databaseExists: () => new File(Paths.document, "SQLite", LIVE_DB).exists,
+        // expo-sqlite's default directory is `SQLite` under the document directory. The replaced copy
+        // counts too, as in the native resetKeys check.
+        databaseExists: () =>
+          [LIVE_DB, REPLACED_DB].some((name) => new File(Paths.document, "SQLite", name).exists),
+        resetKeys,
         openDriver: (keyHex) => createExpoSqliteDriver({ name: LIVE_DB, keyHex }),
         migrate,
         isKeyLostError: (e) => e instanceof KeyLostError,

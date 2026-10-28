@@ -17,6 +17,7 @@ function deps(over: Partial<OpenHistoryDeps> = {}): OpenHistoryDeps {
     keyState: async () => "existing",
     getDatabaseKeyHex: async () => "ab".repeat(32),
     databaseExists: () => true,
+    resetKeys: vi.fn(async () => {}),
     openDriver: vi.fn(async () => db),
     migrate: vi.fn(async () => 1),
     isKeyLostError: (e) => e instanceof Error && e.name === "KeyLostError",
@@ -50,6 +51,59 @@ describe("openHistory", () => {
     const d = deps({ keyState: async () => "lost", getDatabaseKeyHex: get });
     expect((await openHistory(d)).kind).toBe("keyLost");
     expect(get).not.toHaveBeenCalled();
+    expect(d.resetKeys).not.toHaveBeenCalled();
+  });
+
+  for (const state of ["lost", "unreadable"] as const) {
+    it(`resets a ${state} key and creates a database when no database file exists`, async () => {
+      const order: string[] = [];
+      const d = deps({
+        keyState: async () => state,
+        databaseExists: () => false,
+        resetKeys: vi.fn(async () => {
+          order.push("reset");
+        }),
+        getDatabaseKeyHex: async () => {
+          order.push("key");
+          return "ab".repeat(32);
+        },
+      });
+      expect((await openHistory(d)).kind).toBe("ready");
+      expect(order).toEqual(["reset", "key"]);
+      expect(d.migrate).toHaveBeenCalledOnce();
+    });
+  }
+
+  it("reports an unreadable key without asking for it while a database file exists", async () => {
+    const get = vi.fn(async () => "ab".repeat(32));
+    const d = deps({ keyState: async () => "unreadable", getDatabaseKeyHex: get });
+    expect((await openHistory(d)).kind).toBe("keyLost");
+    expect(get).not.toHaveBeenCalled();
+    expect(d.resetKeys).not.toHaveBeenCalled();
+  });
+
+  it("passes a refused reset on without opening anything", async () => {
+    const d = deps({
+      keyState: async () => "lost",
+      databaseExists: () => false,
+      resetKeys: async () => {
+        throw Object.assign(new Error("a database exists"), { code: "ERR_INVALID_STATE" });
+      },
+    });
+    await expect(openHistory(d)).rejects.toThrow("a database exists");
+    expect(d.openDriver).not.toHaveBeenCalled();
+  });
+
+  it("does not reset a key that reads as existing but fails, even with no database", async () => {
+    const lost = Object.assign(new Error("gone"), { name: "KeyLostError" });
+    const d = deps({
+      databaseExists: () => false,
+      getDatabaseKeyHex: async () => {
+        throw lost;
+      },
+    });
+    expect((await openHistory(d)).kind).toBe("keyLost");
+    expect(d.resetKeys).not.toHaveBeenCalled();
   });
 
   it("reports a lost key when reading it fails with the lost-key error", async () => {
