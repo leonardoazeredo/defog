@@ -98,19 +98,16 @@ const T = (x, y) => ({ x, y });
     await c.fetchStreets([T(1, 1)], "run");
     assert.equal(calls.length, 2);
   }
-  { // a cached run tile answers a bike request; a bike tile does not answer run, and nothing answers car
+  { // a cached run tile answers a bike request; a bike tile does not answer run
     const { network, calls } = fakeNetwork();
     const c = StreetCache.create({ store: TileStore.memory({ maxEntries: 10 }), network, now: () => 0 });
     await c.fetchStreets([T(1, 1)], "run");
     const bike = await c.fetchStreets([T(1, 1)], "bike");
     assert.equal(calls.length, 1, "bike served from the run tile");
     assert.equal(bike.get("1:1").groups.tag, "run");
-    await c.fetchStreets([T(1, 1)], "car");
-    assert.equal(calls.length, 2, "car needs its own fetch");
-    assert.equal(calls[1].kind, "car");
     await c.fetchStreets([T(5, 5)], "bike");
     await c.fetchStreets([T(5, 5)], "run");
-    assert.equal(calls.length, 4, "a bike tile does not answer run");
+    assert.equal(calls.length, 3, "a bike tile does not answer run");
   }
   { // the bike answer is stored under bike, and a later bike request finds it first
     const { network, calls } = fakeNetwork();

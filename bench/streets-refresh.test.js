@@ -85,16 +85,16 @@ const consistent = (s) => {
   }
   { // a way the fresh answer no longer has is gone, with its segments, classes and graph edges
     const s = index(
-      { "548:2040": answer([way(1, [1, 2], [0, 100], [400, 100]), way(2, [3, 4], [0, 200], [250, 200])], { bike: [1, 2], car: [1, 2], oneWay: [1], motorway: [1], bikeBoth: [1], reverseWay: [2] }) },
-      { "548:2040": answer([way(2, [3, 4], [0, 200], [250, 200])], { bike: [2], car: [2], reverseWay: [2] }) });
+      { "548:2040": answer([way(1, [1, 2], [0, 100], [400, 100]), way(2, [3, 4], [0, 200], [250, 200])], { bike: [1, 2], oneWay: [1], bikeBoth: [1], reverseWay: [2] }) },
+      { "548:2040": answer([way(2, [3, 4], [0, 200], [250, 200])], { bike: [2], reverseWay: [2] }) });
     await s.ensureRects([west], "run", { cacheOnly: true });
-    assert.deepEqual(edgeWays(planner(s, "car-fast")), [1, 2]);
+    assert.deepEqual(edgeWays(planner(s, "trekking")), [1, 2]);
     await s.ensureRects([west], "run");
     assert.deepEqual(wayIdsOf(s), [2]);
     for (const set of [s.wayIds, s.classified, s.classIds.bike, s.oneWay, s.motorway, s.bikeBoth]) assert.equal(set.has(1), false);
     assert.equal(s.classIds.bike.has(2), true);
     assert.equal(segList(s).length, 5, "only way 2's 250 m remain");
-    assert.deepEqual(edgeWays(planner(s, "car-fast")), [2]);
+    assert.deepEqual(edgeWays(planner(s, "trekking")), [2]);
     consistent(s);
   }
   { // a way across two tiles, only one refreshed: it stays while the other tile's expired copy still lists it, and is held once
@@ -175,22 +175,16 @@ const consistent = (s) => {
     assert.equal(s.segCount, 8, "the capped way's segments are all given back");
     consistent(s);
   }
-  { // an expired bike copy is replaced by a fresh run answer; a car copy and a run copy do not stand in for each other
+  { // an expired bike copy is replaced by a fresh run answer; a bike answer does not drop what a run copy brought
     const bike = index({ "548:2040": answer([way(1, [1, 2], [0, 100], [400, 100])]) }, { "548:2040": answer([]) });
     await bike.ensureRects([west], "bike", { cacheOnly: true });
     await bike.ensureRects([west], "run");
     assert.deepEqual(wayIdsOf(bike), [], "a run answer covers what a bike copy brought");
-    const car = index({ "548:2040": answer([way(9, [9, 10], [0, 100], [400, 100])], { motorway: [9], car: [9] }) }, { "548:2040": answer([]) });
-    await car.ensureRects([west], "car", { cacheOnly: true });
-    await car.ensureRects([west], "run");
-    assert.deepEqual(wayIdsOf(car), [9], "a run answer never lists a motorway, so it cannot say one is gone");
-    await car.ensureRects([west], "car");
-    assert.deepEqual(wayIdsOf(car), [], "a car answer does");
     const run = index({ "548:2040": answer([way(3, [5, 6], [0, 200], [300, 200])]) }, { "548:2040": answer([]) });
     await run.ensureRects([west], "run", { cacheOnly: true });
-    await run.ensureRects([west], "car");
-    assert.deepEqual(wayIdsOf(run), [3], "a car answer never lists a footway");
-    consistent(bike); consistent(car); consistent(run);
+    await run.ensureRects([west], "bike");
+    assert.deepEqual(wayIdsOf(run), [3], "a bike answer never lists a footway");
+    consistent(bike); consistent(run);
   }
   { // an expired copy that reaches the index after a run covered the tile adds nothing: nothing would ask for the tile again
     let release;

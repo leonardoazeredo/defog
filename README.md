@@ -21,7 +21,7 @@ uploaded anywhere.
   zoomed in to about a town at a time, and unlocks a dark basemap where the streets glow.
 - **Live "% defogged"** of the current view in the header.
 - **Route planning** snapped to real streets by a router that runs in your browser (bike / road /
-  walk / car): draggable & line-insertable waypoints, a **Reverse** button that
+  walk): draggable & line-insertable waypoints, a **Reverse** button that
   re-routes the trip the other way round, distance, time + elevation profile,
   and an estimate of the **new area a route would defog**. Export the route as GPX / KML,
   or open it in Google Maps. km/mi units.

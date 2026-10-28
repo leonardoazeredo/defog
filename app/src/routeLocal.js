@@ -27,7 +27,7 @@
   }
 
   // streets: StreetIndex (ensureRects); plannerFor(travelMode) -> GraphPlanner|null; elevation:
-  // {elevationAt}; estimates: Estimates; streetKind(travelMode) -> "run"|"bike"|"car".
+  // {elevationAt}; estimates: Estimates; streetKind(travelMode) -> "run"|"bike".
   function create({ streets, plannerFor, elevation, estimates, streetKind }) {
     // points: [{lat, lng}] (at least two), travelMode as the mode buttons name it;
     // onProgress({done, total, waitUntil?}) hears the street download, if one is needed; stale()

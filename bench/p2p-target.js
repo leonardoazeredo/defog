@@ -12,8 +12,8 @@ const { makeGain } = require("./lib/gain.js");
 const { runSuggest } = require("./lib/headless.js");
 const { p2pWindow } = SuggestTool._internals;
 
-// the six profiles behind the data-p buttons in app/index.html
-const PROFILES = ["trekking", "fastbike", "hiking-mountain", "car-fast", "shortest"];
+// the profiles behind the data-p buttons in app/index.html
+const PROFILES = ["trekking", "fastbike", "hiking-mountain", "shortest"];
 const pins = (process.env.P2P_PINS || "51.0681,13.7543;51.0590,13.7829")
   .split(";").map((p) => p.split(",").map(Number));
 const filter = process.argv[2] || "";

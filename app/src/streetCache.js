@@ -13,7 +13,7 @@
   // must not be answered with old streets. Kept here, not read from streets.js, which loads after.
   const OUTAGE_REASONS = new Set(["busy", "blocked", "stalled", "offline", "server", "streets-partial"]);
   // a run tile also stands in for bike, as in StreetIndex._uncovered: the run query drops foot=no
-  // ways, so the answer can miss a few bike-only ways. Only a car fetch holds motorways.
+  // ways, so the answer can miss a few bike-only ways.
   const kindsFor = (kind) => (kind === "bike" ? ["bike", "run"] : [kind]);
 
   function create(opts) {

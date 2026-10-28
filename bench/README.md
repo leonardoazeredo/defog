@@ -32,7 +32,7 @@ The synthetic-graph tests need no `Sync/` and no network:
 `planner-filter`, `streets-fetch`, `router`, `p2p-reason`, `handoff`, `route-handoff`, `retrace`
 and `compare` cover the travel-class filter, the Overpass query and how its reply is read,
 shortest paths and one-ways, why a run fails, the Use hand-off, the retrace ranking and
-compare.js itself. `scenarios.js` also holds scenarios the baseline lacks (road bike, car,
+compare.js itself. `scenarios.js` also holds scenarios the baseline lacks (road bike,
 a 20 km loop): compare.js only scores what the baseline has. `loop-fit` and `loop-wave` cover
 the loop size search and the second wave.
 
@@ -146,5 +146,5 @@ Observed on a real fog, ~4 km pins, 15% buffer unless noted:
   56%, trekking 10x 77%) are still returned and labelled by `main.js` for retrace >= 10%;
   the browser check showed one labelled card (10% at ~14 km, matching the editor's 10.2%)
   and no >= 50% card, so that label is verified only for that one case.
-- car-fast and rail search the "bike" street set (`streetKind`), so their candidates
-  are not guided by car or rail networks.
+- rail searches the "bike" street set (`streetKind`), so its candidates
+  are not guided by a rail network.
