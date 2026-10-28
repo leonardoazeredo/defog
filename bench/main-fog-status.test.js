@@ -1,0 +1,120 @@
+// main.js is a browser IIFE, so these tests lift single functions out of its source and run them
+// against stubs: the Fog of World export status line expires, fogChanged survives a throwing step and
+// drops stale suggestions, finishLoad goes through fogChanged, and activity-only fog fits the map once.
+//   node bench/main-fog-status.test.js
+"use strict";
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const src = fs.readFileSync(path.join(__dirname, "..", "app", "src", "main.js"), "utf8");
+function fnText(name) {
+  const start = src.indexOf(`  function ${name}(`);
+  assert.ok(start >= 0, `${name} not found in main.js`);
+  return src.slice(start, src.indexOf("\n  }\n", start) + 4);
+}
+function line(re, what) {
+  const m = src.match(re);
+  assert.ok(m, `main.js declares ${what}`);
+  return m[0];
+}
+
+// ---- showFowResult: the page cannot learn the outcome of the picker, so the line expires
+{
+  const timers = [];
+  const cleared = [];
+  const scope = {
+    fowStatus: { textContent: "" },
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimeout: (id) => cleared.push(id),
+  };
+  const code = [line(/^ {2}let fowStatusTimer\b.*$/m, "fowStatusTimer"), line(/^ {2}const FOW_STATUS_MS\b.*$/m, "FOW_STATUS_MS"), fnText("showFowResult")].join("\n");
+  const show = new Function(...Object.keys(scope), `${code}\nreturn showFowResult;`)(...Object.values(scope));
+  show(3);
+  assert.equal(scope.fowStatus.textContent, "Choose where to save it…");
+  assert.equal(timers.length, 1);
+  timers[0].fn();
+  assert.equal(scope.fowStatus.textContent, "", "the line clears after the timeout");
+  show(null);
+  assert.equal(scope.fowStatus.textContent, "Couldn't write the export.");
+  show(0);
+  assert.equal(cleared.length, 3, "each result cancels the timer before it starts its own");
+  assert.equal(scope.fowStatus.textContent, "There is no fog to export yet.");
+}
+
+// ---- fogChanged
+function fogScope(over) {
+  const calls = [];
+  const s = {
+    fogLayer: null,
+    fogMap: { hasFog: () => true, tileCount: 0, latLngBounds: () => ({ b: 1 }) },
+    streets: { invalidateFrac: () => calls.push("invalidateFrac") },
+    streetsLayer: { invalidateFog: () => calls.push("invalidateFog") },
+    updateDefog: () => calls.push("updateDefog"),
+    syncSug: () => calls.push("syncSug"),
+    map: { fitBounds: () => calls.push("fitBounds") },
+    suggest: { clearResults: () => calls.push("clearResults") },
+    lastSug: null,
+    mapTouched: false,
+    console: { warn: (...a) => calls.push("warn:" + a[1]) },
+  };
+  s.ensureLayer = () => { calls.push("ensureLayer"); s.fogLayer = { redraw: () => calls.push("redraw") }; };
+  Object.assign(s, over);
+  return { s, calls };
+}
+// main.js keeps fogLayer, lastSug, mapTouched and fitted as closure `let`s; the lifted copy reads them off `s`.
+function liftFogChanged(s) {
+  const state = ["fogLayer", "lastSug", "mapTouched"];
+  const names = Object.keys(s).filter((k) => !state.includes(k));
+  const get = new Function("s", ...names,
+    `let fitted = ${line(/^ {2}let fitted\b.*$/m, "fitted").replace(/^.*= */, "").replace(/;.*$/, "")};
+     return () => {
+       const { fogLayer, lastSug, mapTouched } = s;
+       let fogLayerV = fogLayer;
+       ${fnText("fogChanged").replace("function fogChanged()", "const run = ()=>").replace(/\bfogLayer\b/g, "fogLayerV").replace(/\blastSug\b/g, "s.lastSug").replace(/\bmapTouched\b/g, "s.mapTouched").replace(/\bensureLayer\(\)/g, "(ensureLayer(), fogLayerV = s.fogLayer)")}
+       run(); s.fogLayer = fogLayerV;
+     };`);
+  return get(s, ...names.map((k) => s[k]));
+}
+
+{
+  const { s, calls } = fogScope({});
+  s.streets.invalidateFrac = () => { throw new TypeError("boom"); };
+  liftFogChanged(s)();
+  assert.ok(calls.includes("invalidateFog") && calls.includes("updateDefog") && calls.includes("syncSug"), calls.join());
+  assert.ok(calls.includes("warn:TypeError"), "logs the class only");
+}
+{
+  const { s, calls } = fogScope({ lastSug: { list: [{}] } });
+  liftFogChanged(s)();
+  assert.ok(calls.includes("clearResults"), "shown suggestions were scored on the old fog");
+}
+for (const lastSug of [null, { loading: true }, { error: true }, { empty: true }]) {
+  const { s, calls } = fogScope({ lastSug });
+  liftFogChanged(s)();
+  assert.ok(!calls.includes("clearResults"), "nothing stale to drop: " + JSON.stringify(lastSug));
+}
+{
+  const { s, calls } = fogScope({});
+  const f = liftFogChanged(s);
+  f(); f();
+  assert.equal(calls.filter((c) => c === "fitBounds").length, 1, "activity-only fog fits the map once");
+}
+{
+  const { s, calls } = fogScope({ mapTouched: true });
+  liftFogChanged(s)();
+  assert.ok(!calls.includes("fitBounds"), "not under a map the person already moved");
+}
+{
+  const { s, calls } = fogScope({ fogMap: { hasFog: () => true, tileCount: 4, latLngBounds: () => ({}) } });
+  liftFogChanged(s)();
+  assert.ok(!calls.includes("fitBounds"), "an import has its own fit in finishLoad");
+}
+
+// ---- finishLoad hands the shared refresh to fogChanged
+{
+  const body = fnText("finishLoad");
+  assert.match(body, /fogChanged\(\)/);
+  assert.doesNotMatch(body, /invalidateFrac|invalidateFog|syncSug|updateDefog/, "no second copy of the refresh");
+}
+console.log("main-fog-status ok");
