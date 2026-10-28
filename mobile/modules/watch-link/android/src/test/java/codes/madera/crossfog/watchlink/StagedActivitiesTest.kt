@@ -1,8 +1,10 @@
 package codes.madera.crossfog.watchlink
 
 import java.io.File
+import java.security.InvalidKeyException
 import javax.crypto.spec.SecretKeySpec
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -59,5 +61,14 @@ class StagedActivitiesTest {
     val staged = readStagedActivities(store())
     assertEquals(listOf(b), staged.readable.map { it.activityId })
     assertEquals(1, staged.unreadable)
+  }
+
+  // Counting would tell the page every walk is lost when only the Keystore failed for now.
+  @Test
+  fun aFailureOfTheSealingEntryIsRethrownNotCounted() {
+    store().stage(a, offer(a))
+    assertThrows(InvalidKeyException::class.java) {
+      readStagedActivities(store(SecretKeySpec(ByteArray(5), "AES")))
+    }
   }
 }

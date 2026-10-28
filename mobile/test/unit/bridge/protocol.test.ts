@@ -203,6 +203,8 @@ const nativeSamples = [
   { v: 1 as const, type: "linkStatus" as const, paired: true, reachable: false },
   { v: 1 as const, type: "trackUnavailable" as const, activityId, reason: "notFound" as const },
   { v: 1 as const, type: "trackUnavailable" as const, activityId, reason: "readFailed" as const },
+  { v: 1 as const, type: "unreadableActivities" as const, count: 0 },
+  { v: 1 as const, type: "unreadableActivities" as const, count: 3 },
   { v: 1 as const, type: "activities" as const, items: [] },
   { v: 1 as const, type: "activities" as const, items: [activity] },
   {
@@ -548,6 +550,8 @@ describe("protocol", () => {
       "a track point with a longitude off the globe",
       { v: 1, type: "track", activityId, index: 0, total: 1, points: [{ t: 1, lat: 0, lon: 181 }] },
     ],
+    ["a negative unreadable count", { v: 1, type: "unreadableActivities", count: -1 }],
+    ["a fractional unreadable count", { v: 1, type: "unreadableActivities", count: 1.5 }],
   ])("drops %s from native", (_, msg) => expect(parseNativeToWeb(JSON.stringify(msg))).toBeNull());
 
   it("rejects fingerprints outside exact 64-char hex", () => {
