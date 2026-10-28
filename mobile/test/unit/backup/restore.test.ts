@@ -322,13 +322,86 @@ describe("restore flow", () => {
     expect(r.apply).not.toHaveBeenCalled();
   });
 
-  it("still reports restored when the page never confirms the settings", async () => {
+  it("says the settings were not applied when the page never confirms them", async () => {
     const r = restore({
       settings: {
         apply: async () => {
           throw new Error("the page settings did not arrive");
         },
       },
+    });
+    expect(await r.run()).toBe("settingsNotApplied");
+    expect(await ids(target)).toEqual([activity().id]);
+  });
+
+  it("logs only the class of the settings failure", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const r = restore({
+        settings: {
+          apply: async () => {
+            throw new TypeError("f2m_secret");
+          },
+        },
+      });
+      expect(await r.run()).toBe("settingsNotApplied");
+      expect(warn).toHaveBeenCalledWith("crossfog: restore settings-apply", "TypeError");
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("f2m_secret");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("refuses before copying when the picked file needs more room than is free", async () => {
+    const copy = vi.fn(async () => ({ size: 0, head: "" }));
+    const r = restore({
+      pickFile: async () => ({ uri: "content://downloads/b.db", name: "b.db", size: 1000 }),
+      copyFromUri: copy,
+      scratch: { ...target.scratch, freeBytes: async () => 4999 },
+    });
+    expect(await r.run()).toBe("noSpace");
+    expect(copy).not.toHaveBeenCalled();
+    expect(await ids(target)).toEqual([OTHER_ID]);
+  });
+
+  it("refuses after the copy when a file of unknown size turns out too big, and removes the copy", async () => {
+    const r = restore({
+      // The copy itself has taken its share by now; the rest still needs four times its size.
+      scratch: { ...target.scratch, freeBytes: async () => 4 * 8192 - 1 },
+    });
+    expect(await r.run()).toBe("noSpace");
+    expect(r.askPassphrase).not.toHaveBeenCalled();
+    expect(await ids(target)).toEqual([OTHER_ID]);
+    expect(target.scratch.left()).toEqual([]);
+  });
+
+  it("restores after the copy when exactly four times its size is still free", async () => {
+    const r = restore({ scratch: { ...target.scratch, freeBytes: async () => 4 * 8192 } });
+    expect(await r.run()).toBe("restored");
+  });
+
+  it.each([undefined, 8192])(
+    "refuses when the free space cannot be read (picked size %s)",
+    async (size) => {
+      const copy = vi.fn(async () => ({ size: 8192, head: NOT_PLAIN }));
+      const r = restore({
+        pickFile: async () => ({
+          uri: "content://downloads/b.db",
+          name: "b.db",
+          ...(size === undefined ? {} : { size }),
+        }),
+        copyFromUri: copy,
+        scratch: { ...target.scratch, freeBytes: async () => Number.NaN },
+      });
+      expect(await r.run()).toBe("noSpace");
+      expect(copy).toHaveBeenCalledTimes(size === undefined ? 1 : 0);
+    },
+  );
+
+  it("restores when the free space is exactly enough", async () => {
+    const r = restore({
+      pickFile: async () => ({ uri: "content://downloads/b.db", name: "b.db", size: 8192 }),
+      scratch: { ...target.scratch, freeBytes: async () => 5 * 8192 },
     });
     expect(await r.run()).toBe("restored");
   });

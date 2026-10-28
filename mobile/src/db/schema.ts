@@ -75,12 +75,23 @@ const MIGRATIONS: readonly Migration[] = [
 /** The schema version this build writes; a backup from a higher one is from a newer app. */
 export const SCHEMA_VERSION = MIGRATIONS.length;
 
+/**
+ * The database comes from a newer app, whose schema this build cannot read. It is thrown before any
+ * step runs, so the file is left as it was.
+ */
+export class NewerSchemaError extends Error {
+  constructor(readonly schema: number) {
+    super(`database is from a newer app (schema ${schema}); update the app`);
+    this.name = "NewerSchemaError";
+  }
+}
+
 export async function migrate(db: SqlDriver): Promise<number> {
   return db.transaction(async (tx) => {
     const [row] = await tx.all<{ user_version: number }>("PRAGMA user_version");
     const current = row?.user_version ?? 0;
     if (current > MIGRATIONS.length) {
-      throw new Error(`database is from a newer app (schema ${current}); update the app`);
+      throw new NewerSchemaError(current);
     }
     for (let v = current; v < MIGRATIONS.length; v++) {
       const step = MIGRATIONS[v] as Migration;

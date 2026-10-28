@@ -66,14 +66,25 @@ export async function saveFileAs(
 ): Promise<{ name: string } | null> {
   const uri = await createDocument(name, mime);
   if (uri === null) return null;
-  await copyToUri(path, uri);
+  // A copy whose byte count differs from the file's left a document that will not restore, so it is
+  // reported rather than shown as saved; the document stays where the owner can see and delete it.
+  // A backup is never empty, so a size that is not a positive number means it could not be read.
+  const size = new File(toUri(path)).size;
+  if (!(size > 0) || (await copyToUri(path, uri)) !== size) {
+    throw new Error("the saved copy is incomplete");
+  }
   // The file is written by now; failing to learn its name must not report the backup as failed.
   const shown = await displayNameOf(uri).catch(() => null);
   return { name: shown ?? name };
 }
 
-/** Picks a backup file without copying it: the native side streams it into the cache. */
-export async function pickRestoreFile(): Promise<SourceFile | null> {
+/**
+ * Picks a backup file without copying it; the restore has the native side stream it into the
+ * cache later (`copyFromUri`). `size` is the
+ * provider's `OpenableColumns.SIZE`, absent when it reports none, a negative one or one that is
+ * not finite.
+ */
+export async function pickRestoreFile(): Promise<(SourceFile & { size?: number }) | null> {
   const result = await DocumentPicker.getDocumentAsync({
     type: "*/*",
     copyToCacheDirectory: false,
@@ -81,5 +92,8 @@ export async function pickRestoreFile(): Promise<SourceFile | null> {
   });
   if (result.canceled) return null;
   const asset = result.assets[0];
-  return asset ? { uri: asset.uri, name: asset.name } : null;
+  if (!asset) return null;
+  return typeof asset.size === "number" && Number.isFinite(asset.size) && asset.size >= 0
+    ? { uri: asset.uri, name: asset.name, size: asset.size }
+    : { uri: asset.uri, name: asset.name };
 }

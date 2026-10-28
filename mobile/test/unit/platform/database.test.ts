@@ -49,10 +49,14 @@ vi.mock("../../../src/platform/expoSqliteDriver.js", () => ({
   createExpoSqliteDriver: async ({ name }: { name: string }) => {
     const contents = disk.get(name) ?? "";
     opened.push(contents);
-    return openFile(contents);
+    return Object.assign(await openFile(contents), { contents });
   },
 }));
-vi.mock("../../../src/db/schema.js", () => ({ migrate: async () => 1 }));
+let migrateFile: (contents: string) => Promise<number>;
+vi.mock("../../../src/db/schema.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/db/schema.js")>()),
+  migrate: (db: SqlDriver & { contents: string }) => migrateFile(db.contents),
+}));
 
 const driver = (): SqlDriver => ({
   exec: vi.fn(),
@@ -64,6 +68,7 @@ const driver = (): SqlDriver => ({
 });
 // Built from the module graph the code under test loaded, so its `instanceof` holds.
 let NotADb: typeof NotADatabaseError;
+let NewerSchemaError: typeof import("../../../src/db/schema.js").NewerSchemaError;
 const wrongKey = () => new NotADb("file is not a database");
 
 async function createDatabase() {
@@ -71,11 +76,18 @@ async function createDatabase() {
   // imported modules, as a new process would.
   vi.resetModules();
   ({ NotADatabaseError: NotADb } = await import("../../../src/db/driver.js"));
+  ({ NewerSchemaError } = await import("../../../src/db/schema.js"));
+  return (await import("../../../src/platform/database.js")).createDatabase();
+}
+
+// A later open in the same process after a failed one: unlike createDatabase it keeps the module state.
+async function openAgain() {
   return (await import("../../../src/platform/database.js")).createDatabase();
 }
 
 beforeEach(() => {
   readKey = async () => checkedKeyHex("ab".repeat(32));
+  migrateFile = async () => 1;
   disk.clear();
   opened.length = 0;
 });
@@ -131,5 +143,99 @@ describe("createDatabase with a key that does not open the file", () => {
     await expect(createDatabase()).rejects.toBe(unavailable);
     expect(disk.get(LIVE_DB)).toBe("live");
     expect(resetKeys).not.toHaveBeenCalled();
+  });
+});
+
+describe("createDatabase after a restore that stopped before the replaced copy was dropped", () => {
+  beforeEach(() => {
+    disk.set(LIVE_DB, "restored");
+    disk.set(REPLACED_DB, "old");
+    openFile = async () => driver();
+  });
+
+  it("keeps both files when the key is out of reach, and opens the restored one next time", async () => {
+    const unavailable = new KeyUnavailableError();
+    readKey = async () => {
+      throw unavailable;
+    };
+    await expect(createDatabase()).rejects.toBe(unavailable);
+    expect(disk.get(LIVE_DB)).toBe("restored");
+    expect(disk.get(REPLACED_DB)).toBe("old");
+
+    readKey = async () => checkedKeyHex("ab".repeat(32));
+    expect((await openAgain()).kind).toBe("ready");
+    expect(opened).toEqual(["restored"]);
+    expect(disk.get(LIVE_DB)).toBe("restored");
+    expect(disk.has(REPLACED_DB)).toBe(false);
+  });
+
+  it("keeps both files when the open fails with a disk error", async () => {
+    openFile = async () => {
+      throw new Error("disk I/O error");
+    };
+    await expect(createDatabase()).rejects.toThrow("disk I/O error");
+    expect(disk.get(LIVE_DB)).toBe("restored");
+    expect(disk.get(REPLACED_DB)).toBe("old");
+  });
+
+  it.each([
+    "Error code 13: database or disk is full",
+    "unable to open database file",
+    "out of memory",
+    "attempt to write a readonly database",
+    "SQLITE_PROTOCOL",
+    "database is locked",
+    "an activity vanished while its GPX was deflated",
+    "Cannot read properties of undefined",
+  ])(
+    "keeps both files when the migration fails for a reason that is no proof (%s)",
+    async (message) => {
+      migrateFile = async () => {
+        throw new Error(message);
+      };
+      await expect(createDatabase()).rejects.toThrow(message);
+      expect(disk.get(LIVE_DB)).toBe("restored");
+      expect(disk.get(REPLACED_DB)).toBe("old");
+    },
+  );
+
+  it.each([
+    ["is from a newer app", () => new NewerSchemaError(9)],
+    ["is corrupt", () => new Error("database disk image is malformed")],
+    ["is corrupt (by code)", () => new Error("SQLITE_CORRUPT: database corrupt")],
+  ])("puts the replaced copy back when the restored file %s", async (_, error) => {
+    migrateFile = async (contents) => {
+      if (contents === "restored") throw error();
+      return 1;
+    };
+    expect((await createDatabase()).kind).toBe("ready");
+    expect(opened).toEqual(["restored", "old"]);
+    expect(disk.get(LIVE_DB)).toBe("old");
+    expect(disk.has(REPLACED_DB)).toBe(false);
+  });
+
+  it("puts the replaced copy back when the driver's own open finds the restored file corrupt", async () => {
+    openFile = async (contents) => {
+      if (contents === "restored") throw new Error("database disk image is malformed");
+      return driver();
+    };
+    expect((await createDatabase()).kind).toBe("ready");
+    expect(opened).toEqual(["restored", "old"]);
+    expect(disk.get(LIVE_DB)).toBe("old");
+  });
+
+  it("logs only the error class when it puts the replaced copy back", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      migrateFile = async (contents) => {
+        if (contents === "restored") throw new Error("database disk image is malformed at /data/x");
+        return 1;
+      };
+      await createDatabase();
+      expect(warn).toHaveBeenCalledWith("crossfog: restore put-back", "Error");
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("/data/x");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

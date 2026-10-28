@@ -1,19 +1,36 @@
 import { type AttachedBackup, NotADatabaseError, type OpenBackup } from "../db/driver.js";
+import { warnClass } from "../flows/warn.js";
 import type { FogStore, SourceFile } from "../fog/store.js";
 import { BLOB_IMPORT, BLOB_SETTINGS, classifyBackupFile, isBackupDatabase } from "./format.js";
 import { parseSettings } from "./settings.js";
 import type { PassphraseAnswer, Scratch } from "./types.js";
 
-/** `fogNotReplaced`: the history is the backup's but the saved fog import could not be swapped. */
+/**
+ * `fogNotReplaced`: the history is the backup's but the saved fog import could not be swapped.
+ * `settingsNotApplied`: everything else is the backup's, but the page never confirmed its settings.
+ * `noSpace`: refused before the live database changed; a copy already made is removed.
+ */
 export type RestoreResult =
   | "restored"
   | "fogNotReplaced"
+  | "settingsNotApplied"
   | "cancelled"
   | "wrongPassphrase"
-  | "notABackup";
+  | "notABackup"
+  | "noSpace";
+
+// At its peak a restore holds, beside the live database: the cache copy of the backup (`tmpDb`),
+// the import zip in the cache (`tmpZip`), the fog store's pending copy of it, the database the
+// replacer builds from the backup (blobs still in it), and the second copy its VACUUM writes.
+// Each is at most the backup's size.
+const RESTORE_SPACE_FACTOR = 5;
+
+// NaN and undefined compare false, so a free size that is not a number is refused.
+const roomFor = (free: number, bytes: number) => free >= bytes;
 
 export interface RestoreDeps {
-  pickFile(): Promise<SourceFile | null>;
+  /** `size` is the provider's figure for the document, when it gives one. */
+  pickFile(): Promise<(SourceFile & { size?: number }) | null>;
   /** Streams the picked document into `destPath`; `head` is the file's first 16 bytes as hex. */
   copyFromUri(uri: string, destPath: string): Promise<{ size: number; head: string }>;
   scratch: Scratch;
@@ -59,8 +76,19 @@ export function createRestoreFlow(deps: RestoreDeps): { run(): Promise<RestoreRe
       const tmpDb = scratch.path("restore-backup.db");
       const tmpZip = scratch.path("restore-import.zip");
       let backup: AttachedBackup | null = null;
+      // A size the provider reports lets a restore that cannot fit be refused before the copy fills
+      // the disk; one it does not report is checked once the copy says how big the file is.
+      if (
+        typeof picked.size === "number" &&
+        !roomFor(await scratch.freeBytes(), RESTORE_SPACE_FACTOR * picked.size)
+      ) {
+        return "noSpace";
+      }
       try {
         const { size, head } = await deps.copyFromUri(picked.uri, tmpDb);
+        // The copy has taken its share of the space by now.
+        if (!roomFor(await scratch.freeBytes(), (RESTORE_SPACE_FACTOR - 1) * size))
+          return "noSpace";
         const kind = classifyBackupFile(head, size);
         if (kind === "notABackup") return "notABackup";
 
@@ -101,8 +129,16 @@ export function createRestoreFlow(deps: RestoreDeps): { run(): Promise<RestoreRe
         }
 
         if (settings !== null && parseSettings(settings) !== null) {
-          // The history and the fog are already back; a page that does not answer only keeps its old settings.
-          await deps.settings.apply(settings).catch(() => undefined);
+          // The history and the fog are already back; a page that does not answer only keeps its
+          // old settings, which the owner is told rather than left to find out.
+          const applied = await deps.settings.apply(settings).then(
+            () => true,
+            (e: unknown) => {
+              warnClass("restore", "settings-apply", e);
+              return false;
+            },
+          );
+          if (!applied) return "settingsNotApplied";
         }
         return "restored";
       } finally {
