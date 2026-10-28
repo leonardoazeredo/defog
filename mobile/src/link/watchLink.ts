@@ -16,9 +16,12 @@ const eventSchemas: { [E in keyof WatchLinkEvents]: z.ZodType<WatchLinkEvents[E]
   routeSaved: z.object({ routeId: z.uuid() }),
 };
 
-// The watch lists a saved route under this name; a route has none of its own.
+// The watch lists a saved route under this name; a route has none of its own. Local time, as the
+// day the rider lived it, while createdAt stays UTC on the wire.
 function routeName(route: RouteRecord): string {
-  return `Route ${route.createdAt.slice(0, 10)}`;
+  const d = new Date(route.createdAt);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `Route ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 export function createNativeWatchLink(): WatchLink {
