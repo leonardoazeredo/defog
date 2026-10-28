@@ -260,3 +260,21 @@ describe("upgrading a version 1 database", () => {
     expect(await c.revealIds()).toEqual([ACT]);
   });
 });
+
+describe("an open connection that blocks the upgrade", () => {
+  it("gives the no-op cache instead of waiting for it", async () => {
+    const holder = await new Promise<IDBDatabase>((resolve, reject) => {
+      const req = idb.open("crossfog", 2);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore("copies");
+        req.result.createObjectStore("reveals");
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    const c = await openFogCache(idb, true);
+    await c.putOnly(A, a);
+    expect(await c.get(A)).toBeNull();
+    holder.close();
+  });
+});

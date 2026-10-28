@@ -47,6 +47,24 @@ function openDb(idb: IDBFactory): Promise<IDBDatabase> {
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
+    // Another connection to the old version stays open: the upgrade would wait for it, and `ready` with it,
+    // so the page runs without the cache instead.
+    req.onblocked = () => reject(new Error("blocked"));
+  });
+}
+
+// Every call resolves to `fallback` on a throw, an error or an abort (a full disk aborts at commit and
+// fires onabort, not onerror), so a broken store never stalls the history sync that awaits it.
+function run<T>(
+  fallback: T,
+  body: (done: (value: T) => void, fail: () => void) => void,
+): Promise<T> {
+  return new Promise((resolve) => {
+    try {
+      body(resolve, () => resolve(fallback));
+    } catch {
+      resolve(fallback);
+    }
   });
 }
 
@@ -75,130 +93,99 @@ export async function openFogCache(
 
   return {
     get(fingerprint) {
-      return new Promise((resolve) => {
-        try {
-          const tx = db.transaction(STORE, "readonly");
-          const req = tx.objectStore(STORE).get(fingerprint);
-          req.onsuccess = () => {
-            const raw = req.result as Uint8Array | undefined;
-            if (raw == null) {
-              resolve(null);
-              return;
-            }
-            // Normalize to a detached, plain Uint8Array: fake-indexeddb returns Node.js Buffer
-            // values, which fail strict equality checks (e.g. toEqual in tests) because Buffer
-            // and Uint8Array have different constructors despite Buffer being a subclass.
-            // A plain copy also avoids returning a view over an engine-internal backing store.
-            const copy = new Uint8Array(raw.length);
-            copy.set(raw);
-            resolve(copy);
-          };
-          req.onerror = () => resolve(null);
-        } catch {
-          resolve(null);
-        }
+      return run<Uint8Array | null>(null, (done, fail) => {
+        const req = db.transaction(STORE, "readonly").objectStore(STORE).get(fingerprint);
+        req.onsuccess = () => {
+          const raw = req.result as Uint8Array | undefined;
+          if (raw == null) {
+            done(null);
+            return;
+          }
+          // Normalize to a detached, plain Uint8Array: fake-indexeddb returns Node.js Buffer
+          // values, which fail strict equality checks (e.g. toEqual in tests) because Buffer
+          // and Uint8Array have different constructors despite Buffer being a subclass.
+          // A plain copy also avoids returning a view over an engine-internal backing store.
+          const copy = new Uint8Array(raw.length);
+          copy.set(raw);
+          done(copy);
+        };
+        req.onerror = fail;
       });
     },
 
     putOnly(fingerprint, bytes) {
-      return new Promise((resolve) => {
-        try {
-          const tx = db.transaction(STORE, "readwrite");
-          const store = tx.objectStore(STORE);
-          const clearReq = store.clear();
-          clearReq.onsuccess = () => {
-            store.put(bytes, fingerprint);
-          };
-          tx.oncomplete = () => resolve();
-          tx.onerror = () => resolve();
-        } catch {
-          resolve();
-        }
+      return run<void>(undefined, (done, fail) => {
+        const tx = db.transaction(STORE, "readwrite");
+        const store = tx.objectStore(STORE);
+        const clearReq = store.clear();
+        clearReq.onsuccess = () => {
+          store.put(bytes, fingerprint);
+        };
+        tx.oncomplete = () => done();
+        tx.onerror = fail;
+        tx.onabort = fail;
       });
     },
 
     clearAll() {
-      return new Promise((resolve) => {
-        try {
-          const tx = db.transaction(STORE, "readwrite");
-          tx.objectStore(STORE).clear();
-          tx.oncomplete = () => resolve();
-          tx.onerror = () => resolve();
-        } catch {
-          resolve();
-        }
+      return run<void>(undefined, (done, fail) => {
+        const tx = db.transaction(STORE, "readwrite");
+        tx.objectStore(STORE).clear();
+        tx.oncomplete = () => done();
+        tx.onerror = fail;
+        tx.onabort = fail;
       });
     },
 
     getReveal(activityId) {
-      return new Promise((resolve) => {
-        try {
-          const tx = db.transaction(REVEALS, "readonly");
-          const req = tx.objectStore(REVEALS).get(activityId);
-          req.onsuccess = () => {
-            const raw = req.result as Partial<CachedReveal> | undefined;
-            const { rulesVersion, rulesHash, endedAt, distanceM, cells } = raw ?? {};
-            const whole =
-              typeof rulesVersion === "number" &&
-              typeof rulesHash === "string" &&
-              typeof endedAt === "string" &&
-              typeof distanceM === "number" &&
-              Object.prototype.toString.call(cells) === "[object ArrayBuffer]";
-            resolve(
-              whole
-                ? { rulesVersion, rulesHash, endedAt, distanceM, cells: cells as ArrayBuffer }
-                : null,
-            );
-          };
-          req.onerror = () => resolve(null);
-        } catch {
-          resolve(null);
-        }
+      return run<CachedReveal | null>(null, (done, fail) => {
+        const req = db.transaction(REVEALS, "readonly").objectStore(REVEALS).get(activityId);
+        req.onsuccess = () => {
+          const raw = req.result as Partial<CachedReveal> | undefined;
+          const { rulesVersion, rulesHash, endedAt, distanceM, cells } = raw ?? {};
+          const whole =
+            typeof rulesVersion === "number" &&
+            typeof rulesHash === "string" &&
+            typeof endedAt === "string" &&
+            typeof distanceM === "number" &&
+            Object.prototype.toString.call(cells) === "[object ArrayBuffer]";
+          done(
+            whole
+              ? { rulesVersion, rulesHash, endedAt, distanceM, cells: cells as ArrayBuffer }
+              : null,
+          );
+        };
+        req.onerror = fail;
       });
     },
 
     putReveal(activityId, stamp, cells) {
-      return new Promise((resolve) => {
-        try {
-          const tx = db.transaction(REVEALS, "readwrite");
-          // slice() copies just this view's bytes; `cells.buffer` could be a larger buffer shared with
-          // other data, and the caller may reuse the array.
-          // A transaction that aborts at commit (a full disk) fires onabort, not onerror; without it this
-          // promise never settles and the history sync, which awaits it, stops for the session.
-          tx.objectStore(REVEALS).put({ ...stamp, cells: cells.slice().buffer }, activityId);
-          tx.oncomplete = () => resolve();
-          tx.onerror = () => resolve();
-          tx.onabort = () => resolve();
-        } catch {
-          resolve();
-        }
+      return run<void>(undefined, (done, fail) => {
+        const tx = db.transaction(REVEALS, "readwrite");
+        // slice() copies just this view's bytes; `cells.buffer` could be a larger buffer shared with
+        // other data, and the caller may reuse the array.
+        tx.objectStore(REVEALS).put({ ...stamp, cells: cells.slice().buffer }, activityId);
+        tx.oncomplete = () => done();
+        tx.onerror = fail;
+        tx.onabort = fail;
       });
     },
 
     deleteReveal(activityId) {
-      return new Promise((resolve) => {
-        try {
-          const tx = db.transaction(REVEALS, "readwrite");
-          tx.objectStore(REVEALS).delete(activityId);
-          tx.oncomplete = () => resolve();
-          tx.onerror = () => resolve();
-          tx.onabort = () => resolve();
-        } catch {
-          resolve();
-        }
+      return run<void>(undefined, (done, fail) => {
+        const tx = db.transaction(REVEALS, "readwrite");
+        tx.objectStore(REVEALS).delete(activityId);
+        tx.oncomplete = () => done();
+        tx.onerror = fail;
+        tx.onabort = fail;
       });
     },
 
     revealIds() {
-      return new Promise((resolve) => {
-        try {
-          const tx = db.transaction(REVEALS, "readonly");
-          const req = tx.objectStore(REVEALS).getAllKeys();
-          req.onsuccess = () => resolve((req.result as IDBValidKey[]).map(String));
-          req.onerror = () => resolve([]);
-        } catch {
-          resolve([]);
-        }
+      return run<string[]>([], (done, fail) => {
+        const req = db.transaction(REVEALS, "readonly").objectStore(REVEALS).getAllKeys();
+        req.onsuccess = () => done((req.result as IDBValidKey[]).map(String));
+        req.onerror = fail;
       });
     },
   };

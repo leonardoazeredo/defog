@@ -2,7 +2,7 @@ import type { ActivitySummary, RouteRecord, TrackPoint } from "../src/bridge/pro
 import type { FogCache, RevealStamp } from "./fogCache.js";
 
 // app/src/reveal.js `Reveal.RULES`: a cached reveal is reused only while a hash of all these fields matches.
-interface RevealRules {
+export interface RevealRules {
   version: number;
   maxAccuracyM: number;
   maxGapS: number;
@@ -115,13 +115,19 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
   let chunked = new Set<string>();
   let silent = new Set<string>();
   let wanted = new Set<string>();
+  // The latest list, so a track that lands can be checked against the activity as it is now.
+  let current = new Map<string, ActivitySummary>();
+  // The overlay holds cells of an activity that `revealed` no longer lists. Set before `revealed` changes
+  // and cleared once `rebuild` finished, so a throw in between is repaired by the next list.
+  let overlayStale = false;
 
   // One job at a time: a rebuild must not clear the overlay while a reveal is still on its way in.
   let tail: Promise<void> = Promise.resolve();
-  function enqueue(job: () => Promise<void>): void {
-    tail = tail.then(job).catch(() => {
-      // Fixed text: a message could carry positions, which must not reach logs.
-      console.error("crossfog: updating the fog from the history failed");
+  function enqueue(kind: string, job: () => Promise<void>): void {
+    tail = tail.then(job).catch((err: unknown) => {
+      // Fixed text plus the job kind and error class: a message could carry positions, which must not reach logs.
+      const name = err instanceof Error ? err.name : "unknown";
+      console.error(`crossfog: updating the fog from the history failed (${kind}, ${name})`);
     });
   }
 
@@ -142,17 +148,12 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
   async function cachedCells(item: ActivitySummary): Promise<Int32Array | null> {
     const hit = await cache.getReveal(item.id);
     if (hit == null) return null;
-    const now = stampFor(rules, item);
-    if (
-      hit.rulesVersion !== now.rulesVersion ||
-      hit.rulesHash !== now.rulesHash ||
-      hit.endedAt !== now.endedAt ||
-      hit.distanceM !== now.distanceM
-    ) {
+    if (!sameStamp(hit, stampFor(rules, item))) return null;
+    // a whole number of [cx, cy] pairs, or the entry is damaged; evicted so it is not read (and refused) again
+    if (hit.cells.byteLength % 8 !== 0) {
+      await cache.deleteReveal(item.id);
       return null;
     }
-    // a whole number of [cx, cy] pairs, or the entry is damaged
-    if (hit.cells.byteLength % 8 !== 0) return null;
     return new Int32Array(hit.cells);
   }
 
@@ -193,6 +194,7 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
   async function applyList(items: ActivitySummary[]): Promise<void> {
     wanted = new Set(items.map((item) => item.id));
     const summaries = new Map(items.map((item) => [item.id, item]));
+    current = summaries;
 
     for (const id of silent) {
       if (!chunked.has(id)) forgetRequest(id);
@@ -200,19 +202,18 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
     silent = new Set([...requested.keys()].filter((id) => !chunked.has(id)));
     chunked = new Set();
 
-    let removed = false;
+    // An activity that revealed nothing leaves the overlay as it was.
+    const drop = (id: string) => {
+      if ((revealed.get(id)?.cells.length ?? 0) > 0) overlayStale = true;
+      revealed.delete(id);
+    };
     for (const [id, entry] of [...revealed]) {
       const item = summaries.get(id);
       // the track under this id was replaced: its cells go, and the restore loop below takes it from the reveal cache or asks again
-      if (item != null && !sameStamp(entry.stamp, stampFor(rules, item))) {
-        revealed.delete(id);
-        removed = true;
-      }
+      if (item != null && !sameStamp(entry.stamp, stampFor(rules, item))) drop(id);
     }
     for (const id of [...revealed.keys()]) {
-      if (wanted.has(id)) continue;
-      revealed.delete(id);
-      removed = true;
+      if (!wanted.has(id)) drop(id);
     }
     for (const id of [...requested.keys()]) {
       if (!wanted.has(id)) requested.delete(id);
@@ -241,8 +242,9 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
       restored.push(cells);
     }
 
-    if (removed) {
+    if (overlayStale) {
       rebuild();
+      overlayStale = false;
       page.fogChanged();
     } else if (restored.length > 0) {
       // only the ones restored now: the others' cells are in the overlay already
@@ -275,15 +277,21 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
     if (stamp == null) return;
     requested.delete(activityId);
 
+    // The list replaced the activity while this track was on its way: it is the old one, so it is neither
+    // revealed nor cached, and the new one is asked for.
+    const item = current.get(activityId);
+    if (item != null && !sameStamp(stamp, stampFor(rules, item))) {
+      requested.set(activityId, stampFor(rules, item));
+      pageApi.needTrack(activityId);
+      return;
+    }
+
     const cells = page.reveal.reveal(
       track.map((p) => ({ t: p.t, lat: p.lat, lon: p.lon, accuracy: p.accuracy })),
       rules,
     );
+    // No `wanted` check after this await: jobs are serial, so no list can change it meanwhile.
     await cache.putReveal(activityId, stamp, cells);
-    if (!wanted.has(activityId)) {
-      await cache.deleteReveal(activityId);
-      return;
-    }
     revealed.set(activityId, { cells, stamp });
     if (page.fogMap.addCells(cells) > 0) page.fogChanged();
   }
@@ -294,7 +302,7 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
       for (const id of [...panelPartial.keys()]) if (!listed.has(id)) panelPartial.delete(id);
       // Straight to the panel: it should not wait behind the cache.
       showInPanel(() => page.history?.setActivities(items));
-      enqueue(() => applyList(items));
+      enqueue("list", () => applyList(items));
     },
     onTrack: (chunk) => {
       // A bad chunk for the panel must not keep the reveal from getting it.
@@ -303,13 +311,13 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
       } catch (e) {
         console.error("[history] panel track join failed", e instanceof Error ? e.name : typeof e);
       }
-      enqueue(() => applyTrack(chunk));
+      enqueue("track", () => applyTrack(chunk));
     },
     // Not asked here: an immediate retry of a failing read would loop, and a notFound id leaves the next list anyway.
     // The panel's copy goes now, as it was joined now: a queued forget would also wipe the chunks of a newer answer.
     onTrackUnavailable: ({ activityId }) => {
       panelPartial.delete(activityId);
-      enqueue(async () => forgetRequest(activityId));
+      enqueue("unavailable", async () => forgetRequest(activityId));
     },
     settled: () => tail,
   };
