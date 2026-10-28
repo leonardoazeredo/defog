@@ -80,7 +80,7 @@
     this.oneWay = new Set();     // one-way along the way's node order (incl. roundabouts)
     this.reverseWay = new Set(); // one-way against it (oneway=-1)
     this.bikeBoth = new Set();   // one-way streets bikes may still ride both ways (contraflow lanes)
-    this.motorway = new Set();   // motorways and their links: no mode takes them, and no fetch lists them (the list stays empty)
+    this.motorway = new Set();   // motorways and their links: no mode may take them
     this.ways = [];              // raw {id,nodes,geometry}: shared node ids give the
                                  // route planner its graph connectivity for free
     this.segCount = 0;
