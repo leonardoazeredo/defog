@@ -156,11 +156,10 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
     return new Int32Array(hit.cells);
   }
 
-  // Forgets the request and any half-received chunks, so the next list that wants the id and has no cells asks again.
+  // Forgets the request and the reveal's half-received chunks (the panel keeps its own), so the next list that wants the id and has no cells asks again.
   function forgetRequest(id: string): void {
     requested.delete(id);
     partial.delete(id);
-    panelPartial.delete(id);
   }
 
   // Runs outside the queue, so the opened card gets its track as soon as the last chunk is in.
@@ -298,11 +297,20 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
       enqueue(() => applyList(items));
     },
     onTrack: (chunk) => {
-      joinForPanel(chunk);
+      // A bad chunk for the panel must not keep the reveal from getting it.
+      try {
+        joinForPanel(chunk);
+      } catch (e) {
+        console.error("[history] panel track join failed", e instanceof Error ? e.name : typeof e);
+      }
       enqueue(() => applyTrack(chunk));
     },
     // Not asked here: an immediate retry of a failing read would loop, and a notFound id leaves the next list anyway.
-    onTrackUnavailable: ({ activityId }) => enqueue(async () => forgetRequest(activityId)),
+    // The panel's copy goes now, as it was joined now: a queued forget would also wipe the chunks of a newer answer.
+    onTrackUnavailable: ({ activityId }) => {
+      panelPartial.delete(activityId);
+      enqueue(async () => forgetRequest(activityId));
+    },
     settled: () => tail,
   };
 }
