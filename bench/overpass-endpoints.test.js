@@ -384,14 +384,14 @@ const realFetch = global.fetch;
     const e = await rejection(Overpass.post("data=x"));
     assert.equal(e.reason, "server", "every endpoint answered something that is no answer");
   }
-  { // 15d. the parser's SyntaxError quotes the body; none of that text reaches the error a caller reads
+  { // 15c. the parser's SyntaxError quotes the body; none of that text reaches the error a caller reads
     reset({ key: null });
     global.fetch = routed({ [M]: () => Promise.resolve({ ok: true, status: 200, headers: headers(), json: async () => { throw new SyntaxError("Unexpected token '<', \"<html>PORTAL-TEXT\" is not valid JSON"); } }) });
     const e = await rejection(Overpass.post("data=x"));
     assert.equal(e.reason, "server");
     assert.ok(!/PORTAL|html/.test(e.message + e.cause.message), e.message);
   }
-  { // 15c. every post throws its own error: a held endpoint's stored error is the cause, so a second post
+  { // 15d. every post throws its own error: a held endpoint's stored error is the cause, so a second post
     //      setting its reason and retryAt cannot change what the first one's caller reads later
     reset({ key: null });
     global.fetch = routed({ [M]: status(429) });
@@ -695,16 +695,22 @@ const realFetch = global.fetch;
     // stored that choice, stored nothing (the default) or holds a name that no longer exists
     // ("coffee"), which reads as the default; a stored choice of overpass-api.de stays
     const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "app", "src", "main.js"), "utf8");
-    const from = src.indexOf("  function setOverpassOrder"), to = src.indexOf("\n", src.indexOf('addEventListener("crossfog-nextgis-key"'));
+    const from = src.indexOf('  const ORDER_KEY = "f2m_overpassOrder"'), to = src.indexOf("\n", src.indexOf('$("overpass").addEventListener("change"'));
     assert.ok(from >= 0 && to > from,
-      "main.js still defines setOverpassOrder and registers the crossfog-nextgis-key listener, so the slice under test exists");
+      "main.js still defines ORDER_KEY and the Street data change listener, so the slice under test exists");
     for (const [stored, firstWithKey] of [["nextgis", N], [null, N], ["coffee", N], ["main", M]]) {
-      const els = { overpass: { value: "" }, overpassNextgis: { hidden: false } }, listeners = {};
+      const els = { overpass: { value: "", addEventListener: (type, fn) => { els.onChange = fn; } }, overpassNextgis: { hidden: false } }, listeners = {};
       const win = { addEventListener: (type, fn) => { listeners[type] = fn; } };
-      const storage = { getItem: (k) => (k === "f2m_overpassOrder" ? stored : null), setItem: () => assert.fail("nothing chosen") };
+      const removed = [], set = [];
+      const storage = {
+        getItem: (k) => (k === "f2m_overpassOrder" ? stored : null),
+        setItem: (k, v) => set.push([k, v]), removeItem: (k) => removed.push(k)
+      };
       reset({ key: null, order: null });
-      new Function("$", "Overpass", "localStorage", "window", "ORDER_KEY", src.slice(from, to))(
-        (id) => els[id], Overpass, storage, win, "f2m_overpassOrder");
+      new Function("$", "Overpass", "localStorage", "window", src.slice(from, to))(
+        (id) => els[id], Overpass, storage, win);
+      assert.deepEqual(removed, ["f2m_overpass"], "the old setting is dropped on load");
+      assert.deepEqual(set, [], "nothing written on load: only an explicit choice is stored");
       assert.equal(els.overpassNextgis.hidden, true, "no key: NextGIS not offered");
       assert.equal(els.overpass.value, "main");
       await Overpass.post("data=x");
@@ -716,7 +722,121 @@ const realFetch = global.fetch;
       assert.equal(els.overpass.value, firstWithKey === N ? "nextgis" : "main", "the choice shown: " + stored);
       await Overpass.post("data=x");
       assert.deepEqual(calls, [firstWithKey], "asked first with the key: " + stored);
+      els.onChange({ target: { value: "main" } });
+      assert.deepEqual(set, [["f2m_overpassOrder", "main"]], "an explicit choice is stored");
     }
+  }
+  { // 19. a 401 or 403 from NextGIS (a revoked or mistyped key) holds it an hour and is logged once per
+    //     endpoint name with status and name only: never the URL, which holds the key
+    for (const code of [401, 403]) {
+      reset({ order: null });
+      const warned = [], realWarn = console.warn;
+      console.warn = (...a) => warned.push(a);
+      try {
+        global.fetch = routed({ [N]: status(code), [M]: answer });
+        assert.deepEqual(await Overpass.post("data=x"), { from: M });
+        assert.deepEqual(calls, [N, M]);
+        calls = []; t = start + 3_599_000;
+        await Overpass.post("data=x");
+        assert.deepEqual(calls, [M], code + ": NextGIS not asked again within the hour");
+        calls = []; t = start + 3_600_001;
+        await Overpass.post("data=x");
+        assert.deepEqual(calls, [N, M], code + ": asked again after the hour (rejected again, so on to the next)");
+        await Overpass.post("data=x");
+        assert.deepEqual(warned, [["[overpass] endpoint answered", "nextgis", code]], "one line per endpoint name, not per request");
+        const text = JSON.stringify(warned);
+        for (const secret of [KEY, encodeURIComponent(KEY), "nextgis.com", "http"]) assert.ok(!text.includes(secret), "the log holds no URL or key");
+        reset({ order: null });
+        global.fetch = routed({ [N]: status(code), [M]: status(500) });
+        const e = await rejection(Overpass.post("data=x"));
+        assert.equal(e.reason, "server");
+        assert.equal(e.retryAt, undefined, "overpass-api.de is not held");
+      } finally { console.warn = realWarn; }
+    }
+    // overpass-api.de alone: its 403 is no credential problem, so it is not held
+    reset({ key: null });
+    global.fetch = routed({ [M]: status(403) });
+    await rejection(Overpass.post("data=x"));
+    calls = [];
+    await rejection(Overpass.post("data=x"));
+    assert.deepEqual(calls, [M], "overpass-api.de is asked again at once");
+  }
+  { // 20. a browser that reports offline wins when no endpoint was asked in this post: every one is
+    //     held from an earlier post, so the person is not told the server is slow
+    for (const code of [429, 406]) {
+      reset({ key: null });
+      global.fetch = routed({ [M]: status(code) });
+      await rejection(Overpass.post("data=x"));
+      Object.defineProperty(global.navigator, "onLine", { value: false, configurable: true });
+      try {
+        calls = [];
+        const e = await rejection(Overpass.post("data=x"));
+        assert.deepEqual(calls, [], "held: nothing sent");
+        assert.equal(e.reason, "offline");
+        assert.ok(e.retryAt > t, "the hold's end is still reported");
+      } finally { delete global.navigator.onLine; }
+    }
+  }
+  { // 21. cap() is the cap of the first endpoint that is not held: NextGIS's 4, overpass-api.de's 2 while
+    //     NextGIS is held, NextGIS's again when the hold ends or when every endpoint is held
+    reset({ order: null });
+    assert.equal(Overpass.cap(), 4);
+    global.fetch = routed({ [N]: status(429), [M]: answer });
+    await Overpass.post("data=x");
+    assert.equal(Overpass.cap(), 2);
+    t += 30_001;
+    assert.equal(Overpass.cap(), 4);
+    global.fetch = routed({ [N]: status(429), [M]: status(429) });
+    await rejection(Overpass.post("data=x"));
+    assert.equal(Overpass.cap(), 4, "everything held: the first endpoint's");
+  }
+  { // 22. a body cut off by our own abort can make json() reject with a SyntaxError on the cut text: a
+    //     stall (30 s hold, ten minutes from the third), not a non-JSON 200 that moves on without a hold
+    reset({ key: null });
+    const cutOff = (url, opts) => Promise.resolve({
+      ok: true, status: 200, headers: headers(),
+      json: () => new Promise((_, reject) => opts.signal.addEventListener("abort", () => reject(new SyntaxError("Unexpected end of JSON input"))))
+    });
+    global.fetch = routed({ [M]: cutOff });
+    for (let i = 1; i <= 3; i++) {
+      const e = await rejection(played(Overpass.post("data=x")));
+      assert.equal(e.reason, "stalled", "stall " + i);
+      const hold = e.retryAt - t;
+      assert.ok(i < 3 ? hold <= 30_000 : hold > 300_000, "hold after stall " + i + ": " + hold);
+      t = e.retryAt + 1;
+    }
+  }
+  { // 23. a 406 with Retry-After: 7200 holds two hours, not one
+    reset({ key: null });
+    replies[M] = [{ status: 406, headers: { "retry-after": "7200" } }];
+    const e = await rejection(Overpass.post("data=x"));
+    assert.equal(e.reason, "blocked");
+    assert.equal(e.retryAt - start, 7_200_000);
+    calls = []; t = start + 3_700_000;
+    await rejection(Overpass.post("data=x"));
+    assert.deepEqual(calls, [], "still blocked after the default hour");
+  }
+  { // 24. a failed fetch between two stalls leaves the count alone: only an answer that ends resets it
+    reset({ key: null });
+    const table = { [M]: silent };
+    global.fetch = routed(table);
+    await rejection(played(Overpass.post("data=x")));
+    t += 30_001; table[M] = unreachable;
+    await rejection(Overpass.post("data=x"));
+    t += 30_001; table[M] = silent;
+    await rejection(played(Overpass.post("data=x")));
+    t += 30_001;
+    const e = await rejection(played(Overpass.post("data=x")));
+    assert.ok(e.retryAt - t > 300_000, "the third stall, though a failed fetch came between: ten minutes");
+  }
+  { // 25. a 200 whose JSON carries an Overpass remark resolves: the answer is the caller's to read
+    //     (StreetIndex words a remark as a server failure), the client holds nothing for it
+    reset({ key: null });
+    replies[M] = [{ status: 200, body: { remark: "runtime error: Query timed out", elements: [] } }];
+    assert.equal((await Overpass.post("data=x")).remark, "runtime error: Query timed out");
+    calls = [];
+    await Overpass.post("data=x");
+    assert.deepEqual(calls, [M]);
   }
   delete global.crossfogNextgisKey;
   global.fetch = realFetch;
