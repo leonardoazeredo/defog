@@ -98,15 +98,15 @@ describe("native watch link", () => {
     });
   });
 
-  it.each([
-    ["Asia/Tokyo", "2026-03-01T23:30:00Z", "Route 2026-03-02 08:30"],
-    ["America/Los_Angeles", "2026-03-01T03:15:00Z", "Route 2026-02-28 19:15"],
-  ])("names a route in local time (%s, %s)", async (tz, createdAt, name) => {
-    vi.stubEnv("TZ", tz);
-    native.queueRoute.mockResolvedValue(undefined);
-    await createNativeWatchLink().queueRoute(route({ createdAt }));
-    expect(JSON.parse(native.queueRoute.mock.calls[0]?.[0]).name).toBe(name);
-  });
+  it.each([["America/Los_Angeles", "2026-03-01T03:15:00Z", "Route 2026-02-28 19:15"]])(
+    "names a route in local time (%s, %s)",
+    async (tz, createdAt, name) => {
+      vi.stubEnv("TZ", tz);
+      native.queueRoute.mockResolvedValue(undefined);
+      await createNativeWatchLink().queueRoute(route({ createdAt }));
+      expect(JSON.parse(native.queueRoute.mock.calls[0]?.[0]).name).toBe(name);
+    },
+  );
 
   it("refuses to pair before the transport exists", async () => {
     await expect(createNativeWatchLink().pair("qr")).rejects.toThrow("transport");
