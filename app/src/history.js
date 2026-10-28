@@ -5,6 +5,17 @@
   const MODE_LABELS = { trekking: "Mountain bike", fastbike: "Road bike", "hiking-mountain": "Walk", walk: "Walk", "car-fast": "Car", shortest: "Direct line" };
   const MIN_PACE_M = 100; // a pace over less ground than this is noise
   const CONFIRM_MS = 5000; // how long the first tap on Delete stays armed
+  // How long a track or a route send waits for the phone's first answer. Both are a local read or write,
+  // well under a second; a needTrack the phone drops as malformed, a dropped sendRoute whose id is no UUID,
+  // or a lost message gets no answer at all.
+  const REPLY_TIMEOUT_MS = 15000;
+  const TRACK_NOTES = {
+    notFound: "This activity is no longer on the phone.",
+    readFailed: "The phone could not read this track.",
+    timeout: "The phone did not send the track. Go back and open the activity again.",
+    offline: "This page is not running in the app, so the track cannot be loaded."
+  };
+  const DELETE_OFFLINE = "This page is not running in the app, so nothing was deleted.";
 
   // ----- formatting (pure) -------------------------------------------------------
   function formatDuration(seconds) {
@@ -57,15 +68,17 @@
   }
 
   // ----- the panel -----------------------------------------------------------------
-  // opts: { root, onNeedTrack(id), onDelete(id), onShown(), map, getUnits() }; onShown runs after a track is drawn, so the page can drop the bottom sheet that would hide it
+  // opts: { root, onNeedTrack(id), onDelete(id), onShown(), map, getUnits() }; onShown runs after a track is drawn, so the page can drop the bottom sheet that would hide it.
+  // onNeedTrack and onDelete return false when there is no phone to ask; anything else counts as asked.
   function create(opts) {
     const root = opts.root, doc = root.ownerDocument, map = opts.map;
     const listEl = root.querySelector("#historyList"), detailEl = root.querySelector("#historyDetail"), emptyEl = root.querySelector("#historyEmpty");
     const units = () => (opts.getUnits ? opts.getUnits() : "metric");
     let items = [];
-    let open = null; // { id, points, route } while a card is open
+    let open = null; // { id, points, route, trackNote, deleteNote } while a card is open
     let overlay = null; // the lines "Show on map" drew
     let armTimer = null;
+    let trackTimer = null;
 
     // Text only, never markup: the travel mode and every figure come from the watch.
     function el(tag, className, text) {
@@ -98,9 +111,11 @@
       overlay = null;
     }
     function disarm() { if (armTimer) { global.clearTimeout(armTimer); armTimer = null; } }
+    function stopWaiting() { if (trackTimer) { global.clearTimeout(trackTimer); trackTimer = null; } }
 
     function closeDetail() {
       disarm();
+      stopWaiting();
       clearOverlay();
       open = null;
       render();
@@ -147,14 +162,18 @@
           armTimer = global.setTimeout(() => { armTimer = null; delBtn.textContent = "Delete"; delBtn.classList.remove("armed"); }, CONFIRM_MS);
           return;
         }
-        const id = open.id;
+        if (opts.onDelete(open.id) === false) {
+          open.deleteNote = DELETE_OFFLINE;
+          renderDetail();
+          return;
+        }
         closeDetail();
-        opts.onDelete(id);
       });
       row.appendChild(delBtn);
       card.appendChild(row);
 
-      if (open.points == null) card.appendChild(el("div", "muted", "Loading the track…"));
+      if (open.deleteNote) card.appendChild(el("div", "muted", open.deleteNote));
+      if (open.points == null) card.appendChild(el("div", "muted", open.trackNote || "Loading the track…"));
       else if (!ready) card.appendChild(el("div", "muted", "This activity recorded no track points."));
       detailEl.appendChild(card);
     }
@@ -180,27 +199,49 @@
       });
     }
 
+    // Replaces "Loading the track…" with why no track is coming; ignored once points arrived or the card moved on.
+    function noteTrack(activityId, note) {
+      if (!open || open.id !== activityId || open.points != null) return;
+      stopWaiting();
+      open.trackNote = note;
+      renderDetail();
+    }
+
     function openCard(id) {
       disarm();
+      stopWaiting();
       clearOverlay();
-      open = { id, points: null, route: null };
+      open = { id, points: null, route: null, trackNote: null, deleteNote: null };
       render();
-      opts.onNeedTrack(id);
+      let asked;
+      try {
+        asked = opts.onNeedTrack(id);
+      } catch (e) {
+        console.error("crossfog: could not ask the phone for a track", e instanceof Error ? e.name : typeof e);
+        noteTrack(id, TRACK_NOTES.timeout);
+        return;
+      }
+      if (asked === false) { noteTrack(id, TRACK_NOTES.offline); return; }
+      trackTimer = global.setTimeout(() => { trackTimer = null; noteTrack(id, TRACK_NOTES.timeout); }, REPLY_TIMEOUT_MS);
     }
 
     return {
       // Newest first, whatever order the phone sends.
       setActivities(list) {
         items = list.slice().sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
-        if (open && !items.some((x) => x.id === open.id)) { disarm(); clearOverlay(); open = null; }
+        if (open && !items.some((x) => x.id === open.id)) { disarm(); stopWaiting(); clearOverlay(); open = null; }
         render();
       },
+      // A track that comes after the timeout still shows.
       setTrack(activityId, points, route) {
         if (!open || open.id !== activityId) return;
+        stopWaiting();
         open.points = points;
         open.route = route || null;
         renderDetail();
       },
+      // The phone's answer to a needTrack it has no track for; reason is notFound or readFailed.
+      trackUnavailable(activityId, reason) { noteTrack(activityId, TRACK_NOTES[reason] || TRACK_NOTES.readFailed); },
       // Card text formats distances and paces in the chosen units, so a toggle needs a re-render.
       refresh() { render(); },
     };
@@ -217,6 +258,7 @@
     let sent = null; // { id, gpx } of the record last sent
     let state = null; // waiting | onWatch | failed, for `sent`
     let paired = null;
+    let replyTimer = null;
 
     // A record that cannot be built (no crypto, a bad route) leaves the button off; it must not break the route UI that called update().
     function record() {
@@ -234,7 +276,19 @@
       if (!rec || !opts.canSend()) return;
       sent = { id: rec.id, gpx: rec.gpx };
       state = null;
-      opts.send(rec);
+      if (replyTimer) global.clearTimeout(replyTimer);
+      replyTimer = null;
+      try {
+        opts.send(rec);
+        // No answer at all means the phone never took the route; a "waiting" answer is not timed out, as the watch may connect much later.
+        replyTimer = global.setTimeout(() => {
+          replyTimer = null;
+          if (state === null && currentIs(record())) { state = "failed"; paint(); }
+        }, REPLY_TIMEOUT_MS);
+      } catch (e) {
+        console.error("crossfog: could not hand the route to the phone", e instanceof Error ? e.name : typeof e);
+        state = "failed";
+      }
       paint();
     });
 
@@ -263,8 +317,8 @@
     const doc = opts.doc, phone = opts.phone;
     const panel = create({
       root: doc.getElementById("historyPane"), map: opts.map, getUnits: opts.getUnits, onShown: opts.onShown,
-      onNeedTrack: (id) => { const p = phone(); if (p) p.needTrack(id); },
-      onDelete: (id) => { const p = phone(); if (p) p.deleteActivity(id); }
+      onNeedTrack: (id) => { const p = phone(); if (!p) return false; p.needTrack(id); return true; },
+      onDelete: (id) => { const p = phone(); if (!p) return false; p.deleteActivity(id); return true; }
     });
     const send = createSendControl({
       button: doc.getElementById("sendWatch"), chip: doc.getElementById("sendStatus"),
@@ -275,5 +329,5 @@
     return { panel, send };
   }
 
-  global.HistoryPanel = { install, create, createSendControl, formatDuration, formatDistance, paceSecondsPerKm, formatPace, modeLabel, formatStart, statLines };
+  global.HistoryPanel = { REPLY_TIMEOUT_MS, install, create, createSendControl, formatDuration, formatDistance, paceSecondsPerKm, formatPace, modeLabel, formatStart, statLines };
 })(window);

@@ -98,6 +98,14 @@ it("hands a track message to the track listener without the envelope", () => {
   expect(fn).toHaveBeenCalledExactlyOnceWith(trackPayload);
 });
 
+it("hands a trackUnavailable message to its listener without the envelope", () => {
+  const { api, crossfog } = install();
+  const fn = vi.fn();
+  crossfog.on("trackUnavailable", fn);
+  api.dispatch({ v: 1, type: "trackUnavailable", activityId, reason: "notFound" });
+  expect(fn).toHaveBeenCalledExactlyOnceWith({ activityId, reason: "notFound" });
+});
+
 it("routes each native type only to its own listeners", () => {
   const { api, crossfog } = install();
   const heard: string[] = [];

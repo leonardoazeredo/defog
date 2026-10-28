@@ -201,6 +201,8 @@ const nativeSamples = [
     why: "watch unreachable",
   },
   { v: 1 as const, type: "linkStatus" as const, paired: true, reachable: false },
+  { v: 1 as const, type: "trackUnavailable" as const, activityId, reason: "notFound" as const },
+  { v: 1 as const, type: "trackUnavailable" as const, activityId, reason: "readFailed" as const },
   { v: 1 as const, type: "activities" as const, items: [] },
   { v: 1 as const, type: "activities" as const, items: [activity] },
   {

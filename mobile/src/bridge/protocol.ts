@@ -177,6 +177,13 @@ const nativeToWebSchema = z.union([
   }),
   z.object({ v: z.literal(1), type: z.literal("needSettings") }),
   z.object({ v: z.literal(1), type: z.literal("applySettings"), json: settingsJson }),
+  // The answer to a needTrack for an activity that is gone or cannot be read, so the detail stops waiting.
+  z.object({
+    v: z.literal(1),
+    type: z.literal("trackUnavailable"),
+    activityId: uuid,
+    reason: z.enum(["notFound", "readFailed"]),
+  }),
   z.object({ v: z.literal(1), type: z.literal("activities"), items: z.array(activitySummary) }),
   z
     .object({
@@ -204,13 +211,68 @@ export function encode(msg: WebToNative | NativeToWeb): string {
   return JSON.stringify(msg);
 }
 
-export function parseWebToNative(raw: string): WebToNative | null {
-  try {
-    const result = webToNativeSchema.safeParse(JSON.parse(raw));
-    return result.success ? result.data : null;
-  } catch {
-    return null;
+export interface DroppedMessage {
+  /** The message's `type` when the app knows it, else null: an unknown one is any text the page wrote. */
+  type: WebToNative["type"] | null;
+  /** Where it broke the schema, as dotted key paths; never a value. */
+  paths: string[];
+  /** A dropped sendRoute's route id, when that id is itself valid, so the page can hear it failed. */
+  routeId: string | null;
+}
+
+export type WebToNativeParse = { ok: true; msg: WebToNative } | { ok: false; drop: DroppedMessage };
+
+const MAX_DROP_PATHS = 10;
+const NOTHING_TO_NAME: DroppedMessage = { type: null, paths: [], routeId: null };
+
+function issuePaths(issues: readonly z.core.$ZodIssue[]): string[] {
+  const paths = issues.map((i) => (i.path.length > 0 ? i.path.map(String).join(".") : "(message)"));
+  return [...new Set(paths)].slice(0, MAX_DROP_PATHS);
+}
+
+const namesType = (issues: readonly z.core.$ZodIssue[]) => issues.some((i) => i.path[0] === "type");
+
+// Zod hands back the issues of the one branch that got past its literals, or else an invalid_union
+// with an issue list per branch: then a branch whose `type` matched is the message's own, and the one
+// with the fewest issues is the closest it came, as one type can have several branches.
+function describeDrop(data: unknown, error: z.ZodError): DroppedMessage {
+  if (typeof data !== "object" || data === null) return { ...NOTHING_TO_NAME };
+  let own: readonly z.core.$ZodIssue[] | null = null;
+  const [first] = error.issues;
+  if (error.issues.length === 1 && first?.code === "invalid_union" && first.path.length === 0) {
+    for (const branch of first.errors) {
+      if (namesType(branch)) continue;
+      if (own === null || branch.length < own.length) own = branch;
+    }
+  } else if (!namesType(error.issues)) {
+    own = error.issues;
   }
+  if (own === null) return { ...NOTHING_TO_NAME };
+  const obj = data as { type: WebToNative["type"]; route?: unknown };
+  const route = obj.type === "sendRoute" ? obj.route : null;
+  const id =
+    typeof route === "object" && route !== null
+      ? uuid.safeParse((route as { id?: unknown }).id)
+      : null;
+  return { type: obj.type, paths: issuePaths(own), routeId: id?.success ? id.data : null };
+}
+
+export function inspectWebToNative(raw: string): WebToNativeParse {
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return { ok: false, drop: { ...NOTHING_TO_NAME } };
+  }
+  const result = webToNativeSchema.safeParse(data);
+  return result.success
+    ? { ok: true, msg: result.data }
+    : { ok: false, drop: describeDrop(data, result.error) };
+}
+
+export function parseWebToNative(raw: string): WebToNative | null {
+  const result = inspectWebToNative(raw);
+  return result.ok ? result.msg : null;
 }
 
 export function parseNativeToWeb(raw: string): NativeToWeb | null {

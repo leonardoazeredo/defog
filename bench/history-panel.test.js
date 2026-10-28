@@ -1,4 +1,5 @@
-// HistoryPanel's pure helpers: how an activity summary reads on a card; no DOM, no network.
+// HistoryPanel's pure helpers (how an activity summary reads on a card) and the Send button's chip,
+// over a stand-in button; no DOM, no network.
 //   node bench/history-panel.test.js
 "use strict";
 const assert = require("node:assert/strict");
@@ -72,6 +73,47 @@ const { formatDuration, formatDistance, paceSecondsPerKm, formatPace, modeLabel,
 
   const onlyAvg = { ...base, stats: { durationS: 1800, distanceM: 5000, heartRateAvg: 98 } };
   assert.ok(statLines(onlyAvg, "metric").includes("♥ 98 avg"), "heart rate with only an average");
+}
+
+// Send to watch: the chip never stays blank after a tap the phone did not take or never answered
+{
+  const { createSendControl, REPLY_TIMEOUT_MS } = global.HistoryPanel;
+  assert.ok(REPLY_TIMEOUT_MS > 0);
+  const timers = [];
+  const realSetTimeout = global.setTimeout, realClearTimeout = global.clearTimeout, realError = console.error;
+  global.setTimeout = (fn, ms) => { timers.push({ fn, ms, live: true }); return timers.length; };
+  global.clearTimeout = (h) => { if (timers[h - 1]) timers[h - 1].live = false; };
+  const fire = () => timers.splice(0).forEach((t) => { if (t.live) t.fn(); });
+  function control(send) {
+    let onClick = null;
+    const btn = { disabled: true, addEventListener: (_, fn) => { onClick = fn; } }, chip = { textContent: "" };
+    const rec = { id: "r1", gpx: "<gpx/>" };
+    const ctl = createSendControl({ button: btn, chip, getRecord: () => rec, canSend: () => true, send });
+    return { ctl, chip, tap: () => onClick() };
+  }
+  try {
+    const errors = [];
+    console.error = (...a) => errors.push(a.join(" "));
+    const thrown = control(() => { throw new TypeError("bridge gone"); });
+    thrown.tap();
+    assert.equal(thrown.chip.textContent, "Could not send", "a send that throws reads as failed");
+    assert.ok(errors.some((e) => /TypeError/.test(e)), "the error class is logged");
+
+    const silent = control(() => {});
+    silent.tap();
+    assert.equal(silent.chip.textContent, "");
+    assert.ok(timers.some((t) => t.live && t.ms === REPLY_TIMEOUT_MS), "the tap starts the reply timeout");
+    fire();
+    assert.equal(silent.chip.textContent, "Could not send", "no answer from the phone reads as failed");
+
+    const answered = control(() => {});
+    answered.tap();
+    answered.ctl.routeStatus({ routeId: "r1", state: "waiting" });
+    fire();
+    assert.equal(answered.chip.textContent, "Waiting for watch", "an answered send is never timed out");
+  } finally {
+    global.setTimeout = realSetTimeout; global.clearTimeout = realClearTimeout; console.error = realError;
+  }
 }
 
 console.log("history-panel.test.js ok");
