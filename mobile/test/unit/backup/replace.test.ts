@@ -290,6 +290,15 @@ describe("database replacer", () => {
     expect(kept).toEqual([]);
   });
 
+  it("leaves no freed pages of the backup's blobs in the restored file", async () => {
+    const backup = await openedBackup();
+    await backup.run("UPDATE backup.blobs SET bytes = ? WHERE kind = 'import'", [
+      new Uint8Array(256 * 1024),
+    ]);
+    await createDatabaseReplacer(target.replacerDeps())(backup);
+    expect(await target.db.all("PRAGMA freelist_count")).toEqual([{ freelist_count: 0 }]);
+  });
+
   it("exports with the raw device key", async () => {
     const seen: string[] = [];
     const backup = await openedBackup();

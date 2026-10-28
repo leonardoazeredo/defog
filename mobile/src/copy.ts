@@ -29,6 +29,8 @@ export const COPY = {
   restoreWrongPassphrase: "Wrong passphrase, or not a backup. Nothing changed.",
   restoreNotABackup: "Not a backup this app can read. Nothing changed.",
   restoreFogNotReplaced: "History restored, but the saved fog is unchanged. Import it again.",
+  restoreSettingsNotApplied: "Restored, but the page settings were not applied.",
+  restoreNoSpace: "Not enough free space to restore (about 5 times the backup). Nothing changed.",
   restoreFailed: "The restore didn't finish. Try again.",
   restoreRunning: "A restore is running. Try again when it is done.",
   restoreBusy: "Wait for the import to finish, then try again.",

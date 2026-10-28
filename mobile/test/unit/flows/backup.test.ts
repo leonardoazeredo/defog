@@ -65,6 +65,8 @@ describe("backup flows", () => {
     ["wrongPassphrase", false, COPY.restoreWrongPassphrase],
     ["notABackup", false, COPY.restoreNotABackup],
     ["fogNotReplaced", true, COPY.restoreFogNotReplaced],
+    ["settingsNotApplied", true, COPY.restoreSettingsNotApplied],
+    ["noSpace", false, COPY.restoreNoSpace],
   ] as const)("restore %s reports %s", async (result, reload, text) => {
     const notify = vi.fn();
     const flows = createBackupFlows({

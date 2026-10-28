@@ -61,6 +61,12 @@ export function createBackupFlows(deps: BackupFlowsDeps): BackupFlows {
             case "fogNotReplaced":
               deps.notify(COPY.restoreFogNotReplaced);
               return true;
+            case "settingsNotApplied":
+              deps.notify(COPY.restoreSettingsNotApplied);
+              return true;
+            case "noSpace":
+              deps.notify(COPY.restoreNoSpace);
+              return false;
             case "wrongPassphrase":
               deps.notify(COPY.restoreWrongPassphrase);
               return false;

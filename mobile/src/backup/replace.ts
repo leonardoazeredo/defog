@@ -137,6 +137,10 @@ export function createDatabaseReplacer(
       if (!same) throw new Error("the restored database does not match the backup");
       // Blobs hold the import and the settings only inside a backup; the live database keeps none.
       await built.run("DELETE FROM blobs");
+      // The DELETE only frees the blob pages; without VACUUM the file keeps the import zip in them
+      // and stays the backup's size. VACUUM writes a second copy of the file meanwhile, which the
+      // restore's space check allows for.
+      await built.exec("VACUUM");
     } finally {
       await built.close();
     }
