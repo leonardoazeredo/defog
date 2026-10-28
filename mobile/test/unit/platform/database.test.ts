@@ -184,6 +184,7 @@ describe("createDatabase after a restore that stopped before the replaced copy w
     "out of memory",
     "attempt to write a readonly database",
     "SQLITE_PROTOCOL",
+    "database is locked",
     "an activity vanished while its GPX was deflated",
     "Cannot read properties of undefined",
   ])(
@@ -201,6 +202,7 @@ describe("createDatabase after a restore that stopped before the replaced copy w
   it.each([
     ["is from a newer app", () => new NewerSchemaError(9)],
     ["is corrupt", () => new Error("database disk image is malformed")],
+    ["is corrupt (by code)", () => new Error("SQLITE_CORRUPT: database corrupt")],
   ])("puts the replaced copy back when the restored file %s", async (_, error) => {
     migrateFile = async (contents) => {
       if (contents === "restored") throw error();
@@ -210,5 +212,30 @@ describe("createDatabase after a restore that stopped before the replaced copy w
     expect(opened).toEqual(["restored", "old"]);
     expect(disk.get(LIVE_DB)).toBe("old");
     expect(disk.has(REPLACED_DB)).toBe(false);
+  });
+
+  it("puts the replaced copy back when the driver's own open finds the restored file corrupt", async () => {
+    openFile = async (contents) => {
+      if (contents === "restored") throw new Error("database disk image is malformed");
+      return driver();
+    };
+    expect((await createDatabase()).kind).toBe("ready");
+    expect(opened).toEqual(["restored", "old"]);
+    expect(disk.get(LIVE_DB)).toBe("old");
+  });
+
+  it("logs only the error class when it puts the replaced copy back", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      migrateFile = async (contents) => {
+        if (contents === "restored") throw new Error("database disk image is malformed at /data/x");
+        return 1;
+      };
+      await createDatabase();
+      expect(warn).toHaveBeenCalledWith("crossfog: restore put-back", "Error");
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("/data/x");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

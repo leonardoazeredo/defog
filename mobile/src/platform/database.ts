@@ -10,6 +10,7 @@ import { NotADatabaseError } from "../db/driver.js";
 import { createGate } from "../db/gate.js";
 import { type HistoryDatabase, openHistory, wrongKeyAsKeyLost } from "../db/openHistory.js";
 import { migrate, NewerSchemaError } from "../db/schema.js";
+import { warnClass } from "../flows/warn.js";
 import { createDatabaseFiles } from "./backupPlatform.js";
 import { createExpoSqliteDriver } from "./expoSqliteDriver.js";
 import { getDatabaseKeyHex, KeyLostError, keyState, resetKeys } from "./watchLinkModule.js";
@@ -71,6 +72,8 @@ export function createDatabase(): Promise<HistoryDatabase> {
       if (!files.exists(REPLACED_DB)) {
         history = wrongKeyAsKeyLost(e);
       } else if (restoredFileUnusable(e)) {
+        // The restore is undone here with no word to the owner, so the log is the only trace of why.
+        warnClass("restore", "put-back", e);
         putBackReplacedCopy(files);
         history = await open().catch(wrongKeyAsKeyLost);
       } else {

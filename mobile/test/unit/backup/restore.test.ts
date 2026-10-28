@@ -334,6 +334,24 @@ describe("restore flow", () => {
     expect(await ids(target)).toEqual([activity().id]);
   });
 
+  it("logs only the class of the settings failure", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const r = restore({
+        settings: {
+          apply: async () => {
+            throw new TypeError("f2m_secret");
+          },
+        },
+      });
+      expect(await r.run()).toBe("settingsNotApplied");
+      expect(warn).toHaveBeenCalledWith("crossfog: restore settings-apply", "TypeError");
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("f2m_secret");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("refuses before copying when the picked file needs more room than is free", async () => {
     const copy = vi.fn(async () => ({ size: 0, head: "" }));
     const r = restore({
@@ -355,6 +373,11 @@ describe("restore flow", () => {
     expect(r.askPassphrase).not.toHaveBeenCalled();
     expect(await ids(target)).toEqual([OTHER_ID]);
     expect(target.scratch.left()).toEqual([]);
+  });
+
+  it("restores after the copy when exactly four times its size is still free", async () => {
+    const r = restore({ scratch: { ...target.scratch, freeBytes: async () => 4 * 8192 } });
+    expect(await r.run()).toBe("restored");
   });
 
   it.each([undefined, 8192])(

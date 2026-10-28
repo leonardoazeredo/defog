@@ -1,4 +1,5 @@
 import { type AttachedBackup, NotADatabaseError, type OpenBackup } from "../db/driver.js";
+import { warnClass } from "../flows/warn.js";
 import type { FogStore, SourceFile } from "../fog/store.js";
 import { BLOB_IMPORT, BLOB_SETTINGS, classifyBackupFile, isBackupDatabase } from "./format.js";
 import { parseSettings } from "./settings.js";
@@ -132,7 +133,10 @@ export function createRestoreFlow(deps: RestoreDeps): { run(): Promise<RestoreRe
           // old settings, which the owner is told rather than left to find out.
           const applied = await deps.settings.apply(settings).then(
             () => true,
-            () => false,
+            (e: unknown) => {
+              warnClass("restore", "settings-apply", e);
+              return false;
+            },
           );
           if (!applied) return "settingsNotApplied";
         }
