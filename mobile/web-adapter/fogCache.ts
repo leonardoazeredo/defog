@@ -45,11 +45,19 @@ function openDb(idb: IDBFactory): Promise<IDBDatabase> {
         db.createObjectStore(REVEALS);
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    let blocked = false;
+    req.onsuccess = () => {
+      // The holder closed after we gave up: nobody will use this connection, and it would block the next upgrade.
+      if (blocked) req.result.close();
+      else resolve(req.result);
+    };
     req.onerror = () => reject(req.error);
     // Another connection to the old version stays open: the upgrade would wait for it, and `ready` with it,
     // so the page runs without the cache instead.
-    req.onblocked = () => reject(new Error("blocked"));
+    req.onblocked = () => {
+      blocked = true;
+      reject(new Error("blocked"));
+    };
   });
 }
 

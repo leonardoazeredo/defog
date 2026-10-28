@@ -101,7 +101,7 @@ export interface HistorySync {
 export function createHistorySync(deps: HistorySyncDeps): HistorySync {
   const { pageApi, cache, page, rules } = deps;
 
-  // The stamp (rules, end time, distance) the cells were revealed under, so a list that changes any of them replaces a revealed track under the same id (one still in flight is checked by the next list).
+  // The stamp (rules, end time, distance) the cells were revealed under, so a list that changes any of them replaces a revealed track under the same id (a track still in flight is checked against the list when it lands).
   const revealed = new Map<string, { cells: Int32Array; stamp: RevealStamp }>();
   // The stamp is taken when a track is asked for: a list that changes the activity meanwhile must not stamp the old track as current.
   const requested = new Map<string, RevealStamp>();
@@ -290,10 +290,12 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
       track.map((p) => ({ t: p.t, lat: p.lat, lon: p.lon, accuracy: p.accuracy })),
       rules,
     );
-    // No `wanted` check after this await: jobs are serial, so no list can change it meanwhile.
+    // Jobs are serial, so no list runs between the `wanted` check above and here.
     await cache.putReveal(activityId, stamp, cells);
+    // Listed only once its cells are in: a throw in addCells leaves the id unrevealed and unrequested, so the next list restores it from the reveal just cached.
+    const added = page.fogMap.addCells(cells);
     revealed.set(activityId, { cells, stamp });
-    if (page.fogMap.addCells(cells) > 0) page.fogChanged();
+    if (added > 0) page.fogChanged();
   }
 
   return {

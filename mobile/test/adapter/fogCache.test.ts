@@ -276,5 +276,9 @@ describe("an open connection that blocks the upgrade", () => {
     await c.putOnly(A, a);
     expect(await c.get(A)).toBeNull();
     holder.close();
+    // the abandoned open finished after the holder left and closed its own connection, so the next open is not blocked
+    const later = await openFogCache(idb, true);
+    await later.putOnly(A, a);
+    expect(await later.get(A)).toEqual(a);
   });
 });
