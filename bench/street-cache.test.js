@@ -65,6 +65,7 @@ const T = (x, y) => ({ x, y });
     const c2 = StreetCache.create({ store, network: failing, now: () => t, maxAgeMs: DAY });
     const got = await c2.fetchStreets([T(1, 2)], "run", null, { now: () => t, wait: async () => true, stale: () => stale }).then(() => null, (e) => e);
     assert.equal(typeof heard, "function");
+    assert.equal(heard(), true, "the network hears the caller's own stale");
     assert.equal(got && got.reason, "busy");
   }
   { // a cold request fetches and stores; the same request again makes no network call

@@ -45,8 +45,8 @@
   // can spend a minute or more in the queue
   const RUN_DEADLINE_MS = 1200000;
   // waits before asking again after a busy answer (429, 502, 504); busy answers while a wait is set
-  // are one step, and a busy answer after the third wait ends the run unless an answer lands before
-  // the requests open with it have finished (the schedule is told at overpassFetch)
+  // are one step, and a busy answer after the third wait ends the run unless an answer lands while
+  // the requests open with it are still running, so it ends the same whichever of them lands first
   const BUSY_RETRY_MS = [15000, 30000, 60000];
   // the reasons a street source fails with (Overpass.post's, "superseded" among them, which the run's
   // own stop also uses); an error with none of them is a bug, which is never worded or wrapped as a
@@ -505,7 +505,7 @@
   // default Date.now) only once none is open, so the page shows the busy text only while nothing is
   // coming. An answer that lands while no wait is set starts the count again; one that lands beside a
   // busy answer, with a wait already set, does not. A busy answer after the last step ends the run only
-  // once the requests open with it have finished and none brought tiles; if one did, the server has
+  // once the requests open with it have finished and none was answered; if one was, the server has
   // recovered and that busy is the first step of a new count, so the outcome does not depend on which
   // answer lands first. opts.stale goes to Overpass.post, so a replaced run's posts still waiting for
   // a slot are not sent (they fail "superseded"). Any other failure carrying a street reason, a busy
@@ -524,8 +524,8 @@
     const queue = batches(tiles).map((batch, rank) => ({ batch, rank }));
     const got = () => tiles.filter((t) => out.has(t.x + ":" + t.y)).length;
     return new Promise((resolve, reject) => {
-      // last: the wait set is the step past the schedule, ending the run unless recovered (an answer
-      // brought tiles while it was set) by the time the requests open with it have finished
+      // last: the wait set is the step past the schedule, ending the run unless recovered (a request
+      // was answered while it was set) by the time the requests open with it have finished
       let open = 0, busy = 0, until = 0, lastBusy = null, waiting = false, stop = null, last = false, recovered = false;
       // an error without a street reason is a bug and passes through unchanged, like the caller's own throws
       const fail = (e, passThrough) => { if (!stop) stop = { e, passThrough: passThrough || !STREET_REASONS.has(e && e.reason) }; };
