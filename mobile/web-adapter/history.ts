@@ -45,6 +45,7 @@ export interface CrossfogPageApi {
     setActivities(items: ActivitySummary[]): void;
     setTrack(activityId: string, points: TrackPoint[], route?: RouteGeometry): void;
     trackUnavailable?(activityId: string, reason: "notFound" | "readFailed"): void;
+    setUnreadable?(count: number): void;
   };
   /** The Send button's answers from the phone. */
   routeStatus?(msg: { routeId: string; state: string; why?: string | undefined }): void;

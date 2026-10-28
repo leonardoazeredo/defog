@@ -10,7 +10,10 @@ import type {
 export interface FakeWatchLink extends WatchLink {
   /** The watch handed an activity to the phone's staging store. */
   stage(offer: ActivityOffer): void;
-  /** An item staged under `id` that no longer reads back, as after a lost staging alias. */
+  /**
+   * Counts one staged item the native side cannot read, as after a lost staging alias. It is never
+   * listed; `id` only lets `release` drop it.
+   */
   stageUnreadable(id: string): void;
   setStatus(status: LinkStatus): void;
   /** The watch saved a queued route. */

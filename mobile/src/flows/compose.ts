@@ -43,8 +43,9 @@ export function createFlows(deps: ComposeDeps): ComposedFlows {
     parseGpx,
     now: deps.now,
   });
-  // Only a change is sent, since the page keeps the last count it was told; `ready` sends it again
-  // because a reloaded page starts at zero. A pass with no count to give leaves the last one standing.
+  // Only a change is sent, since the page keeps the last count it was told; `ready` sends a count
+  // above zero again because a reloaded page starts at zero. A pass with no count to give leaves
+  // the last one standing.
   let unreadable = 0;
   function sendUnreadable(): void {
     deps.send({ v: 1, type: "unreadableActivities", count: unreadable });

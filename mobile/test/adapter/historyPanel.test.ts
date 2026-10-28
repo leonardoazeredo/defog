@@ -34,6 +34,7 @@ interface Panel {
   setActivities(items: ActivitySummary[]): void;
   setTrack(id: string, points: unknown[], route?: { coords: number[][] }): void;
   trackUnavailable(id: string, reason: "notFound" | "readFailed"): void;
+  setUnreadable(count: number): void;
   refresh(): void;
 }
 interface SendControl {
@@ -120,6 +121,22 @@ describe("History tab", () => {
     expect($("historyEmpty").style.display).toBe("");
     panel.setActivities([summary(A, "2026-03-01T10:00:00Z")]);
     expect($("historyEmpty").style.display).toBe("none");
+  });
+
+  it("says how many walks could not be read, above the list", () => {
+    expect($("historyUnreadable").style.display).toBe("none");
+    panel.setUnreadable(1);
+    expect($("historyUnreadable").textContent).toBe("1 walk could not be read.");
+    expect($("historyUnreadable").style.display).toBe("");
+    panel.setActivities([summary(A, "2026-03-01T10:00:00Z")]);
+    panel.setUnreadable(3);
+    expect($("historyUnreadable").textContent).toBe("3 walks could not be read.");
+    click(cards()[0] ?? null);
+    expect($("historyUnreadable").style.display).toBe("none");
+    click(button("← All activities"));
+    expect($("historyUnreadable").style.display).toBe("");
+    panel.setUnreadable(0);
+    expect($("historyUnreadable").style.display).toBe("none");
   });
 
   it("renders one card per activity, newest first", () => {

@@ -70,6 +70,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.crossfog?.on("trackUnavailable", ({ activityId, reason }) =>
     window.CrossfogPage?.history?.trackUnavailable?.(activityId, reason),
   );
+  window.crossfog?.on("unreadableActivities", ({ count }) =>
+    window.CrossfogPage?.history?.setUnreadable?.(count),
+  );
 
   const zipInput = document.getElementById("zip") as HTMLInputElement;
   const load = (bytes: Uint8Array, name: string) =>

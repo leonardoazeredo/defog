@@ -35,7 +35,8 @@ export interface WatchLink {
   pendingActivities(): Promise<PendingActivity[]>;
   /**
    * How many staged items cannot be decrypted, parsed or matched to their file name; they are never
-   * listed and stay staged.
+   * listed and stay staged. The native count only: `HandOffResult.unreadable` adds the listed walks
+   * whose GPX fails `parseGpx` or whose id does not match the staged one.
    */
   unreadableActivities(): Promise<number>;
   /** Rejects for an id that is not staged. */
