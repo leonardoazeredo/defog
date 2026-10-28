@@ -1,11 +1,4 @@
-import type {
-  Activity,
-  ActivityDetail,
-  ActivityStore,
-  RouteStore,
-  RouteSummary,
-  StoredRoute,
-} from "./types.js";
+import type { Activity, ActivityStore, RouteStore, RouteSummary, StoredRoute } from "./types.js";
 
 const copy = <T>(v: T): T => structuredClone(v);
 
