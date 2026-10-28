@@ -150,7 +150,8 @@
     this._emitWps();
     ++this._reqId; // a request still in flight must not replace this route
     this._refiningToken = opts && opts.refining ? this._reqId : null;
-    this._applyRoute(coords, stats);
+    try { this._applyRoute(coords, stats); }
+    catch (e) { this._refiningToken = null; throw e; } // the caller gets no token to settle with
     return this._reqId;
   };
 

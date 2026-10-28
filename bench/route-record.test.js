@@ -124,6 +124,9 @@ function fresh(opts) { return new RouteTool(global.fakeMap(), opts || {}); }
   t3.clear();
   assert.equal(t3.settleFixedRoute(tok3), false);
   assert.equal(t3.routeRecord(), null, "cleared");
+  const t5 = fresh({ onChange: () => { throw new Error("boom"); } });
+  assert.throws(() => t5.setFixedRoute(pins, C, flat, { refining: true }));
+  assert.ok(t5.routeRecord(), "a failed hand-over leaves no pending block behind");
   const t4 = fresh();
   t4.setFixedRoute(pins, C, flat); // no heights expected: sendable at once
   assert.ok(t4.routeRecord());
