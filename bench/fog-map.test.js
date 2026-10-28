@@ -51,6 +51,20 @@ const sameBytes = (a, b) => assert.deepEqual(Array.from(a), Array.from(b));
   assert.equal(map.addCells(pairs([inside, other])), 1);
   assert.equal(map.totalVisited(), 2);
 }
+{ // the phone may send the history before the saved fog has loaded: overlay before import gives the same map as import before overlay
+  const tile = () => tileBytes([{ bx: 1, by: 2, cells: [[3, 4]] }]);
+  const cells = pairs([cellOf(5, 6, 1, 2, 3, 4), cellOf(5, 6, 1, 2, 4, 4)]);
+  const before = new FogMap(), after = new FogMap();
+  before.addCells(cells);
+  before.addTile(nameOf(idOf(5, 6)), tile());
+  after.addTile(nameOf(idOf(5, 6)), tile());
+  after.addCells(cells);
+  assert.equal(before.totalVisited(), 2);
+  assert.equal(before.totalVisited(), after.totalVisited());
+  const bitmaps = (m) => Array.from(m.blocks(), (b) => Array.from(b.bitmap));
+  assert.equal(bitmaps(before).length, 1);
+  assert.deepEqual(bitmaps(before), bitmaps(after));
+}
 { // wrong shapes are refused: a NaN coordinate would otherwise land on cell (0, 0) through the bit operations
   const map = new FogMap();
   assert.throws(() => map.addCells([5, 6]), TypeError);

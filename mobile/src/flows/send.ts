@@ -1,7 +1,8 @@
 import type { NativeToWeb, RouteRecord } from "../bridge/protocol.js";
 import { COPY } from "../copy.js";
 import type { RouteStore } from "../history/types.js";
-import type { WatchLink } from "../link/types.js";
+import type { LinkStatus, WatchLink } from "../link/types.js";
+import { warnClass } from "./warn.js";
 
 export interface SendDeps {
   link: Pick<WatchLink, "queueRoute" | "status" | "on">;
@@ -10,7 +11,7 @@ export interface SendDeps {
 }
 
 export interface SendFlow {
-  /** Never rejects: a failure reaches the page as a `failed` route status. */
+  /** Never rejects: a failed save or queue reaches the page as a `failed` route status. */
   sendRoute(route: RouteRecord): Promise<void>;
   /** Tells the page the current link status, for a page that has just loaded. */
   sendStatus(): Promise<void>;
@@ -18,13 +19,28 @@ export interface SendFlow {
   start(): () => void;
 }
 
-// Only the error name is logged: a route is where the owner plans to go.
-function warn(what: string, e: unknown): void {
-  console.warn(`crossfog: send ${what}`, e instanceof Error ? e.name : "unknown");
+const warn = (what: string, e: unknown) => warnClass("send", what, e);
+
+type RouteState = Extract<NativeToWeb, { type: "routeStatus" }>["state"];
+
+function routeStatus(routeId: string, state: RouteState, why?: string): NativeToWeb {
+  return { v: 1, type: "routeStatus", routeId, state, ...(why === undefined ? {} : { why }) };
+}
+
+function linkStatus({ paired, reachable }: LinkStatus): NativeToWeb {
+  return { v: 1, type: "linkStatus", paired, reachable };
 }
 
 export function createSendFlow(deps: SendDeps): SendFlow {
-  const { link, routes, send } = deps;
+  const { link, routes } = deps;
+
+  function send(msg: NativeToWeb): void {
+    try {
+      deps.send(msg);
+    } catch (e) {
+      warn("could not reach the page", e);
+    }
+  }
 
   return {
     async sendRoute(route) {
@@ -33,25 +49,21 @@ export function createSendFlow(deps: SendDeps): SendFlow {
         await link.queueRoute(route);
       } catch (e) {
         warn("could not queue a route", e);
-        send({
-          v: 1,
-          type: "routeStatus",
-          routeId: route.id,
-          state: "failed",
-          why: COPY.routeNotSent,
-        });
+        send(routeStatus(route.id, "failed", COPY.routeNotSent));
         return;
       }
-      send({ v: 1, type: "routeStatus", routeId: route.id, state: "waiting" });
+      send(routeStatus(route.id, "waiting"));
     },
 
     async sendStatus() {
+      let status: LinkStatus;
       try {
-        const { paired, reachable } = await link.status();
-        send({ v: 1, type: "linkStatus", paired, reachable });
+        status = await link.status();
       } catch (e) {
         warn("could not read the link status", e);
+        return;
       }
+      send(linkStatus(status));
     },
 
     start() {
@@ -63,12 +75,10 @@ export function createSendFlow(deps: SendDeps): SendFlow {
           } catch (e) {
             warn("could not mark a route sent", e);
           }
-          send({ v: 1, type: "routeStatus", routeId, state: "onWatch" });
+          send(routeStatus(routeId, "onWatch"));
         })();
       });
-      const offStatus = link.on("linkStatus", ({ paired, reachable }) => {
-        send({ v: 1, type: "linkStatus", paired, reachable });
-      });
+      const offStatus = link.on("linkStatus", (status) => send(linkStatus(status)));
       return () => {
         offRoute();
         offStatus();

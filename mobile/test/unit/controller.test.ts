@@ -182,6 +182,18 @@ it("tells the flows again each time the page reloads", async () => {
   expect(h.flows.ready).toHaveBeenCalledTimes(2);
 });
 
+it("keeps the reload going when the flows' ready throws", async () => {
+  const h = createHarness();
+  await saveToStore(h.store, aSrc, "a.zip");
+  h.flows.ready.mockRejectedValue(new Error("flow bug"));
+  await h.c.start();
+  await h.c.onWebMessage(ready).catch(() => undefined);
+  h.sent.length = 0;
+
+  await h.c.onWebMessage({ v: 1, type: "needBytes", fingerprint: sha(A) });
+  expect(h.sent.at(-1)).toMatchObject({ type: "chunk", fingerprint: sha(A), index: 0 });
+});
+
 it("reloads the saved copy", async () => {
   const h = createHarness();
   await saveToStore(h.store, aSrc, "a.zip");

@@ -2,6 +2,14 @@ import type { SqlDriver } from "./driver.js";
 
 export type HistoryDatabase = { kind: "ready"; db: SqlDriver } | { kind: "keyLost" };
 
+/**
+ * Thrown by `open()` in `src/platform/historyStores.ts` while the key is lost, so the history flow can skip
+ * its list notice (the startup alert already says so); a failed open rejects with its own error instead.
+ */
+export class HistoryKeyLostError extends Error {
+  override name = "HistoryKeyLostError";
+}
+
 export interface OpenHistoryDeps {
   keyState(): Promise<"fresh" | "existing" | "lost" | "unreadable">;
   getDatabaseKeyHex(): Promise<string>;

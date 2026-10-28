@@ -2,6 +2,7 @@ import type { BackupResult } from "../backup/backup.js";
 import type { RestoreResult } from "../backup/restore.js";
 import { BackupError } from "../backup/types.js";
 import { COPY } from "../copy.js";
+import { warnClass } from "./warn.js";
 
 export interface BackupFlowsDeps {
   backup: { run(): Promise<BackupResult> };
@@ -44,7 +45,7 @@ export function createBackupFlows(deps: BackupFlowsDeps): BackupFlows {
           else if (e instanceof BackupError && e.code === "noSettings") {
             deps.notify(COPY.backupNoSettings);
           } else {
-            console.warn("crossfog: backup failed", e instanceof Error ? e.name : "unknown");
+            warnClass("backup", "failed", e);
             deps.notify(COPY.backupFailed);
           }
         }
@@ -70,7 +71,7 @@ export function createBackupFlows(deps: BackupFlowsDeps): BackupFlows {
               return false;
           }
         } catch (e) {
-          console.warn("crossfog: restore failed", e instanceof Error ? e.name : "unknown");
+          warnClass("restore", "failed", e);
           deps.notify(COPY.restoreFailed);
           return false;
         }

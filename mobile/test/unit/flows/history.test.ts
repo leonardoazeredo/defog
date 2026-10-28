@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { encode, type NativeToWeb, parseNativeToWeb } from "../../../src/bridge/protocol.js";
+import { COPY } from "../../../src/copy.js";
+import { HistoryKeyLostError } from "../../../src/db/openHistory.js";
 import { createHistoryFlow } from "../../../src/flows/history.js";
 import {
   createMemoryActivityStore,
@@ -192,10 +194,61 @@ describe("history", () => {
     await expect(flow.needTrack(ID(1))).resolves.toBeUndefined();
     await expect(flow.publish()).resolves.toBeUndefined();
     expect(sent).toEqual([
-      expect.objectContaining({ type: "notice" }),
+      { v: 1, type: "notice", text: COPY.activityDeleteFailed },
       { v: 1, type: "trackUnavailable", activityId: ID(1), reason: "readFailed" },
+      { v: 1, type: "notice", text: COPY.historyListFailed },
     ]);
     valid(sent);
+  });
+
+  it("says the list is out of date when a delete went through but the list cannot be read", async () => {
+    const { activities, sent } = setup();
+    await activities.add(activity({ id: ID(1) }));
+    const flow = createHistoryFlow({
+      routes: createMemoryRouteStore(),
+      activities: {
+        ...activities,
+        list: async () => {
+          throw new Error("database is locked");
+        },
+      },
+      send: (m) => sent.push(m),
+    });
+    await flow.deleteActivity(ID(1));
+    expect(await activities.get(ID(1))).toBeNull();
+    expect(sent).toEqual([{ v: 1, type: "notice", text: COPY.historyListFailed }]);
+  });
+
+  it("adds no notice when the history key is lost, which the app said at start", async () => {
+    const { activities, sent } = setup();
+    const flow = createHistoryFlow({
+      routes: createMemoryRouteStore(),
+      activities: {
+        ...activities,
+        list: async () => {
+          throw new HistoryKeyLostError();
+        },
+      },
+      send: (m) => sent.push(m),
+    });
+    await flow.publish();
+    expect(sent).toEqual([]);
+  });
+
+  it("does not reject when sending fails midway through a track's chunks", async () => {
+    const { activities } = setup();
+    await activities.add(activity({ id: ID(1), track: longTrack(4500) }));
+    const sent: NativeToWeb[] = [];
+    const flow = createHistoryFlow({
+      activities,
+      routes: createMemoryRouteStore(),
+      send: (m) => {
+        if (sent.length === 1) throw new Error("no web view");
+        sent.push(m);
+      },
+    });
+    await expect(flow.needTrack(ID(1))).resolves.toBeUndefined();
+    expect(sent).toHaveLength(1);
   });
 
   it("does not reject when the page cannot be told", async () => {
@@ -210,5 +263,21 @@ describe("history", () => {
     });
     await expect(flow.needTrack(ID(1))).resolves.toBeUndefined();
     await expect(flow.needTrack(ID(9))).resolves.toBeUndefined();
+  });
+
+  it("does not reject when a delete fails and the page cannot be told", async () => {
+    const flow = createHistoryFlow({
+      activities: {
+        ...createMemoryActivityStore(),
+        delete: async () => {
+          throw new Error("disk full");
+        },
+      },
+      routes: createMemoryRouteStore(),
+      send: () => {
+        throw new Error("no web view");
+      },
+    });
+    await expect(flow.deleteActivity(ID(1))).resolves.toBeUndefined();
   });
 });

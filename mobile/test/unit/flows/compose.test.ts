@@ -182,6 +182,45 @@ describe("composed flows", () => {
     expect(sent).toEqual([{ v: 1, type: "unreadableActivities", count: 1 }]);
   });
 
+  it("does not reject, at start, on hand-off or on ready, when the page cannot be told the count", async () => {
+    const link = createFakeWatchLink();
+    link.stageUnreadable(A);
+    const flows = createFlows({
+      link,
+      activities: createMemoryActivityStore(),
+      routes: createMemoryRouteStore(),
+      send: () => {
+        throw new Error("no web view");
+      },
+      now: () => 0,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      flows.start();
+      await settle();
+      await expect(flows.handOffNow()).resolves.toBeUndefined();
+      await expect(flows.ready()).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalled();
+      for (const args of warn.mock.calls) expect(args).toEqual([expect.any(String), "Error"]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("finishes the hand-off that was running when stopped, and starts no other", async () => {
+    const { link, activities, flows } = setup();
+    link.stage({ activityId: A, travelMode: "walk", encoderVersion: "e", gpx: GPX });
+    const stop = flows.start();
+    stop();
+    await settle();
+    expect(await activities.get(A)).not.toBeNull();
+
+    const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    link.stage({ activityId: B, travelMode: "walk", encoderVersion: "e", gpx: GPX });
+    await settle();
+    expect(await activities.get(B)).toBeNull();
+  });
+
   it("hands an export chunk to the export flow when there is one, and drops it otherwise", async () => {
     const chunk = { exportId: "e1", name: "abcd", index: 0, total: 1, files: 1, data: "" };
     const onChunk = vi.fn(async () => {});
