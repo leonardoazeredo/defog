@@ -12,7 +12,7 @@ function installTileFetch(streets) {
   streets.fetchStreets = async (tiles, kind, onTile) => {
     const q = global.StreetIndex.rectQuery(rects, kind);
     const answers = global.StreetIndex.splitAnswer(await global.Overpass.post("data=" + encodeURIComponent(q)), tiles);
-    if (onTile) for (const t of tiles) onTile(t, answers.get(t.x + ":" + t.y));
+    if (onTile) for (const t of tiles) onTile(t, answers.get(global.StreetIndex.tileId(t)));
     return answers;
   };
 }
