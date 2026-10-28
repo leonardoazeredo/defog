@@ -91,7 +91,8 @@
         try { t.abort(); } catch (e) { /* already finished */ }
       }, timeoutMs);
       t.oncomplete = () => { clearTimeout(timer); resolve(req ? req.result : undefined); };
-      t.onerror = t.onabort = () => { clearTimeout(timer); reject(t.error || new Error("transaction aborted")); };
+      t.onerror = (ev) => { clearTimeout(timer); reject((ev && ev.target && ev.target.error) || t.error || new Error("transaction failed")); };
+      t.onabort = () => { clearTimeout(timer); reject(t.error || new Error("transaction aborted")); };
       try { req = work(t.objectStore(storeName)); } catch (e) { clearTimeout(timer); reject(e); }
     });
     const tx = async (mode, work, retried) => {
