@@ -3,15 +3,24 @@ export interface FogCache {
   /** Clears the store and writes `bytes` under `fingerprint` as the sole entry. */
   putOnly(fingerprint: string, bytes: Uint8Array): Promise<void>;
   clearAll(): Promise<void>;
-  /** The cells an activity's track revealed, with the reveal rules that made them. */
+  /** The cells an activity's track revealed, with the rules and the activity fingerprint it was made under. */
   getReveal(activityId: string): Promise<CachedReveal | null>;
-  putReveal(activityId: string, rulesVersion: number, cells: Int32Array): Promise<void>;
+  putReveal(activityId: string, stamp: RevealStamp, cells: Int32Array): Promise<void>;
   deleteReveal(activityId: string): Promise<void>;
   revealIds(): Promise<string[]>;
 }
 
-interface CachedReveal {
+/** What a cached reveal was made from; any difference from the current values means recompute. */
+export interface RevealStamp {
   rulesVersion: number;
+  /** Hash of the whole rules object, so a tuned number without a version bump is still noticed. */
+  rulesHash: string;
+  /** The activity's `endedAt` and distance: a track replaced under the same id usually differs in one of them (a cheap proxy, not a hash of the points). */
+  endedAt: string;
+  distanceM: number;
+}
+
+interface CachedReveal extends RevealStamp {
   /** `[cx, cy]` pairs as Int32 values. */
   cells: ArrayBuffer;
 }
@@ -22,9 +31,13 @@ const REVEALS = "reveals";
 
 function openDb(idb: IDBFactory): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = idb.open(DB_NAME, 2);
-    req.onupgradeneeded = () => {
+    const req = idb.open(DB_NAME, 3);
+    req.onupgradeneeded = (event) => {
       const db = req.result;
+      // Reveals without a fingerprint cannot be checked; they are rebuilt from the tracks.
+      if (event.oldVersion > 0 && event.oldVersion < 3 && db.objectStoreNames.contains(REVEALS)) {
+        db.deleteObjectStore(REVEALS);
+      }
       if (!db.objectStoreNames.contains(STORE)) {
         db.createObjectStore(STORE);
       }
@@ -124,11 +137,18 @@ export async function openFogCache(
           const req = tx.objectStore(REVEALS).get(activityId);
           req.onsuccess = () => {
             const raw = req.result as Partial<CachedReveal> | undefined;
-            const { rulesVersion, cells } = raw ?? {};
+            const { rulesVersion, rulesHash, endedAt, distanceM, cells } = raw ?? {};
             const whole =
               typeof rulesVersion === "number" &&
+              typeof rulesHash === "string" &&
+              typeof endedAt === "string" &&
+              typeof distanceM === "number" &&
               Object.prototype.toString.call(cells) === "[object ArrayBuffer]";
-            resolve(whole ? { rulesVersion, cells: cells as ArrayBuffer } : null);
+            resolve(
+              whole
+                ? { rulesVersion, rulesHash, endedAt, distanceM, cells: cells as ArrayBuffer }
+                : null,
+            );
           };
           req.onerror = () => resolve(null);
         } catch {
@@ -137,7 +157,7 @@ export async function openFogCache(
       });
     },
 
-    putReveal(activityId, rulesVersion, cells) {
+    putReveal(activityId, stamp, cells) {
       return new Promise((resolve) => {
         try {
           const tx = db.transaction(REVEALS, "readwrite");
@@ -145,7 +165,7 @@ export async function openFogCache(
           // other data, and the caller may reuse the array.
           // A transaction that aborts at commit (a full disk) fires onabort, not onerror; without it this
           // promise never settles and the history sync, which awaits it, stops for the session.
-          tx.objectStore(REVEALS).put({ rulesVersion, cells: cells.slice().buffer }, activityId);
+          tx.objectStore(REVEALS).put({ ...stamp, cells: cells.slice().buffer }, activityId);
           tx.oncomplete = () => resolve();
           tx.onerror = () => resolve();
           tx.onabort = () => resolve();

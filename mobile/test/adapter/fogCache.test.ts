@@ -1,6 +1,6 @@
 import { IDBFactory } from "fake-indexeddb";
 import { beforeEach, describe, expect, it } from "vitest";
-import { openFogCache } from "../../web-adapter/fogCache.js";
+import { openFogCache, type RevealStamp } from "../../web-adapter/fogCache.js";
 
 const A = "a".repeat(64);
 const B = "b".repeat(64);
@@ -64,24 +64,74 @@ it("does nothing when idb is undefined", async () => {
   expect(await c.get(A)).toBeNull();
 });
 
+const stamp = (rulesVersion: number, changes: Partial<RevealStamp> = {}): RevealStamp => ({
+  rulesVersion,
+  rulesHash: "abc",
+  endedAt: "2026-01-01T11:00:00Z",
+  distanceM: 1000,
+  ...changes,
+});
+
 describe("reveals", () => {
   const cells = new Int32Array([1, 2, 3, 4, 5, 6]);
 
   it("round-trips a reveal with its rules version", async () => {
     const c = await openFogCache(idb, true);
     expect(await c.getReveal(ACT)).toBeNull();
-    await c.putReveal(ACT, 3, cells);
+    await c.putReveal(ACT, stamp(3), cells);
     const got = await c.getReveal(ACT);
-    expect(got?.rulesVersion).toBe(3);
+    expect(got).toMatchObject(stamp(3));
     expect(Array.from(new Int32Array(got?.cells ?? new ArrayBuffer(0)))).toEqual([
       1, 2, 3, 4, 5, 6,
     ]);
   });
 
+  it("treats a record without the fingerprint fields as missing", async () => {
+    const c = await openFogCache(idb, true);
+    await new Promise<void>((resolve, reject) => {
+      const req = idb.open("crossfog");
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction("reveals", "readwrite");
+        tx.objectStore("reveals").put({ rulesVersion: 1, cells: new ArrayBuffer(8) }, ACT);
+        tx.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        tx.onerror = () => reject(tx.error);
+      };
+    });
+    expect(await c.getReveal(ACT)).toBeNull();
+  });
+
+  it("drops the reveals of the earlier database version and keeps the import copy", async () => {
+    await new Promise<void>((resolve, reject) => {
+      const req = idb.open("crossfog", 2);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore("copies");
+        req.result.createObjectStore("reveals");
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction(["copies", "reveals"], "readwrite");
+        tx.objectStore("copies").put(a, A);
+        tx.objectStore("reveals").put({ rulesVersion: 1, cells: new ArrayBuffer(8) }, ACT);
+        tx.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        tx.onerror = () => reject(tx.error);
+      };
+    });
+    const c = await openFogCache(idb, true);
+    expect(await c.revealIds()).toEqual([]);
+    expect(await c.get(A)).toEqual(a);
+  });
+
   it("stores a copy, so a later change to the array does not reach the cache", async () => {
     const c = await openFogCache(idb, true);
     const mine = new Int32Array([7, 8]);
-    await c.putReveal(ACT, 1, mine);
+    await c.putReveal(ACT, stamp(1), mine);
     mine[0] = 99;
     const got = await c.getReveal(ACT);
     expect(Array.from(new Int32Array(got?.cells ?? new ArrayBuffer(0)))).toEqual([7, 8]);
@@ -90,15 +140,15 @@ describe("reveals", () => {
   it("stores only the cells of a view, not the buffer behind it", async () => {
     const c = await openFogCache(idb, true);
     const backing = new Int32Array([1, 2, 3, 4, 5, 6]);
-    await c.putReveal(ACT, 1, backing.subarray(2, 4));
+    await c.putReveal(ACT, stamp(1), backing.subarray(2, 4));
     const got = await c.getReveal(ACT);
     expect(Array.from(new Int32Array(got?.cells ?? new ArrayBuffer(0)))).toEqual([3, 4]);
   });
 
   it("overwrites an earlier reveal of the same activity", async () => {
     const c = await openFogCache(idb, true);
-    await c.putReveal(ACT, 1, cells);
-    await c.putReveal(ACT, 2, new Int32Array([9, 9]));
+    await c.putReveal(ACT, stamp(1), cells);
+    await c.putReveal(ACT, stamp(2), new Int32Array([9, 9]));
     const got = await c.getReveal(ACT);
     expect(got?.rulesVersion).toBe(2);
     expect(new Int32Array(got?.cells ?? new ArrayBuffer(0)).length).toBe(2);
@@ -106,8 +156,8 @@ describe("reveals", () => {
 
   it("deleteReveal removes one reveal and revealIds lists the rest", async () => {
     const c = await openFogCache(idb, true);
-    await c.putReveal(ACT, 1, cells);
-    await c.putReveal(OTHER, 1, cells);
+    await c.putReveal(ACT, stamp(1), cells);
+    await c.putReveal(OTHER, stamp(1), cells);
     expect((await c.revealIds()).sort()).toEqual([ACT, OTHER].sort());
     await c.deleteReveal(ACT);
     expect(await c.getReveal(ACT)).toBeNull();
@@ -120,7 +170,7 @@ describe("reveals", () => {
   });
 
   it("survives being reopened", async () => {
-    await (await openFogCache(idb, true)).putReveal(ACT, 4, cells);
+    await (await openFogCache(idb, true)).putReveal(ACT, stamp(4), cells);
     const got = await (await openFogCache(idb, true)).getReveal(ACT);
     expect(got?.rulesVersion).toBe(4);
   });
@@ -128,7 +178,7 @@ describe("reveals", () => {
   it("is untouched by clearAll, which belongs to the import copy", async () => {
     const c = await openFogCache(idb, true);
     await c.putOnly(A, a);
-    await c.putReveal(ACT, 1, cells);
+    await c.putReveal(ACT, stamp(1), cells);
     await c.clearAll();
     expect(await c.get(A)).toBeNull();
     expect(await c.revealIds()).toEqual([ACT]);
@@ -136,7 +186,7 @@ describe("reveals", () => {
 
   it("is untouched by putOnly, which replaces the import copy", async () => {
     const c = await openFogCache(idb, true);
-    await c.putReveal(ACT, 1, cells);
+    await c.putReveal(ACT, stamp(1), cells);
     await c.putOnly(A, a);
     expect(await c.revealIds()).toEqual([ACT]);
   });
@@ -144,7 +194,7 @@ describe("reveals", () => {
   it("treats a stored record of the wrong shape as missing", async () => {
     const c = await openFogCache(idb, true);
     await new Promise<void>((resolve, reject) => {
-      const req = idb.open("crossfog", 2);
+      const req = idb.open("crossfog");
       req.onsuccess = () => {
         const db = req.result;
         const tx = db.transaction("reveals", "readwrite");
@@ -163,7 +213,7 @@ describe("reveals", () => {
 
   it("does nothing when disabled", async () => {
     const c = await openFogCache(idb, false);
-    await c.putReveal(ACT, 1, cells);
+    await c.putReveal(ACT, stamp(1), cells);
     expect(await c.getReveal(ACT)).toBeNull();
     expect(await c.revealIds()).toEqual([]);
   });
@@ -175,7 +225,7 @@ describe("reveals", () => {
       },
     } as unknown as IDBFactory;
     const c = await openFogCache(broken, true);
-    await expect(c.putReveal(ACT, 1, cells)).resolves.toBeUndefined();
+    await expect(c.putReveal(ACT, stamp(1), cells)).resolves.toBeUndefined();
     expect(await c.getReveal(ACT)).toBeNull();
     expect(await c.revealIds()).toEqual([]);
   });
@@ -206,7 +256,7 @@ describe("upgrading a version 1 database", () => {
     await seedVersion1(idb);
     const c = await openFogCache(idb, true);
     expect(await c.get(A)).toEqual(a);
-    await c.putReveal(ACT, 1, new Int32Array([1, 2]));
+    await c.putReveal(ACT, stamp(1), new Int32Array([1, 2]));
     expect(await c.revealIds()).toEqual([ACT]);
   });
 });
