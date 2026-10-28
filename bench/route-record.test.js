@@ -243,5 +243,12 @@ function fresh(opts) { return new RouteTool(global.fakeMap(), opts || {}); }
   assert.deepEqual(await Elevation.within(lateHeights, 1000, []), [120, 121, 119], "heights in time are returned");
   assert.deepEqual(await Elevation.within(new Promise((r) => setTimeout(() => r([1, 2, 3]), 20)), 5, []), [], "heights after the deadline are not");
 
+  // adoptRoute lives in main.js, which Node cannot load, so read its source: a heights request that never answers would hold Send forever
+  const fs = require("node:fs");
+  const mainJs = fs.readFileSync(require("node:path").join(__dirname, "..", "app", "src", "main.js"), "utf8");
+  const body = mainJs.slice(mainJs.indexOf("async function adoptRoute"), mainJs.indexOf("function setSeg"));
+  assert.match(body, /Elevation\.within\(elevation\.elevationAt\(coords\), HEIGHTS_WAIT_MS, \[\]\)/, "the heights wait is bounded");
+  assert.match(body, /finally \{[\s\S]*route\.settleFixedRoute\(token\)/, "the route settles in the finally");
+
   console.log("route-record.test.js ok");
 });
