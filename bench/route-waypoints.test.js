@@ -56,8 +56,8 @@ function setup(over) {
     assert.ok(rects.every((r) => r.n - r.s < 2 * padLat + 500 / KY + 1e-9), "padding is 1000 m, not more");
     await route(pins, "hiking-mountain");
     assert.equal(calls.ensure[1].kind, "run");
-    await route(pins, "car-fast");
-    assert.equal(calls.ensure[2].kind, "car");
+    await route(pins, "car-fast"); // a profile name a saved route may still carry
+    assert.equal(calls.ensure[2].kind, "bike", "falls back to the street kind of an unlisted mode");
     await route(pins, "fastbike");
     assert.equal(calls.ensure[3].kind, "bike");
   }

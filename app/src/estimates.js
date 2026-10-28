@@ -13,9 +13,7 @@
   const FOOT = { kind: "foot", maxSpeed: 6 / 3.6 };
   // RoutingContext's defaults, which the trekking and fastbike profiles keep
   const BIKE = { kind: "bike", maxSpeed: 45 / 3.6, totalMass: 90, sCx: 0.225, rollResistance: 0.01, bikerPower: 100 };
-  // BRouter takes a car's speed from each way's limit, which the phone does not have
-  const CAR = { kind: "car", maxSpeed: 45 / 3.6 };
-  const MODES = { trekking: BIKE, fastbike: BIKE, "hiking-mountain": FOOT, shortest: FOOT, "car-fast": CAR };
+  const MODES = { trekking: BIKE, fastbike: BIKE, "hiking-mountain": FOOT, shortest: FOOT };
 
   const scaleCache = [];
   function scalesAt(ilat) {

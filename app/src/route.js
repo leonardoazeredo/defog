@@ -465,7 +465,7 @@ ${pts}
   // travelmode: driving | bicycling | walking | transit
   RouteTool.prototype.googleMapsUrl = function () {
     if (this.wps.length < 2) return null;
-    const MODE = { "car-fast": "driving", "hiking-mountain": "walking" };
+    const MODE = { "hiking-mountain": "walking" };
     const mode = MODE[this.profile] || (this.profile === "shortest" ? "driving" : "bicycling");
     const pts = this.wps.map((w) => w.latlng.lat.toFixed(6) + "," + w.latlng.lng.toFixed(6));
     const origin = pts.shift(), destination = pts.pop();

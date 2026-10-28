@@ -39,7 +39,7 @@ for (const f of fs.readdirSync(DIR).filter((n) => n.endsWith(".json")).sort()) {
   const lo = compare(Estimates, feature, profile, { ascentFilterM: 5 }).est.ascentM;
   assert.ok(r.distPct <= DIST_TOLERANCE * 100, `${profile}: distance ${r.est.distanceM} vs ${r.want.distanceM}`);
   const tol = TIME_TOLERANCE[profile];
-  if (tol !== null) assert.ok(r.timePct <= tol * 100, `${profile}: time ${r.est.seconds} vs ${r.want.seconds}`);
+  assert.ok(r.timePct <= tol * 100, `${profile}: time ${r.est.seconds} vs ${r.want.seconds}`);
   // the filter BRouter applies depends on its data per node, so its figure lies between the two constants
   assert.ok(r.want.ascentM >= r.est.ascentM - ASCENT_TOLERANCE_M && r.want.ascentM <= lo + ASCENT_TOLERANCE_M, `${profile}: ascent ${r.est.ascentM}..${lo} vs ${r.want.ascentM}`);
 
@@ -60,8 +60,7 @@ if (used === 0) {
   process.exit(0);
 }
 for (const [profile, w] of Object.entries(worst).sort()) {
-  const note = TIME_TOLERANCE[profile] === null ? " (time reported, not asserted)" : "";
-  console.log(`${profile.padEnd(16)} n=${String(w.n).padStart(3)}  distance ${w.distPct.toFixed(3)} %  ascent ${w.ascentM} m  time ${w.timePct.toFixed(2)} %${note}`);
+  console.log(`${profile.padEnd(16)} n=${String(w.n).padStart(3)}  distance ${w.distPct.toFixed(3)} %  ascent ${w.ascentM} m  time ${w.timePct.toFixed(2)} %`);
 }
 // the between-bounds check above passes a large miss; this catches the model drifting from the 10 m filter BRouter mostly applies
 assert.ok(ascentErrSum / used <= MAX_MEAN_ASCENT_ERR_M, `mean ascent error ${(ascentErrSum / used).toFixed(1)} m`);

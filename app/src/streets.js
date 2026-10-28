@@ -18,7 +18,6 @@
   const CONNECT_HW = "trunk|trunk_link|primary_link|secondary_link|tertiary_link";
   const RUN_HW = "residential|unclassified|tertiary|secondary|primary|living_street|track|path|footway|cycleway|pedestrian|steps|" + CONNECT_HW;
   const BIKE_HW = "residential|unclassified|tertiary|secondary|primary|living_street|cycleway|track|" + CONNECT_HW;
-  const CAR_HW = "residential|unclassified|tertiary|secondary|primary|living_street|motorway|motorway_link|" + CONNECT_HW;
   // Which of the walked ways each other way of travelling can actually use. A
   // fetch also asks for these as bare ID LISTS (a few hundred KB, versus
   // about a megabyte if we asked Overpass for the tags), so the map can dim the
@@ -28,12 +27,14 @@
     road: "residential|unclassified|tertiary|secondary|primary|living_street|cycleway|" + CONNECT_HW,
     car: "residential|unclassified|tertiary|secondary|primary|living_street|motorway|motorway_link|" + CONNECT_HW
   };
+  // The car list stays in the query though no mode reads it: the bench cache is keyed on the query text, so
+  // dropping it would make every saved answer miss.
   const CLASS_ORDER = ["bike", "road", "car"]; // the travel classes, first in GROUP_ORDER
   // every ID list a fetch asks for, in the order the answer carries them after the geometry
   const GROUP_ORDER = CLASS_ORDER.concat(["oneWay", "reverseWay", "bikeBoth", "motorway"]);
   // routing profile -> travel class (also read by streetsLayer for its dimming).
   // Unlisted profiles (hiking-mountain, shortest) use every way but motorways.
-  const MODE_CLASS = { trekking: "bike", fastbike: "road", "car-fast": "car" };
+  const MODE_CLASS = { trekking: "bike", fastbike: "road" };
   const SEG_M = 50;              // ways are chopped into ~50 m scoring segments
   const GRID_M = 250;            // spatial bin size for radius queries
   const MAX_SEGS = 400000;       // memory guard (~40 MB worst case)
@@ -79,7 +80,7 @@
     this.oneWay = new Set();     // one-way along the way's node order (incl. roundabouts)
     this.reverseWay = new Set(); // one-way against it (oneway=-1)
     this.bikeBoth = new Set();   // one-way streets bikes may still ride both ways (contraflow lanes)
-    this.motorway = new Set();   // motorways and their links: cars only (fetched for cars only)
+    this.motorway = new Set();   // motorways and their links: no mode takes them, and no fetch lists them (the list stays empty)
     this.ways = [];              // raw {id,nodes,geometry}: shared node ids give the
                                  // route planner its graph connectivity for free
     this.segCount = 0;
@@ -98,7 +99,7 @@
   }
 
   const holds = (set, kind, t) => set.has(StreetIndex.tileKey(kind, t.x, t.y)) ||
-    (kind !== "car" && set.has(StreetIndex.tileKey("run", t.x, t.y)));
+    set.has(StreetIndex.tileKey("run", t.x, t.y));
   const cellKey = (x, y) => Math.floor(x / GRID_M) + "," + Math.floor(y / GRID_M);
 
   StreetIndex.prototype._anchor = function (lat) {
@@ -107,7 +108,7 @@
 
   StreetIndex.prototype.covered = function (lat, lng) {
     const t = StreetIndex.tileOf(lng, lat);
-    return ["run", "bike", "car"].some((k) => this.tiles.has(StreetIndex.tileKey(k, t.x, t.y)));
+    return ["run", "bike"].some((k) => this.tiles.has(StreetIndex.tileKey(k, t.x, t.y)));
   };
 
   // entry, when given, is the way's wayFrom entry made beforehand (one an expired copy brought is in
@@ -183,7 +184,7 @@
       if (left <= this.maxSegs * EVICT_TO) break;
       if (kept.some((under) => under.has(pos))) continue;
       evicted.push(pos);
-      const keys = ["run", "bike", "car"].map((k) => k + ":" + pos);
+      const keys = ["run", "bike"].map((k) => k + ":" + pos);
       for (const k of keys) { this.tiles.delete(k); this.staleTiles.delete(k); }
       for (const id of this.pieceWays.get(pos) || []) {
         const entry = this.wayFrom.get(id);
@@ -203,8 +204,7 @@
 
   // A tile counts as covered when it was fetched for the same kind AND fetched at
   // least the streets asked for now: the walking set is a superset of the bike
-  // set, so a "run" fetch satisfies a later "bike" request but not vice versa. A car
-  // fetch holds motorways, which nothing else does, so only a car fetch covers cars.
+  // set, so a "run" fetch satisfies a later "bike" request but not vice versa.
   // withStale also counts the expired tiles already drawn from, so a cache-only read skips them.
   StreetIndex.prototype._uncovered = function (rects, kind, withStale) {
     return StreetIndex.tilesOf(rects).filter((t) => !(holds(this.tiles, kind, t) || (withStale && holds(this.staleTiles, kind, t))));
@@ -220,17 +220,14 @@
   StreetIndex.prototype.onewayFor = function (profile) {
     const cls = MODE_CLASS[profile];
     if (!cls) return () => 0;
-    const bike = cls === "bike" || cls === "road";
-    return (id) => (bike && this.bikeBoth.has(id) ? 0 : this.oneWay.has(id) ? 1 : this.reverseWay.has(id) ? -1 : 0);
+    return (id) => (this.bikeBoth.has(id) ? 0 : this.oneWay.has(id) ? 1 : this.reverseWay.has(id) ? -1 : 0);
   };
 
   // Which ways a routing profile may use, by the same rule streetsLayer dims
-  // them with. A way we hold no class for counts as usable. Motorways are in the shared
-  // way list once a car fetch has run, and only cars may use them.
+  // them with. A way we hold no class for counts as usable. No mode takes a motorway.
   StreetIndex.prototype.usableFor = function (profile) {
     const cls = MODE_CLASS[profile];
     if (!cls) return (id) => !this.motorway.has(id);
-    if (cls === "car") return (id) => !this.classified.has(id) || this.classIds.car.has(id);
     return (id) => !this.motorway.has(id) && (!this.classified.has(id) || this.classIds[cls].has(id));
   };
 
@@ -247,7 +244,7 @@
   // Fetch streets for the tiles under the given rects (skipping ones already covered), nearest the
   // centre of the rects first, in one call to the street source. A tile an earlier run is still asking
   // for is waited for instead, and asked for in a second call only if that run gives it up.
-  // kind: "run" | "bike" | "car". Each tile is read into the index as it arrives, so a failed run keeps what came and
+  // kind: "run" | "bike". Each tile is read into the index as it arrives, so a failed run keeps what came and
   // the next run asks only for the rest. opts.onProgress({done, total}) hears the start (done = the
   // tiles already held, total = every tile under the rects; nothing when all are held) and every
   // tile, and {done, total, waitUntil} when the source waits out a busy server (then {done, total}
@@ -411,7 +408,7 @@
       const shared = [], ask = [];
       for (const t of tiles) {
         const entry = !cacheOnly && (this.inFlight.get(StreetIndex.tileKey(kind, t.x, t.y)) ||
-          (kind !== "car" && this.inFlight.get(StreetIndex.tileKey("run", t.x, t.y))));
+          this.inFlight.get(StreetIndex.tileKey("run", t.x, t.y)));
         if (entry) shared.push({ t, entry }); else ask.push(t);
       }
       return { shared, ask };
@@ -645,11 +642,11 @@
   StreetIndex.rectQuery = function (boxes, kind) {
     const bb = (r) => [r.s, r.w, r.n, r.e].map((x) => x.toFixed(4)).join(",");
     // access filter: planned and routed trips must not cross ways the person can't
-    // use (motorroads are for motor vehicles; foot=no only matters on foot)
-    const acc = `[access!~"^(private|no|military)$"]` + (kind === "car" ? "" : `[motorroad!=yes]`) + (kind === "run" ? `[foot!=no]` : "");
+    // use (motorroads are for motor vehicles, which no mode here is; foot=no only matters on foot)
+    const acc = `[access!~"^(private|no|military)$"][motorroad!=yes]` + (kind === "run" ? `[foot!=no]` : "");
     const clauses = (hw) => boxes.map((r) =>
       `way[highway~"^(${hw})$"]${acc}(${bb(r)});way[highway=service]${acc}[service!~"^(driveway|parking_aisle)$"](${bb(r)});`).join("");
-    const hw = kind === "bike" ? BIKE_HW : kind === "car" ? CAR_HW : RUN_HW;
+    const hw = kind === "bike" ? BIKE_HW : RUN_HW;
     // the box is scanned once into .all; each list below filters that set (scanning the
     // box again per list ran Overpass out of time on a town-sized box)
     let q = `[out:json][timeout:25];(${clauses(hw)})->.all;.all out skel geom;`;

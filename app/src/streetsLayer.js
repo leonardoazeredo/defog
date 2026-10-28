@@ -353,7 +353,7 @@
     const b = this.map.getBounds().pad(0.2);
     const s = b.getSouth(), n = b.getNorth(), w = b.getWest(), e = b.getEast();
     // a way we haven't classified yet counts as usable, so nothing fades in late
-    const usable = (id) => (this.travelClass === "car" || !this.streets.motorway.has(id)) &&
+    const usable = (id) => !this.streets.motorway.has(id) &&
       (!this.travelClass || !this.streets.classified.has(id) || this.streets.classIds[this.travelClass].has(id));
     const shown = [], faint = [];
     for (const r of this.runs)

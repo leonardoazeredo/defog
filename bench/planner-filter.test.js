@@ -38,15 +38,14 @@ streets.classIds.bike = new Set([10]);
   assert.equal(streets.onewayFor("hiking-mountain")(10), 0);
   assert.equal(streets.onewayFor("shortest")(10), 0);
 }
-{ // bikes may ride contraflow where tagged; cars may not
+{ // bikes may ride contraflow where tagged
   streets.bikeBoth = new Set([10]);
   assert.equal(streets.onewayFor("trekking")(10), 0);
   assert.equal(streets.onewayFor("fastbike")(10), 0);
-  assert.equal(streets.onewayFor("car-fast")(10), 1);
 }
-{ // motorways are for cars only
+{ // no mode may use a motorway
   streets.motorway = new Set([12]);
-  assert.equal(streets.usableFor("car-fast")(12), true, "car");
+  assert.equal(streets.usableFor("fastbike")(12), false, "road bike");
   assert.equal(streets.usableFor("hiking-mountain")(12), false, "walk");
   assert.equal(streets.usableFor("trekking")(12), false, "bike");
   assert.equal(streets.usableFor("shortest")(12), false, "direct");

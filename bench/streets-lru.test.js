@@ -173,7 +173,7 @@ const held = (s, i) => s.tiles.has("run:" + pos(i));
   { // every kind of an evicted piece goes, so none of them reads as known but empty
     const s = new StreetIndex({ newFrac: () => 1, fetchStreets: source({ fresh: four }).fetchStreets, maxSegs: MAX });
     await s.ensureRects([rect(0)], "bike");
-    await s.ensureRects([rect(0)], "car");
+    await s.ensureRects([rect(0)], "run");
     for (const i of [1, 2, 3]) await s.ensureRects([rect(i)], "run");
     assert.deepEqual([...s.tiles.keys()].filter((k) => k.endsWith(":" + pos(0))), []);
     assert.equal(s.wayIds.has(1), false);

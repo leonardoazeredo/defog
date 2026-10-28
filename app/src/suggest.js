@@ -254,8 +254,8 @@
   }
 
   // Which street classes matter: on foot everything walkable, on wheels not
-  // footways/paths (also keeps the bigger bike-range downloads sane), by car also motorways.
-  function streetKind(profile) { return profile === "hiking-mountain" ? "run" : profile === "car-fast" ? "car" : "bike"; }
+  // footways/paths (also keeps the bigger bike-range downloads sane).
+  function streetKind(profile) { return profile === "hiking-mountain" ? "run" : "bike"; }
   SuggestTool.streetKind = streetKind; // route editing fetches the same street class for a mode
 
   // Make sure the streets for the rects are loaded. Resolves true when they are and the run is

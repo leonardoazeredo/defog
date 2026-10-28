@@ -315,7 +315,7 @@
   const drawBtn = $("drawToggle"), statsWrap = $("statsWrap"), routeHint = $("routeHint");
   const reverseBtn = $("reverse");
   const elevEl = $("elev"), elevHead = $("elevHead"), wpListEl = $("wpList"), wpHead = $("wpHead");
-  const MODE_LABEL = { trekking: "bike route", fastbike: "road bike route", "hiking-mountain": "walk", "car-fast": "car route", shortest: "direct line" };
+  const MODE_LABEL = { trekking: "bike route", fastbike: "road bike route", "hiking-mountain": "walk", shortest: "direct line" };
   const IDLE = "Hit Start drawing, then tap the map to drop waypoints. Drag the line to bend it, drag a pin to move it, tap a pin to remove it.";
   let profile = "trekking";
   let units = localStorage.getItem("f2m_units") || "metric";

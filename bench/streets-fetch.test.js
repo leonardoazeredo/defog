@@ -114,7 +114,7 @@ async function testCase(body) {
 }
 
 (async () => {
-  await testCase(async () => { // a wheeled (bike-kind) fetch asks for the travel classes too, so car and road profiles are filtered
+  await testCase(async () => { // a wheeled (bike-kind) fetch asks for the travel classes too, so the road profile is filtered
     // geometry, then bike, road, car, oneWay, reverseWay, bikeBoth, motorway
     replyWith({ elements: [way(1), way(2), count, ...ids(1, 2), count, ...ids(2), count, ...ids(2), count, ...ids(1), count, count, ...ids(2), count, ...ids(1)] });
     const s = new StreetIndex({ newFrac: () => 1 });
@@ -126,7 +126,6 @@ async function testCase(body) {
     assert.deepEqual([...s.classIds.car], [2]);
     assert.deepEqual([...s.oneWay], [1]);
     assert.deepEqual([...s.classified], [1, 2]);
-    assert.equal(s.usableFor("car-fast")(1), false, "way 1 is not a car way");
     assert.ok(sent.indexOf(".bike") < sent.indexOf(".oneWay"), "class lists come before the one-way lists");
   });
   await testCase(async () => { // an Overpass answer that ran out of time or memory is a failed fetch, not an empty area
@@ -143,22 +142,12 @@ async function testCase(body) {
     assert.equal(sent.split("51.0000,13.7000").length - 1, 2, "one highway clause and one service clause");
     assert.match(sent, /->\.all;/);
   });
-  await testCase(async () => { // bikes are kept off bicycle=no, cars are not; a car fetch also takes motorways
+  await testCase(async () => { // bikes are kept off bicycle=no
     replyWith({ elements: [] });
-    await new StreetIndex({ newFrac: () => 1 }).ensureRects(rect, "car");
-    assert.match(sent, /motorway\|motorway_link/);
-    assert.doesNotMatch(sent, /motorroad/);
+    await new StreetIndex({ newFrac: () => 1 }).ensureRects(rect, "bike");
     assert.match(sent, /\.bike;|->\.bike/);
     const bikeList = sent.slice(sent.indexOf("("), sent.length).split("->.bike")[0];
     assert.match(bikeList.slice(bikeList.lastIndexOf("(")), /\[bicycle!=no\]/);
-    const carList = sent.split("->.road;")[1].split("->.car;")[0];
-    assert.doesNotMatch(carList, /bicycle/);
-  });
-  await testCase(async () => { // a walking fetch does not cover a request for cars (no motorways in it)
-    const s = new StreetIndex({ newFrac: () => 1 });
-    s._cover(StreetIndex.tilesCovering({ s: 50, w: 13, n: 52, e: 14 }), "run");
-    assert.equal(s._uncovered(rect, "bike").length, 0);
-    assert.ok(s._uncovered(rect, "car").length > 0);
   });
   await testCase(async () => { // walking and wheels both exclude motorroads; walking also foot=no
     replyWith({ elements: [] });
@@ -206,16 +195,18 @@ async function testCase(body) {
     }
     assert.equal(StreetIndex.tileKey("bike", 548, 2040), "bike:548:2040");
   });
-  await testCase(async () => { // a bike request after a run fetch makes no call; a car request does
+  await testCase(async () => { // a bike request after a run fetch makes no call; a run request after a bike fetch does
     let kinds = [];
     const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async (tiles, kind) => { kinds.push(kind); return new Map(tiles.map((t) => [t.x + ":" + t.y, { ways: [], groups: {} }])); } });
     await s.ensureRects(rect, "run");
     await s.ensureRects(rect, "bike");
     assert.deepEqual(kinds, ["run"]);
-    await s.ensureRects(rect, "car");
-    assert.deepEqual(kinds, ["run", "car"]);
-    await s.ensureRects(rect, "car");
-    assert.deepEqual(kinds, ["run", "car"], "the car fetch is remembered next to the run fetch");
+    kinds = [];
+    const t = new StreetIndex({ newFrac: () => 1, fetchStreets: async (tiles, kind) => { kinds.push(kind); return new Map(tiles.map((x) => [x.x + ":" + x.y, { ways: [], groups: {} }])); } });
+    await t.ensureRects(rect, "bike");
+    await t.ensureRects(rect, "run");
+    await t.ensureRects(rect, "run");
+    assert.deepEqual(kinds, ["bike", "run"], "the run fetch is remembered next to the bike fetch");
   });
   await testCase(async () => { // a rect over one fetched and one new tile asks only for the new one; overlapping rects ask for each tile once
     const asked = [];
@@ -275,7 +266,6 @@ async function testCase(body) {
     const sha = (kind) => crypto.createHash("sha1").update(StreetIndex.rectQuery(boxes, kind)).digest("hex");
     assert.equal(sha("run"), "822a328d1c8f332ec55d2e363755ba4075c475f2");
     assert.equal(sha("bike"), "e3620d77390907388c5540fba2593f2325f19077");
-    assert.equal(sha("car"), "33f830337ebdd0c1c3afee063d36004a9aa1c03a");
     replyWith({ elements: [] });
     await StreetIndex.overpassFetch([{ x: 548, y: 2040 }], "run");
     assert.equal(sent, "data=" + StreetIndex.rectQuery([StreetIndex.tileBounds({ x: 548, y: 2040 })], "run"), "the default source asks for the tile's bounds");
