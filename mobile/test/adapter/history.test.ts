@@ -301,6 +301,49 @@ describe("a track request that is never answered", () => {
     lists(WALKER);
     await sync.settled();
     expect(needTrack).toHaveBeenCalledTimes(2);
+    // same total, so only forgetting the old chunk 0 keeps its cells (x 0-90) off the overlay
+    sync.onTrack({ activityId: WALKER, index: 0, total: 3, points: walk(1000, 1090) });
+    sync.onTrack({ activityId: WALKER, index: 1, total: 3, points: walk(1100, 1190) });
+    sync.onTrack({ activityId: WALKER, index: 2, total: 3, points: walk(1200, 1290) });
+    await sync.settled();
+    expect(visitedAt(fogMap, 1050)).toBe(true);
+    expect(visitedAt(fogMap, 50)).toBe(false);
+  });
+
+  it("is not kept waiting by chunks of another activity's track", async () => {
+    const { lists, needTrack, sync } = await setup();
+    lists(WALKER, RIDER);
+    lists(WALKER, RIDER);
+    sync.onTrack(chunk(RIDER, 0, 3));
+    lists(WALKER, RIDER);
+    await sync.settled();
+    expect(needTrack.mock.calls.filter((c) => c[0] === WALKER)).toHaveLength(2);
+    expect(needTrack.mock.calls.filter((c) => c[0] === RIDER)).toHaveLength(1);
+  });
+});
+
+describe("a track the phone could not send", () => {
+  it.each(["notFound", "readFailed"] as const)(
+    "is asked for again by the next list after %s, not at once",
+    async (reason) => {
+      const { sync, lists, needTrack } = await setup();
+      lists(WALKER);
+      await sync.settled();
+      sync.onTrackUnavailable({ activityId: WALKER, reason });
+      await sync.settled();
+      expect(needTrack).toHaveBeenCalledTimes(1);
+      lists(WALKER);
+      await sync.settled();
+      expect(needTrack).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("drops the chunks of a half-received track", async () => {
+    const { sync, lists, fogMap } = await setup();
+    lists(WALKER);
+    sync.onTrack({ activityId: WALKER, index: 0, total: 3, points: walk(0, 90) });
+    sync.onTrackUnavailable({ activityId: WALKER, reason: "readFailed" });
+    lists(WALKER);
     sendTrack(sync, WALKER, walk(0, 300), 100);
     await sync.settled();
     expect(visitedAt(fogMap, 250)).toBe(true);
