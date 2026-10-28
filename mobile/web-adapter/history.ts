@@ -98,10 +98,15 @@ export interface HistorySync {
 export function createHistorySync(deps: HistorySyncDeps): HistorySync {
   const { pageApi, cache, page, rules } = deps;
 
-  const revealed = new Map<string, Int32Array>();
+  // The stamp (rules, end time, distance) the cells were revealed under, so a list that changes any of them replaces the track under the same id.
+  const revealed = new Map<string, { cells: Int32Array; stamp: RevealStamp }>();
   // The stamp is taken when a track is asked for: a list that changes the activity meanwhile must not stamp the old track as current.
   const requested = new Map<string, RevealStamp>();
   const partial = new Map<string, PartialTrack>();
+  // No timer: a list that comes with no chunk since the previous one only marks the waiting ids (`silent`); the next
+  // such list forgets those requests and asks again. A chunk for any id resets the count.
+  let chunkSinceList = false;
+  let silent = new Set<string>();
   let wanted = new Set<string>();
 
   // One job at a time: a rebuild must not clear the overlay while a reveal is still on its way in.
@@ -124,7 +129,7 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
 
   function rebuild(): void {
     page.fogMap.clearOverlay();
-    for (const cells of revealed.values()) page.fogMap.addCells(cells);
+    for (const { cells } of revealed.values()) page.fogMap.addCells(cells);
   }
 
   async function cachedCells(item: ActivitySummary): Promise<Int32Array | null> {
@@ -144,11 +149,42 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
     return new Int32Array(hit.cells);
   }
 
+  // Forgets the request and any half-received chunks, so the next list that wants the id and has no cells asks again.
+  function forgetRequest(id: string): void {
+    requested.delete(id);
+    partial.delete(id);
+  }
+
+  function sameStamp(a: RevealStamp, b: RevealStamp): boolean {
+    return (
+      a.rulesVersion === b.rulesVersion &&
+      a.rulesHash === b.rulesHash &&
+      a.endedAt === b.endedAt &&
+      a.distanceM === b.distanceM
+    );
+  }
+
   async function applyList(items: ActivitySummary[]): Promise<void> {
     wanted = new Set(items.map((item) => item.id));
     const summaries = new Map(items.map((item) => [item.id, item]));
 
+    if (chunkSinceList) {
+      silent = new Set();
+    } else {
+      for (const id of silent) forgetRequest(id);
+      silent = new Set(requested.keys());
+    }
+    chunkSinceList = false;
+
     let removed = false;
+    for (const [id, entry] of [...revealed]) {
+      const item = summaries.get(id);
+      // the track under this id was replaced: its cells go, and the track is restored from the reveal cache or asked for below
+      if (item != null && !sameStamp(entry.stamp, stampFor(rules, item))) {
+        revealed.delete(id);
+        removed = true;
+      }
+    }
     for (const id of [...revealed.keys()]) {
       if (wanted.has(id)) continue;
       revealed.delete(id);
@@ -177,7 +213,7 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
         pageApi.needTrack(id);
         continue;
       }
-      revealed.set(id, cells);
+      revealed.set(id, { cells, stamp: stampFor(rules, item) });
       restored.push(cells);
     }
 
@@ -194,6 +230,7 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
 
   async function applyTrack(chunk: TrackChunk): Promise<void> {
     const { activityId, index, total, points } = chunk;
+    chunkSinceList = true;
     // The panel asks for tracks the fog never requests (a reveal is cached), so every list member's chunks are joined.
     if (!wanted.has(activityId)) return;
 
@@ -224,7 +261,7 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
       await cache.deleteReveal(activityId);
       return;
     }
-    revealed.set(activityId, cells);
+    revealed.set(activityId, { cells, stamp });
     if (page.fogMap.addCells(cells) > 0) page.fogChanged();
   }
 
