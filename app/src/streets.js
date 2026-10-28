@@ -384,9 +384,12 @@
           if (!cacheOnly && !StreetIndex.isDownloadError(e) && !STREET_REASONS.has(e && e.reason)) throw e;
           if (broke) throw broke;
           if (cacheOnly) throw e;
+          // a bug wrapped in a download error is thrown as itself, whether or not every tile arrived
+          if (StreetIndex.isDownloadError(e) && e.cause && !STREET_REASONS.has(e.cause.reason)) throw e.cause;
           // a deadline raised on an earlier answer while the open requests landed the rest loses
           // nothing: the call is whole. A replaced run still rejects, so its caller does no more work.
-          if (tiles.some((t) => !read.has(tid(t))) || (e && e.reason === "superseded")) throw short(e);
+          // the source keeps its first stop, so a replacement that came after a failure is told here
+          if (tiles.some((t) => !read.has(tid(t))) || (e && e.reason === "superseded")) throw short(stale() ? superseded() : e);
           // nothing this call asked for is missing, so its failure is not the run's to show, but a source that
           // fails after handing every tile is worth seeing; not for a replaced run (never logged). The class
           // and the street reason (download errors are all Error) only, as a message can name a tile
@@ -852,28 +855,51 @@
     tiles.sort((a, b) => d(a) - d(b));
   };
 
-  // Reads an Overpass answer to a rectQuery and hands each requested tile its share.
+  // Whether the segment a-b touches the box (Liang-Barsky; the edges count).
+  function segmentTouches(a, b, r) {
+    const dx = b.lon - a.lon, dy = b.lat - a.lat;
+    let t0 = 0, t1 = 1;
+    for (const [p, q] of [[-dx, a.lon - r.w], [dx, r.e - a.lon], [-dy, a.lat - r.s], [dy, r.n - a.lat]]) {
+      if (p === 0) { if (q < 0) return false; continue; }
+      const t = q / p;
+      if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; } else { if (t < t0) return false; if (t < t1) t1 = t; }
+    }
+    return true;
+  }
+
+  // Reads an Overpass answer to a rectQuery and hands each requested tile its share. An answer that is
+  // not the whole of one (not an object, a remark, no elements, fewer than the seven count markers
+  // rectQuery ends its lists with) throws with reason "server" and a fixed message: server text never
+  // reaches a message.
   StreetIndex.splitAnswer = function (gj, tiles) {
+    const unusable = (what) => Object.assign(new Error("overpass: " + what), { reason: "server" });
+    if (!gj || typeof gj !== "object") throw unusable("the answer is not an object");
     // a timeout or out-of-memory still answers 200, with whatever it had by then
-    if (gj.remark) throw Object.assign(new Error("overpass: " + gj.remark), { reason: "server" });
+    if (gj.remark) throw unusable("the server remarked on the answer");
+    if (!Array.isArray(gj.elements)) throw unusable("the answer has no elements");
     const ways = [], groups = {};
     for (const name of GROUP_ORDER) groups[name] = [];
     let group = -1; // -1 = the geometry, then one list (see GROUP_ORDER) per count marker
-    for (const el of gj.elements || []) {
+    for (const el of gj.elements) {
+      if (!el) continue;
       if (el.type === "count") { group++; continue; }
       if (el.type !== "way") continue;
       if (group < 0) ways.push({ id: el.id, nodes: el.nodes, geometry: el.geometry });
       else if (groups[GROUP_ORDER[group]]) groups[GROUP_ORDER[group]].push(el.id);
     }
-    // a way goes to every requested tile holding one of its points, to the first when none does
+    // a cut answer would store its tiles as covered with ways that no list classifies
+    if (group + 1 < GROUP_ORDER.length) throw unusable("the answer is incomplete");
+    // a way goes to every requested tile one of its segments touches (a long segment can cross a tile
+    // with no vertex in it), to the first when none does
     const answers = new Map(tiles.map((t) => [t.x + ":" + t.y, { ways: [], groups: Object.fromEntries(GROUP_ORDER.map((n) => [n, []])) }]));
+    const boxes = tiles.map((t) => [answers.get(t.x + ":" + t.y), StreetIndex.tileBounds(t)]);
     const home = new Map(); // way id -> the answers it went to
     for (const w of ways) {
-      const hit = new Set();
-      for (const p of w.geometry || []) {
-        const t = StreetIndex.tileOf(p.lon, p.lat);
-        const a = answers.get(t.x + ":" + t.y);
-        if (a) hit.add(a);
+      const hit = new Set(), g = w.geometry || [];
+      for (let i = 0; i < Math.max(1, g.length - 1); i++) {
+        const a = g[i], b = g[i + 1] || a;
+        if (!a) break;
+        for (const [answer, box] of boxes) if (!hit.has(answer) && segmentTouches(a, b, box)) hit.add(answer);
       }
       const into = hit.size ? [...hit] : [answers.get(tiles[0].x + ":" + tiles[0].y)];
       for (const a of into) a.ways.push(w);

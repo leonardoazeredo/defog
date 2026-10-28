@@ -8,6 +8,8 @@ const { StreetIndex } = require("./lib/load.js");
 const way = (id) => ({ type: "way", id, nodes: [id * 10, id * 10 + 1], geometry: [{ lat: 51, lon: 13.7 }, { lat: 51.001, lon: 13.7 }] });
 const ids = (...xs) => xs.map((id) => ({ type: "way", id }));
 const count = { type: "count" };
+// the seven count markers a complete answer ends with (one per list, empty or not)
+const EMPTY = Array(7).fill(count);
 let sent = null;
 function replyWith(body) {
   global.fetch = async (url, opts) => { sent = decodeURIComponent(opts.body); return { ok: true, status: 200, json: async () => body }; };
@@ -26,7 +28,7 @@ function tileElements(boxes) {
       elements.push({ type: "way", id, nodes: [id * 10, id * 10 + 1], geometry: [{ lat: tb.s + 0.001, lon: tb.w + 0.001 }, { lat: tb.s + 0.002, lon: tb.w + 0.001 }] });
     }
   }
-  return elements;
+  return elements.concat(EMPTY);
 }
 // Answers each query with one way in every tile of every bbox it asks for, and records the query's
 // bboxes, space-separated; fail(n, bboxes) gives the HTTP status for the n-th query (from 1), nothing
@@ -132,25 +134,25 @@ async function testCase(body) {
     replyWith({ elements: [way(1)], remark: "runtime error: Query timed out in \"query\" at line 3 after 61 seconds." });
     const s = new StreetIndex({ newFrac: () => 1 });
     const err = await s.ensureRects(rect, "run").then(() => null, (e) => e);
-    assert.match(err.message, /timed out/);
+    assert.ok(!/timed out|runtime error/.test(err.message), "no server text in the message");
     assert.equal(err.reason, "server", "a remark is the server's failure, so the page can word it");
     assert.equal(s.tiles.size, 0, "the area is not recorded as fetched");
   });
   await testCase(async () => { // the box is scanned once; every list is filtered from that result (rescanning per list timed out Overpass)
-    replyWith({ elements: [] });
+    replyWith({ elements: EMPTY });
     await new StreetIndex({ newFrac: () => 1 }).ensureRects(rect, "run");
     assert.equal(sent.split("51.0000,13.7000").length - 1, 2, "one highway clause and one service clause");
     assert.match(sent, /->\.all;/);
   });
   await testCase(async () => { // bikes are kept off bicycle=no
-    replyWith({ elements: [] });
+    replyWith({ elements: EMPTY });
     await new StreetIndex({ newFrac: () => 1 }).ensureRects(rect, "bike");
     assert.match(sent, /\.bike;|->\.bike/);
     const bikeList = sent.slice(sent.indexOf("("), sent.length).split("->.bike")[0];
     assert.match(bikeList.slice(bikeList.lastIndexOf("(")), /\[bicycle!=no\]/);
   });
   await testCase(async () => { // walking and wheels both exclude motorroads; walking also foot=no
-    replyWith({ elements: [] });
+    replyWith({ elements: EMPTY });
     await new StreetIndex({ newFrac: () => 1 }).ensureRects(rect, "run");
     assert.match(sent, /\[motorroad!=yes\]\[foot!=no\]/);
     await new StreetIndex({ newFrac: () => 1 }).ensureRects(rect, "bike");
@@ -171,7 +173,7 @@ async function testCase(body) {
   await testCase(async () => { // a rect over two tiles side by side in one 2x2 block is one query over the box they fill, a highway
     // and a service clause; two tiles side by side in two blocks are a query each
     const bodies = [];
-    global.fetch = async (url, opts) => { bodies.push(decodeURIComponent(opts.body)); return { ok: true, status: 200, json: async () => ({ elements: [] }) }; };
+    global.fetch = async (url, opts) => { bodies.push(decodeURIComponent(opts.body)); return { ok: true, status: 200, json: async () => ({ elements: EMPTY }) }; };
     const s = new StreetIndex({ newFrac: () => 1 });
     await s.ensureRects([{ s: 51.01, w: 13.71, n: 51.02, e: 13.73 }], "run");
     assert.equal(bodies.length, 1, "one query for both tiles");
@@ -227,6 +229,44 @@ async function testCase(body) {
     await s.ensureRects([{ s: 51.01, w: 13.74, n: 51.02, e: 13.76 }], "run").catch(() => {});
     assert.deepEqual(asked[1], ["550:2040"], "the retry asks only the missing tile");
   });
+  await testCase(async () => { // an answer that is not a whole Overpass answer is the server's failure, never a TypeError (a bug) and never "covered"
+    const tiles = [T(548, 2040)];
+    const cases = {
+      "null": null, "a string": "busy", "a number": 3, "an array": [], "no elements": {}, "elements not a list": { elements: {} },
+      "cut after the geometry": { elements: [way(1)] },
+      "six of seven counts": { elements: [way(1), ...EMPTY.slice(1)] },
+    };
+    for (const [name, body] of Object.entries(cases)) {
+      let err;
+      try { StreetIndex.splitAnswer(body, tiles); } catch (e) { err = e; }
+      assert.ok(err && !(err instanceof TypeError), name + " throws a server failure");
+      assert.equal(err.reason, "server", name);
+    }
+    assert.equal(StreetIndex.splitAnswer({ elements: EMPTY }, tiles).get("548:2040").ways.length, 0, "an empty area still answers whole");
+    // through a run: the answer is not stored and the tile is not covered
+    for (const body of [null, {}, { elements: [way(1)] }]) {
+      global.Overpass._reset();
+      global.fetch = async () => ({ ok: true, status: 200, json: async () => body });
+      const s = new StreetIndex({ newFrac: () => 1 });
+      const err = await s.ensureRects([{ s: 51.0, w: 13.7, n: 51.01, e: 13.71 }], "run").then(() => null, (e) => e);
+      assert.ok(StreetIndex.isDownloadError(err), "a download failure, not a bug: " + err);
+      assert.equal(err.reason, "server");
+      assert.equal(s.tiles.size, 0);
+    }
+  });
+  await testCase(async () => { // a way is in every tile its segments cross, also a tile none of its vertices lies in
+    const long = { type: "way", id: 5, nodes: [50, 51], geometry: [{ lat: 51.01, lon: 13.71 }, { lat: 51.01, lon: 13.76 }] };
+    // a diagonal over a 3x3 block of tiles: its bounding box holds all nine, the line crosses five
+    const diag = { type: "way", id: 6, nodes: [60, 61], geometry: [{ lat: 51.001, lon: 13.703 }, { lat: 51.072, lon: 13.774 }] };
+    const tiles = [];
+    for (let y = 2040; y <= 2042; y++) for (let x = 548; x <= 550; x++) tiles.push(T(x, y));
+    const out = StreetIndex.splitAnswer({ elements: [long, diag, count, ...ids(5, 6), ...EMPTY.slice(1)] }, tiles);
+    const where = (id) => [...out.entries()].filter(([, a]) => a.ways.some((w) => w.id === id)).map(([k]) => k).sort();
+    assert.deepEqual(where(5), ["548:2040", "549:2040", "550:2040"], "the middle tile has no vertex of the way");
+    assert.deepEqual(where(6), ["548:2040", "549:2040", "549:2041", "550:2041", "550:2042"], "only the tiles the line crosses");
+    assert.deepEqual(out.get("549:2040").groups.bike, [5, 6], "the id lists follow the way into the tile");
+    assert.deepEqual(out.get("550:2040").groups.bike, [5]);
+  });
   await testCase(async () => { // a source that leaves a requested tile out is an error, and nothing is recorded as fetched
     const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async () => new Map() });
     const err = await s.ensureRects(rect, "run").then(() => null, (e) => e);
@@ -266,7 +306,7 @@ async function testCase(body) {
     const sha = (kind) => crypto.createHash("sha1").update(StreetIndex.rectQuery(boxes, kind)).digest("hex");
     assert.equal(sha("run"), "822a328d1c8f332ec55d2e363755ba4075c475f2");
     assert.equal(sha("bike"), "e3620d77390907388c5540fba2593f2325f19077");
-    replyWith({ elements: [] });
+    replyWith({ elements: EMPTY });
     await StreetIndex.overpassFetch([{ x: 548, y: 2040 }], "run");
     assert.equal(sent, "data=" + StreetIndex.rectQuery([StreetIndex.tileBounds({ x: 548, y: 2040 })], "run"), "the default source asks for the tile's bounds");
   });
@@ -451,7 +491,7 @@ async function testCase(body) {
     global.fetch = async () => {
       posts++;
       if (posts === 1) return { ok: false, status: 429, headers: { get: (k) => (k.toLowerCase() === "retry-after" ? "100" : null) }, json: async () => ({}) };
-      return { ok: true, status: 200, json: async () => ({ elements: [] }) };
+      return { ok: true, status: 200, json: async () => ({ elements: EMPTY }) };
     };
     const s = new StreetIndex({ newFrac: () => 1, now: clock.now, sleep: clock.sleep });
     const progress = [];
@@ -700,7 +740,7 @@ async function testCase(body) {
     }
     // overpassFetch does not dress a bug in reading an answer as a download failure either
     global.Overpass._reset();
-    global.fetch = async () => ({ ok: true, status: 200, json: async () => ({ elements: [] }) });
+    global.fetch = async () => ({ ok: true, status: 200, json: async () => ({ elements: EMPTY }) });
     const real = StreetIndex.splitAnswer;
     StreetIndex.splitAnswer = () => { throw bug; };
     try {
@@ -826,6 +866,48 @@ async function testCase(body) {
     try { await s.ensureRects(fiveTiles, "run", { stale: () => replaced }); } catch (e) { err = e; } finally { console.warn = orig; }
     assert.ok(StreetIndex.isSuperseded(err));
     assert.deepEqual(logged, []);
+  });
+  await testCase(async () => { // a run replaced while a failure was already the first stop is still superseded, not worded as the failure
+    let replaced = false;
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: async (tiles, kind, onTile) => {
+      onTile(tiles[0], { ways: [], groups: {} });
+      replaced = true;
+      throw Object.assign(new Error("x"), { reason: "server" });
+    } });
+    const err = await s.ensureRects(fiveTiles, "run", { stale: () => replaced }).then(() => null, (e) => e);
+    assert.ok(StreetIndex.isSuperseded(err), "got " + (err && err.cause && err.cause.reason));
+    assert.deepEqual([err.done, err.total], [1, 5], "what arrived is counted");
+  });
+  await testCase(async () => { // a source that fails after every tile arrived is dropped only when the failure is the run's deadline or a street failure: a bug wrapped in a download error is not
+    const bug = new TypeError("bug");
+    const handing = (error) => ({ newFrac: () => 1, fetchStreets: async (tiles, kind, onTile) => {
+      for (const t of tiles) onTile(t, { ways: [], groups: {} });
+      throw error;
+    } });
+    const wrapped = await new StreetIndex(handing(StreetIndex.downloadError(1, 1, bug, 1))).ensureRects(rect, "run").then(() => "resolved", (e) => e);
+    assert.equal(wrapped, bug, "the bug is the rejection, as itself");
+    const silent = { newFrac: () => 1, fetchStreets: async () => { throw StreetIndex.downloadError(0, 1, bug, 0); } };
+    assert.equal(await new StreetIndex(silent).ensureRects(rect, "run").then(() => "resolved", (e) => e), bug, "also when a tile is missing");
+    const logged = [], orig = console.warn;
+    console.warn = (...a) => logged.push(a);
+    try {
+      const outage = StreetIndex.downloadError(1, 1, Object.assign(new Error("x"), { reason: "busy" }), 1);
+      const whole = await new StreetIndex(handing(outage)).ensureRects(rect, "run");
+      assert.deepEqual([whole.done, whole.total], [1, 1]);
+    } finally { console.warn = orig; }
+    assert.equal(logged.length, 1, "an outage after every tile arrived is still logged by class and reason");
+  });
+  await testCase(async () => { // a bug in Overpass.post, or a throw from the caller's wait that is not a street failure, rejects as itself
+    const realPost = global.Overpass.post, bug = new TypeError("bug");
+    try {
+      global.Overpass.post = async () => { await null; throw bug; };
+      assert.equal(await within(StreetIndex.overpassFetch([T(548, 2040)], "run").then(() => null, (e) => e)), bug);
+      global.Overpass.post = realPost;
+      global.Overpass._reset();
+      global.fetch = async () => ({ ok: false, status: 429, headers: { get: () => null }, json: async () => ({}) });
+      const stopped = await within(StreetIndex.overpassFetch([T(548, 2040)], "run", null, { wait: async () => { throw bug; } }).then(() => null, (e) => e));
+      assert.equal(stopped, bug);
+    } finally { global.Overpass.post = realPost; global.Overpass._reset(); }
   });
   await testCase(async () => { // a run replaced on an earlier answer rejects though the open requests landed every tile, which
     // are kept
