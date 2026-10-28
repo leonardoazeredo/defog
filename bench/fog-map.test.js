@@ -229,4 +229,32 @@ const sameBytes = (a, b) => assert.deepEqual(Array.from(a), Array.from(b));
   sameBytes(got[0].extra, [0x23, 0xc0, 0x05]);
   assert.equal(got[0].bitmap.reduce((n, v) => n + v.toString(2).replace(/0/g, "").length, 0), 4);
 }
+
+{ // _overlayCount: a rect covering fewer blocks than the tile's overlay holds looks each of its blocks up, otherwise every overlay block is walked; both must match a cell-by-cell count
+  const map = new FogMap();
+  const tx = 5, ty = 6, id = idOf(tx, ty);
+  assert.equal(map.addTile(nameOf(id), tileBytes([{ bx: 2, by: 2, cells: [[0, 0], [1, 0]] }])), true);
+  const overlay = [cellOf(tx, ty, 2, 2, 0, 0), cellOf(tx, ty, 2, 2, 2, 0)];
+  for (const b of [0, 1, 3, 4, 5]) overlay.push(cellOf(tx, ty, b, b === 1 ? 0 : b, 63, 63));
+  assert.equal(map.addCells(pairs(overlay)), 6, "the imported cell is not added again");
+  assert.equal(map.overlay.get(id).size, 6);
+  const [x0, y0] = cellOf(tx, ty, 0, 0, 0, 0);
+  const brute = (ax, ay, bx, by) => {
+    let n = 0;
+    for (let y = ay; y < by; y++) for (let x = ax; x < bx; x++) if (map.isVisitedCell(x, y)) n++;
+    return n;
+  };
+  for (const [name, rect, want] of [
+    ["one block, imported and overlay", [128, 128, 192, 192], 3],
+    ["2x2 blocks", [0, 0, 128, 128], 2],
+    ["ends on a block edge", [0, 0, 64, 64], 1],
+    ["stops one cell short of the block edge", [0, 0, 63, 63], 0],
+    ["blocks with nothing in them", [384, 0, 512, 128], 0],
+    ["more blocks than the overlay holds, so the walk branch", [0, 0, 512, 512], 8],
+  ]) {
+    const [ax, ay, bx, by] = [x0 + rect[0], y0 + rect[1], x0 + rect[2], y0 + rect[3]];
+    assert.equal(map.countVisitedInCellRect(ax, ay, bx, by), want, name);
+    assert.equal(brute(ax, ay, bx, by), want, name + " (cell by cell)");
+  }
+}
 console.log("fog-map.test.js ok");
