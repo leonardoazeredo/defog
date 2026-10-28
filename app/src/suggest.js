@@ -266,7 +266,7 @@
     // progress is heard only while some tile is missing from the index, so a rerun over covered
     // ground stays silent; waitUntil is set while a busy server is waited out
     const onProgress = (p) => emit(Object.assign({ loading: true, phase: "streets" }, p));
-    try { await this.streets.ensureRects(rects, kind, { onProgress, stale }); } catch (e) {
+    try { await this.streets.ensureRects(rects, kind, { onProgress, stale, holdAs: "suggest" }); } catch (e) {
       if (global.StreetIndex.isSuperseded(e)) return false;
       // a bug is not a failed download: the class only, as a message can name tiles. Logged even
       // when the run is stale, which only keeps it from being shown.

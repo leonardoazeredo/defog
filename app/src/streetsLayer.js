@@ -17,7 +17,7 @@
 // can't take are drawn faintly rather than dropped, so a walk-only alley still
 // shows while you're planning a bike ride.
 (function (global) {
-  const MAX_TILES = 48;      // no higher: what it paints stays in the shared index, whose MAX_SEGS caps it for the page's life
+  const MAX_TILES = 48;      // no higher: the shared index evicts nothing under a pass while it runs, so past its MAX_SEGS the view's own ways are cut short
   const FETCH_MAX_TILES = 16; // the most missing pieces one tap downloads
   const PIECE_M = 20;        // ways are judged in pieces this long
   const DONE_WITHIN_M = 20;  // a piece is done if a defogged cell lies this close (forgives GPS wobble)
