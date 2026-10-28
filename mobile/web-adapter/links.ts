@@ -26,7 +26,20 @@ export function installLinks(win: Window, doc: Document, send: Send): void {
       ev.preventDefault();
       return;
     }
-    if (url.origin === PAGE_ORIGIN) return;
+    // A blob URL is an export download that loads nothing, and a link that differs from the document base only in its
+    // fragment stays in the document. Any other same-origin link (path or query) would be a real load of the origin that
+    // reaches the late native answer, so it is stopped here and opens nothing: once the page has loaded, decideNavigation
+    // blocks the origin too.
+    if (url.origin === PAGE_ORIGIN) {
+      const here = new URL(doc.baseURI);
+      if (
+        url.protocol !== "blob:" &&
+        (url.pathname !== here.pathname || url.search !== here.search)
+      ) {
+        ev.preventDefault();
+      }
+      return;
+    }
     ev.preventDefault();
     if (url.protocol === "https:" || url.protocol === "http:") {
       send({ v: 1, type: "openExternal", url: url.href });

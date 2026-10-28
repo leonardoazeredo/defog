@@ -471,6 +471,19 @@ it("openExternal delegates to the dep", async () => {
   expect(h.openExternal).toHaveBeenCalledWith("https://fogofworld.app");
 });
 
+it("openExternal that rejects tells the user and does not throw", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const h = createHarness();
+  h.openExternal.mockRejectedValueOnce(new Error("no app for https://private.example/x"));
+  await h.c.start();
+  await expect(
+    h.c.onWebMessage({ v: 1, type: "openExternal", url: "https://private.example/x" }),
+  ).resolves.toBeUndefined();
+  expect(h.notified).toEqual([COPY.openLinkFailed]);
+  expect(JSON.stringify(warn.mock.calls)).not.toContain("private.example");
+  warn.mockRestore();
+});
+
 it("openAbout delegates to the dep", async () => {
   const h = createHarness();
   await h.c.start();

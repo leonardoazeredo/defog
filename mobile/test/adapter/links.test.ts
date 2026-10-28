@@ -133,17 +133,45 @@ it("intercepts the click a focused link gets from the Enter key", () => {
   expect(sent).toEqual([{ v: 1, type: "openExternal", url: "https://example.org/key" }]);
 });
 
-it("leaves same-origin links alone and sends nothing", () => {
+// The WebView lets a navigation through when onShouldStartLoadWithRequest answers late (#138), so a same-origin click that
+// would load anything has to be stopped here, not by decideNavigation's "block".
+it("leaves a fragment-only change of the current document and a blob download alone", () => {
   const sent = install();
   pageAt(
     ORIGIN,
-    `<a id="h" href="#">top</a><a id="p" href="/other">p</a><a id="abs" href="${ORIGIN}x?y=1#z">abs</a><a id="b" href="blob:${ORIGIN}0b1c">blob</a>`,
+    `<a id="h" href="#">top</a><a id="f" href="#close">close</a><a id="abs" href="${ORIGIN}#z">abs</a><a id="b" href="blob:${ORIGIN}0b1c">blob</a>`,
   );
-  for (const id of ["h", "p", "abs", "b"]) {
+  for (const id of ["h", "f", "abs", "b"]) {
     const a = document.getElementById(id);
     if (a == null) throw new Error("no link rendered");
-    expect(click(a).defaultPrevented).toBe(false);
+    expect(click(a).defaultPrevented, id).toBe(false);
   }
+  expect(sent).toEqual([]);
+});
+
+it("stops a same-origin link that changes the path or the query without opening anything", () => {
+  const sent = install();
+  pageAt(
+    ORIGIN,
+    `<a id="p" href="/other">p</a><a id="q" href="?x">q</a><a id="abs" href="${ORIGIN}x?y=1#z">abs</a><a id="pf" href="/other#frag">pf</a><a id="qf" href="?x#frag">qf</a>`,
+  );
+  for (const id of ["p", "q", "abs", "pf", "qf"]) {
+    const a = document.getElementById(id);
+    if (a == null) throw new Error("no link rendered");
+    expect(click(a).defaultPrevented, id).toBe(true);
+    expect(click(a, "auxclick").defaultPrevented, id).toBe(true);
+  }
+  expect(sent).toEqual([]);
+});
+
+it("counts a fragment link as the current document only when path and query match the page's", () => {
+  const sent = install();
+  document.head.innerHTML = `<base href="${ORIGIN}app/page?a=1">`;
+  document.body.innerHTML =
+    '<a id="same" href="#top">same</a><a id="other" href="/app/page#top">other</a><a id="q" href="/app/page?a=1#top">q</a>';
+  expect(click(document.getElementById("same") as Element).defaultPrevented).toBe(false);
+  expect(click(document.getElementById("other") as Element).defaultPrevented).toBe(true);
+  expect(click(document.getElementById("q") as Element).defaultPrevented).toBe(false);
   expect(sent).toEqual([]);
 });
 
