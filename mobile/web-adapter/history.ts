@@ -1,13 +1,34 @@
 import type { ActivitySummary, RouteRecord, TrackPoint } from "../src/bridge/protocol.js";
-import type { FogCache } from "./fogCache.js";
+import type { FogCache, RevealStamp } from "./fogCache.js";
 
-// app/src/reveal.js `Reveal.RULES`: results are only comparable within one `version`.
+// app/src/reveal.js `Reveal.RULES`: a cached reveal is reused only while a hash of all these fields matches.
 interface RevealRules {
   version: number;
   maxAccuracyM: number;
   maxGapS: number;
   maxGapM: number;
   halfWidthM: number;
+}
+
+// FNV-1a over the rules with sorted keys: it only has to notice a changed number, not resist forgery.
+function hashRules(rules: RevealRules): string {
+  const entries = Object.entries(rules).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const text = JSON.stringify(entries);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+export function stampFor(rules: RevealRules, item: ActivitySummary): RevealStamp {
+  return {
+    rulesVersion: rules.version,
+    rulesHash: hashRules(rules),
+    endedAt: item.endedAt,
+    distanceM: item.stats.distanceM,
+  };
 }
 
 type RouteGeometry = { coords: RouteRecord["coords"] };
@@ -77,7 +98,8 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
   const { pageApi, cache, page, rules } = deps;
 
   const revealed = new Map<string, Int32Array>();
-  const requested = new Set<string>();
+  // The stamp is taken when a track is asked for: a list that changes the activity meanwhile must not stamp the old track as current.
+  const requested = new Map<string, RevealStamp>();
   const partial = new Map<string, PartialTrack>();
   let wanted = new Set<string>();
 
@@ -104,9 +126,18 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
     for (const cells of revealed.values()) page.fogMap.addCells(cells);
   }
 
-  async function cachedCells(id: string): Promise<Int32Array | null> {
-    const hit = await cache.getReveal(id);
-    if (hit == null || hit.rulesVersion !== rules.version) return null;
+  async function cachedCells(item: ActivitySummary): Promise<Int32Array | null> {
+    const hit = await cache.getReveal(item.id);
+    if (hit == null) return null;
+    const now = stampFor(rules, item);
+    if (
+      hit.rulesVersion !== now.rulesVersion ||
+      hit.rulesHash !== now.rulesHash ||
+      hit.endedAt !== now.endedAt ||
+      hit.distanceM !== now.distanceM
+    ) {
+      return null;
+    }
     // a whole number of [cx, cy] pairs, or the entry is damaged
     if (hit.cells.byteLength % 8 !== 0) return null;
     return new Int32Array(hit.cells);
@@ -114,6 +145,7 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
 
   async function applyList(items: ActivitySummary[]): Promise<void> {
     wanted = new Set(items.map((item) => item.id));
+    const summaries = new Map(items.map((item) => [item.id, item]));
 
     let removed = false;
     for (const id of [...revealed.keys()]) {
@@ -121,7 +153,7 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
       revealed.delete(id);
       removed = true;
     }
-    for (const id of [...requested]) {
+    for (const id of [...requested.keys()]) {
       if (!wanted.has(id)) requested.delete(id);
     }
     // the panel asks for tracks too, so a half-received one may belong to an id the fog never requested
@@ -136,9 +168,11 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
     const restored: Int32Array[] = [];
     for (const id of wanted) {
       if (revealed.has(id) || requested.has(id)) continue;
-      const cells = await cachedCells(id);
+      const item = summaries.get(id);
+      if (item == null) continue;
+      const cells = await cachedCells(item);
       if (cells == null) {
-        requested.add(id);
+        requested.set(id, stampFor(rules, item));
         pageApi.needTrack(id);
         continue;
       }
@@ -176,14 +210,15 @@ export function createHistorySync(deps: HistorySyncDeps): HistorySync {
     for (let i = 0; i < total; i++) track.push(...(got.chunks.get(i) ?? []));
 
     showInPanel(() => page.history?.setTrack(activityId, track, got.route));
-    if (!requested.has(activityId)) return;
+    const stamp = requested.get(activityId);
+    if (stamp == null) return;
     requested.delete(activityId);
 
     const cells = page.reveal.reveal(
       track.map((p) => ({ t: p.t, lat: p.lat, lon: p.lon, accuracy: p.accuracy })),
       rules,
     );
-    await cache.putReveal(activityId, rules.version, cells);
+    await cache.putReveal(activityId, stamp, cells);
     if (!wanted.has(activityId)) {
       await cache.deleteReveal(activityId);
       return;

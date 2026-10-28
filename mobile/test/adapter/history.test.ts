@@ -6,7 +6,7 @@ import { unzlibSync } from "fflate";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ActivitySummary, TrackPoint } from "../../src/bridge/protocol.js";
 import { type FogCache, openFogCache } from "../../web-adapter/fogCache.js";
-import { type CrossfogPageApi, createHistorySync } from "../../web-adapter/history.js";
+import { type CrossfogPageApi, createHistorySync, stampFor } from "../../web-adapter/history.js";
 import { installFakeUpstream } from "./support/fakeUpstream.js";
 
 interface UpstreamFogMap {
@@ -80,13 +80,16 @@ function walkThrough(cell: { cx: number; cy: number }, halfM: number): TrackPoin
   return points;
 }
 
-function summary(id: string): ActivitySummary {
+function summary(
+  id: string,
+  changes: { endedAt?: string; distanceM?: number } = {},
+): ActivitySummary {
   return {
     id,
     travelMode: "walk",
     startedAt: "2026-01-01T10:00:00Z",
-    endedAt: "2026-01-01T11:00:00Z",
-    stats: { durationS: 3600, distanceM: 1000 },
+    endedAt: changes.endedAt ?? "2026-01-01T11:00:00Z",
+    stats: { durationS: 3600, distanceM: changes.distanceM ?? 1000 },
   };
 }
 
@@ -125,12 +128,18 @@ beforeEach(() => {
   idb = new IDBFactory();
 });
 
-async function setup(options: { cache?: FogCache; rulesVersion?: number; panel?: boolean } = {}) {
+async function setup(
+  options: { cache?: FogCache; rulesVersion?: number; halfWidthM?: number; panel?: boolean } = {},
+) {
   const fogMap = new FogParser.FogMap();
   const cache = options.cache ?? (await openFogCache(idb, true));
   const fogChanged = vi.fn();
   const needTrack = vi.fn();
-  const rules = { ...Reveal.RULES, version: options.rulesVersion ?? Reveal.RULES.version };
+  const rules = {
+    ...Reveal.RULES,
+    version: options.rulesVersion ?? Reveal.RULES.version,
+    halfWidthM: options.halfWidthM ?? Reveal.RULES.halfWidthM,
+  };
   const history = { setActivities: vi.fn(), setTrack: vi.fn() };
   const page: CrossfogPageApi = {
     fogMap,
@@ -139,7 +148,7 @@ async function setup(options: { cache?: FogCache; rulesVersion?: number; panel?:
     ...(options.panel === false ? {} : { history }),
   };
   const sync = createHistorySync({ pageApi: { needTrack }, cache, page, rules });
-  const lists = (...ids: string[]) => sync.onActivities({ items: ids.map(summary) });
+  const lists = (...ids: string[]) => sync.onActivities({ items: ids.map((id) => summary(id)) });
   return { fogMap, cache, fogChanged, needTrack, sync, lists, rules, history };
 }
 
@@ -171,6 +180,83 @@ describe("asking for tracks", () => {
     await second.sync.settled();
     expect(second.needTrack.mock.calls.map((c) => c[0]).sort()).toEqual([WALKER, RIDER].sort());
     expect(visitedAt(second.fogMap, 50)).toBe(false);
+  });
+});
+
+describe("a cached reveal is reused unless the rules or the activity end time or distance changed", () => {
+  async function revealedOnce() {
+    const first = await setup();
+    first.lists(WALKER);
+    sendTrack(first.sync, WALKER, walk(0, 300));
+    await first.sync.settled();
+    return first;
+  }
+
+  it("reuses an unchanged entry without asking for the track", async () => {
+    const first = await revealedOnce();
+    const again = await setup({ cache: first.cache });
+    again.lists(WALKER);
+    await again.sync.settled();
+    expect(again.needTrack).not.toHaveBeenCalled();
+    expect(visitedAt(again.fogMap, 50)).toBe(true);
+  });
+
+  it("asks again when halfWidthM changed under the same version", async () => {
+    const first = await revealedOnce();
+    const tuned = await setup({ cache: first.cache, halfWidthM: Reveal.RULES.halfWidthM + 10 });
+    tuned.lists(WALKER);
+    await tuned.sync.settled();
+    expect(tuned.needTrack).toHaveBeenCalledWith(WALKER);
+    expect(visitedAt(tuned.fogMap, 50)).toBe(false);
+  });
+
+  it("asks again when the track under the same id ended at another time", async () => {
+    const first = await revealedOnce();
+    const again = await setup({ cache: first.cache });
+    again.sync.onActivities({ items: [summary(WALKER, { endedAt: "2026-01-02T11:00:00Z" })] });
+    await again.sync.settled();
+    expect(again.needTrack).toHaveBeenCalledWith(WALKER);
+  });
+
+  it("asks again when the track under the same id has another distance", async () => {
+    const first = await revealedOnce();
+    const again = await setup({ cache: first.cache });
+    again.sync.onActivities({ items: [summary(WALKER, { distanceM: 2500 })] });
+    await again.sync.settled();
+    expect(again.needTrack).toHaveBeenCalledWith(WALKER);
+  });
+
+  it("stamps a track with the activity as it was when the track was asked for", async () => {
+    const s = await setup();
+    s.lists(WALKER);
+    await s.sync.settled();
+    s.sync.onActivities({ items: [summary(WALKER, { distanceM: 2500 })] });
+    sendTrack(s.sync, WALKER, walk(0, 300));
+    await s.sync.settled();
+    const later = await setup({ cache: s.cache });
+    later.sync.onActivities({ items: [summary(WALKER, { distanceM: 2500 })] });
+    await later.sync.settled();
+    expect(later.needTrack).toHaveBeenCalledWith(WALKER);
+  });
+
+  it("hashes the rules whatever order their keys are in", () => {
+    const a = stampFor(Reveal.RULES, summary(WALKER));
+    const reordered = Object.fromEntries(Object.entries(Reveal.RULES).reverse());
+    expect(stampFor(reordered as typeof Reveal.RULES, summary(WALKER)).rulesHash).toBe(a.rulesHash);
+    const tuned = { ...Reveal.RULES, halfWidthM: Reveal.RULES.halfWidthM + 1 };
+    expect(stampFor(tuned, summary(WALKER)).rulesHash).not.toBe(a.rulesHash);
+  });
+
+  it("overwrites the old entry with the recomputed one", async () => {
+    const first = await revealedOnce();
+    const tuned = await setup({ cache: first.cache, halfWidthM: Reveal.RULES.halfWidthM + 10 });
+    tuned.lists(WALKER);
+    sendTrack(tuned.sync, WALKER, walk(0, 300));
+    await tuned.sync.settled();
+    const later = await setup({ cache: first.cache, halfWidthM: Reveal.RULES.halfWidthM + 10 });
+    later.lists(WALKER);
+    await later.sync.settled();
+    expect(later.needTrack).not.toHaveBeenCalled();
   });
 });
 
@@ -266,7 +352,11 @@ describe("restoring from the cache", () => {
 
   it("treats a damaged cache entry as missing", async () => {
     const { lists, sync, cache, needTrack } = await setup();
-    await cache.putReveal(WALKER, win.Reveal.RULES.version, new Int32Array([1, 2, 3]));
+    await cache.putReveal(
+      WALKER,
+      stampFor(win.Reveal.RULES, summary(WALKER)),
+      new Int32Array([1, 2, 3]),
+    );
     const raw = await cache.getReveal(WALKER);
     expect(raw?.cells.byteLength).toBe(12);
     lists(WALKER);
