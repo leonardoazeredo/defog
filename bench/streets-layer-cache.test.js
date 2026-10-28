@@ -490,6 +490,27 @@ function source(held, net) {
     assert.deepEqual([...new Set(judged)], [300], "only the replaced way is judged again");
     assert.deepEqual(layer.runs.map((r) => r.id).sort(), [1, 2], "the untouched way keeps its runs, the replaced one has new ones");
     assert.equal(layer.runs.length, 2);
+    judged.length = 0;
+    layer.invalidateFog();
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual([...new Set(judged)].sort(), [300, 500], "the fog moved: every way is judged again");
+    assert.equal(layer.runs.length, 2);
+  }
+  { // a download still running after the map moved does not put its count on the new view's badge
+    const { layer, state, streets } = fakeLayer(source(new Set(), () => new Promise(() => {})).fn);
+    let progress;
+    const ensure = streets.ensureRects.bind(streets);
+    streets.ensureRects = (rects, kind, opts) => { if (opts && opts.onProgress) progress = opts.onProgress; return ensure(rects, kind, opts); };
+    await layer._update();
+    layer._download();
+    await tick();
+    progress({ done: 0, total: 2 });
+    assert.match(state.said[state.said.length - 1][0], /0 of 2/, "the download's own view shows its count");
+    layer._moved();
+    await tick();
+    const said = state.said.length;
+    progress({ done: 1, total: 2 });
+    assert.equal(state.said.length, said, "nothing is said in the new view");
   }
   console.log("streets-layer-cache.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });

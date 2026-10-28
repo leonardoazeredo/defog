@@ -63,7 +63,8 @@
     return new Promise((resolve, reject) => {
       let timer = null;
       const waiter = () => { if (timer) Overpass._clearTimeout(timer); resolve(); };
-      const leave = (e) => { s.waiting.splice(s.waiting.indexOf(waiter), 1); reject(e); };
+      // a waiter already handed its slot is out of the queue, and splice(-1) would drop another post's
+      const leave = (e) => { const i = s.waiting.indexOf(waiter); if (i >= 0) s.waiting.splice(i, 1); reject(e); };
       const poll = () => {
         let gone;
         try { gone = stale(); } catch (e) { leave(e); return; }

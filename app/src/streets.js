@@ -287,7 +287,7 @@
     // tells onWaysChanged once it ends if the index version moved while it ran, so a reader counting held pieces recounts
     const end = () => {
       this.runs.delete(under);
-      if (notify && this.version !== version && this.onWaysChanged) Promise.resolve().then(() => this.onWaysChanged());
+      if (notify && this.version !== version) this._tellWaysChanged();
     };
     run.then(end, end);
     return run;
@@ -558,7 +558,8 @@
       this._use(pos);
       this._makeRoom();
       if (!stale) {
-        const mine = (from.kind === "run" ? ["run", "bike"] : [from.kind]).map((k) => StreetIndex.tileKey(k, from.x, from.y));
+        const kinds = from.kind === "run" ? ["run", "bike"] : [from.kind];
+        const mine = kinds.map((k) => StreetIndex.tileKey(k, from.x, from.y));
         const listed = new Set(answer.ways.map((w) => w.id)), out = new Set();
         for (const id of listed) {
           const held = this.staleWays.get(id);
@@ -573,7 +574,6 @@
           if (!entry.from.size) out.add(id);
         }
         this._dropWays([...out]);
-        const kinds = from.kind === "run" ? ["run", "bike"] : [from.kind];
         for (const id of out) {
           if (listed.has(id)) continue;
           const gone = this.goneWays.get(id) || new Set();
@@ -591,8 +591,14 @@
     } finally {
       // a throw midway leaves ways dropped: the graphs built before must still rebuild
       this.version++;
-      if (this.wayEpoch !== epoch && this.onWaysChanged) Promise.resolve().then(() => this.onWaysChanged());
+      if (this.wayEpoch !== epoch) this._tellWaysChanged();
     }
+  };
+
+  // a listener's throw would be an unhandled rejection; only its class is logged, as its message can carry tile numbers
+  StreetIndex.prototype._tellWaysChanged = function () {
+    if (!this.onWaysChanged) return;
+    Promise.resolve().then(() => this.onWaysChanged()).catch((e) => console.error("[streets] onWaysChanged threw", e && e.name));
   };
 
   // the per-way part of _read; freshHeld collects what an expired copy must not add classes to

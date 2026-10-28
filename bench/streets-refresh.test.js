@@ -250,5 +250,20 @@ const consistent = (s) => {
     assert.deepEqual(wayIdsOf(s), [1], "an expired run copy still brings a way a bike answer dropped");
     consistent(s);
   }
+  { // a listener that throws is logged by class, never left to an unhandled rejection
+    const W = [[100, 100], [300, 100]];
+    const s = index({ "548:2040": answer([way(1, [1, 2], ...W)]) }, { "548:2040": answer([]) });
+    await s.ensureRects([west], "run", { cacheOnly: true });
+    const logged = [], error = console.error;
+    console.error = (...a) => logged.push(a);
+    s.onWaysChanged = () => { throw new RangeError("listener"); };
+    try {
+      await s.ensureRects([west], "run");
+      // the listener runs a few microtasks after the run resolves
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    } finally { console.error = error; }
+    assert.ok(logged.length > 0, "the throw is logged");
+    for (const a of logged) assert.deepEqual(a, ["[streets] onWaysChanged threw", "RangeError"]);
+  }
   console.log("streets-refresh.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });
