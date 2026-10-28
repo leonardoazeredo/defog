@@ -11,8 +11,7 @@ import { createBackupFlow } from "./backup/backup.js";
 import { createRestoreFlow } from "./backup/restore.js";
 import { createSettingsChannel } from "./backup/settings.js";
 import { reportDropped } from "./bridge/dropped.js";
-import { decideNavigation, shouldOpenWindowExternally } from "./bridge/navigationPolicy.js";
-import { openLink } from "./bridge/openLink.js";
+import { createLinkHandlers } from "./bridge/linkHandlers.js";
 import { pageConfigScript } from "./bridge/pageConfig.js";
 import {
   inspectWebToNative,
@@ -261,6 +260,12 @@ export function WebShell(): React.JSX.Element {
     return subscribeIncoming((file) => void controller.onIncoming(file));
   }, [controller]);
 
+  const linkHandlers = createLinkHandlers({
+    initialLoadDone: () => initialLoadDone.current,
+    open: Linking.openURL,
+    notify,
+  });
+
   const userAgent = `CrossTheFog/${Constants.expoConfig?.version ?? "0"} (+https://madera.codes)`;
   const pageConfig = pageConfigScript(Constants.expoConfig?.extra?.nextgisOverpassKey);
 
@@ -280,19 +285,8 @@ export function WebShell(): React.JSX.Element {
         onLoadEnd={() => {
           initialLoadDone.current = true;
         }}
-        onShouldStartLoadWithRequest={(event) => {
-          const decision = decideNavigation(event.url, initialLoadDone.current);
-          if (decision === "external") {
-            void openLink(event.url, Linking.openURL, notify);
-          }
-          return decision === "allow";
-        }}
-        onOpenWindow={(event) => {
-          const url = event.nativeEvent.targetUrl;
-          if (shouldOpenWindowExternally(url)) {
-            void openLink(url, Linking.openURL, notify);
-          }
-        }}
+        onShouldStartLoadWithRequest={linkHandlers.onShouldStartLoad}
+        onOpenWindow={linkHandlers.onOpenWindow}
         onMessage={(event) => {
           if (!isTrustedSource(event.nativeEvent.url)) return;
           const parsed = inspectWebToNative(event.nativeEvent.data);

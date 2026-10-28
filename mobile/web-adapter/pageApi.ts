@@ -3,18 +3,25 @@ import type { Send } from "./bridge.js";
 
 type PageMessage<E extends PageEvent> = Extract<NativeToWeb, { type: E }>;
 
-type PageEvent =
-  | "routeStatus"
-  | "linkStatus"
-  | "activities"
-  | "track"
-  | "trackUnavailable"
-  | "unreadableActivities";
+// The one list of native-to-page events: the listener table, `isPageMessage` and the session's routing all follow it.
+const PAGE_EVENTS = [
+  "routeStatus",
+  "linkStatus",
+  "activities",
+  "track",
+  "trackUnavailable",
+  "unreadableActivities",
+] as const;
+
+type PageEvent = (typeof PAGE_EVENTS)[number];
+
+// True for a message the page API delivers to `window.crossfog.on` listeners.
+export function isPageMessage(msg: NativeToWeb): msg is PageMessage<PageEvent> {
+  return (PAGE_EVENTS as readonly string[]).includes(msg.type);
+}
 
 // The page never sees the bridge envelope (`v`, `type`), only the payload.
 type PageListener<E extends PageEvent> = (payload: Omit<PageMessage<E>, "v" | "type">) => void;
-
-export type PageHandlers = { [E in PageEvent]?: PageListener<E> };
 
 interface CrossfogApi {
   sendRoute(route: RouteRecord): void;
@@ -36,16 +43,12 @@ export interface PageApi {
   dispatch(msg: NativeToWeb): void;
 }
 
-export function installPageApi(win: Window, send: Send, handlers: PageHandlers = {}): PageApi {
+export function installPageApi(win: Window, send: Send): PageApi {
   type Entry = { fn: (payload: never) => void };
-  const listeners: Record<PageEvent, Set<Entry>> = {
-    routeStatus: new Set(),
-    linkStatus: new Set(),
-    activities: new Set(),
-    track: new Set(),
-    trackUnavailable: new Set(),
-    unreadableActivities: new Set(),
-  };
+  const listeners = Object.fromEntries(PAGE_EVENTS.map((e) => [e, new Set<Entry>()])) as Record<
+    PageEvent,
+    Set<Entry>
+  >;
 
   function on<E extends PageEvent>(event: E, fn: PageListener<E>): () => void {
     const entry: Entry = { fn };
@@ -53,11 +56,6 @@ export function installPageApi(win: Window, send: Send, handlers: PageHandlers =
     return () => {
       listeners[event].delete(entry);
     };
-  }
-
-  for (const event of Object.keys(handlers) as PageEvent[]) {
-    const fn = handlers[event];
-    if (fn != null) on(event, fn as PageListener<typeof event>);
   }
 
   win.crossfog = {
@@ -88,18 +86,9 @@ export function installPageApi(win: Window, send: Send, handlers: PageHandlers =
 
   return {
     dispatch(msg) {
-      switch (msg.type) {
-        case "routeStatus":
-        case "linkStatus":
-        case "activities":
-        case "track":
-        case "trackUnavailable":
-        case "unreadableActivities": {
-          const { v: _v, type, ...payload } = msg;
-          emit(type, payload);
-          break;
-        }
-      }
+      if (!isPageMessage(msg)) return;
+      const { v: _v, type, ...payload } = msg;
+      emit(type, payload);
     },
   };
 }

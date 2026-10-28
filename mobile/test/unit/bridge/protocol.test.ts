@@ -665,3 +665,84 @@ describe("exportBinary against what the page really sends", () => {
     expect(parseWebToNative(chunk("abcd", "4a8c9ca7-0205-4821-81d7-9b02e4e3d80c"))).not.toBeNull();
   });
 });
+
+describe("limits and ranges", () => {
+  const send = (r: object) => JSON.stringify({ v: 1, type: "sendRoute", route: r });
+  const exportChunk = (over: object) =>
+    JSON.stringify({
+      v: 1,
+      type: "exportBinary",
+      exportId: "e",
+      name: "abc",
+      index: 0,
+      total: 1,
+      files: 1,
+      data: "AAEC",
+      ...over,
+    });
+  const point = { t: 1, lat: 0, lon: 0 };
+  const track = (over: object, p: object = point) =>
+    JSON.stringify({ v: 1, type: "track", activityId, index: 0, total: 1, points: [p], ...over });
+
+  it.each([
+    ["a travel mode over 32 characters", { travelMode: "x".repeat(33) }],
+    ["a negative target distance", { targetDistanceM: -1 }],
+    ["a negative duration", { stats: { ...route.stats, seconds: -1 } }],
+    ["a negative ascent", { stats: { ...route.stats, ascentM: -1 } }],
+    ["a negative descent", { stats: { ...route.stats, descentM: -1 } }],
+    ["a GPX over the cap", { gpx: "x".repeat(10_000_001) }],
+    ["more coordinates than the cap", { coords: Array.from({ length: 100_001 }, () => [0, 0]) }],
+    [
+      "more waypoints than the cap",
+      { waypoints: Array.from({ length: 501 }, () => ({ lat: 0, lng: 0 })) },
+    ],
+  ])("refuses a route with %s", (_, over) => {
+    expect(parseWebToNative(send({ ...route, ...over }))).toBeNull();
+  });
+
+  it("accepts a route at the GPX, coordinate and waypoint caps", () => {
+    const full = {
+      ...route,
+      gpx: "x".repeat(10_000_000),
+      coords: Array.from({ length: 100_000 }, () => [0, 0]),
+      waypoints: Array.from({ length: 500 }, () => ({ lat: 0, lng: 0 })),
+    };
+    expect(parseWebToNative(send(full))).not.toBeNull();
+  });
+
+  it.each([
+    ["a fractional chunk index", { index: 0.5 }],
+    ["a negative chunk index", { index: -1 }],
+    ["a base64 string that is not a multiple of 4", { data: "AAE" }],
+    ["base64 padding in the middle", { data: "AA==AAEC" }],
+    ["more bytes than 1 MiB in 1398104 characters", { data: "A".repeat(1_398_104) }],
+  ])("refuses an export chunk with %s", (_, over) => {
+    expect(parseWebToNative(exportChunk(over))).toBeNull();
+  });
+
+  it("refuses a route status reason over 500 characters", () => {
+    const msg = { v: 1, type: "routeStatus", routeId, state: "failed", why: "x".repeat(501) };
+    expect(parseNativeToWeb(JSON.stringify(msg))).toBeNull();
+  });
+
+  it.each([
+    ["a bad start date", { startedAt: "yesterday" }],
+    ["a bad end date", { endedAt: "2026-10-01 10:00:00" }],
+    ["a negative duration", { stats: { ...activity.stats, durationS: -1 } }],
+    ["a negative distance", { stats: { ...activity.stats, distanceM: -1 } }],
+    ["a travel mode over 32 characters", { travelMode: "x".repeat(33) }],
+  ])("refuses an activity with %s", (_, over) => {
+    const msg = { v: 1, type: "activities", items: [{ ...activity, ...over }] };
+    expect(parseNativeToWeb(JSON.stringify(msg))).toBeNull();
+  });
+
+  it.each([
+    ["a negative index", track({ index: -1 })],
+    ["a fractional index", track({ index: 0.5 })],
+    ["an index past the total", track({ index: 1 })],
+    ["a latitude of 91", track({}, { ...point, lat: 91 })],
+    ["a negative time", track({}, { ...point, t: -1 })],
+  ])("refuses a track chunk with %s", (_, raw) => {
+    expect(parseNativeToWeb(raw)).toBeNull();
+  });
+});

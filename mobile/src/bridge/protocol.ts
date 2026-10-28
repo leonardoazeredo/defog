@@ -5,7 +5,21 @@ export const ORIGIN = "https://crossfog.madera.codes/";
 const fingerprint = z.string().regex(/^[0-9a-f]{64}$/);
 const shortName = z.string().min(1).max(255);
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/);
-const base64Data = z.string().regex(/^[A-Za-z0-9+/]*={0,2}$/);
+// Unpadded or ragged input would make the decoded size depend on the decoder, so the byte cap below could not be exact.
+const base64Data = z
+  .string()
+  .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/);
+
+function base64Bytes(s: string): number {
+  const pad = s.endsWith("==") ? 2 : s.endsWith("=") ? 1 : 0;
+  return (s.length / 4) * 3 - pad;
+}
+
+// Shared so the three chunk schemas (exportBinary, chunk, track) cannot disagree on the index and total bounds.
+const chunkIndex = z.number().int().min(0);
+const chunkTotal = z.number().int().min(1);
+const indexBelowTotal = (c: { index: number; total: number }) => c.index < c.total;
+const INDEX_BELOW_TOTAL = "index must be less than total";
 
 // The page's f2m_* settings as JSON; src/backup/settings.ts checks the content, this bounds the message.
 const settingsJson = z.string().max(16_384);
@@ -19,6 +33,11 @@ const EXPORT_MAX_FILES = 65_534;
 // 1024 chunks of 1 MiB per file: far above any Sync tile.
 const EXPORT_MAX_CHUNKS = 1024;
 export const TRACK_CHUNK_POINTS = 2000;
+// Bounds on a route, far above what a planned route needs; they keep one message from exhausting memory. The coordinate
+// cap also applies to the followed route the phone sends with a track.
+const ROUTE_MAX_POINTS = 100_000;
+const ROUTE_MAX_WAYPOINTS = 500;
+const ROUTE_MAX_GPX_CHARS = 10_000_000;
 
 const uuid = z.uuid();
 const travelMode = z.string().min(1).max(32);
@@ -26,7 +45,10 @@ const nonNegative = z.number().min(0);
 const lat = z.number().min(-90).max(90);
 const lon = z.number().min(-180).max(180);
 
-const routeCoords = z.array(z.tuple([lon, lat, z.number().optional()])).min(2);
+const routeCoords = z
+  .array(z.tuple([lon, lat, z.number().optional()]))
+  .min(2)
+  .max(ROUTE_MAX_POINTS);
 
 // `seconds` is null when the travel mode has no time model (app/src/estimates.js); `ascentM` and
 // `descentM` are null when no elevation arrived (app/src/routeLocal.js). The schema accepts them so
@@ -37,7 +59,10 @@ const routeRecord = z.object({
   mode: z.enum(["loop", "p2p"]),
   travelMode,
   targetDistanceM: nonNegative.optional(),
-  waypoints: z.array(z.object({ lat, lng: lon })).min(2),
+  waypoints: z
+    .array(z.object({ lat, lng: lon }))
+    .min(2)
+    .max(ROUTE_MAX_WAYPOINTS),
   coords: routeCoords,
   stats: z.object({
     distanceM: nonNegative,
@@ -45,7 +70,7 @@ const routeRecord = z.object({
     ascentM: nonNegative.nullable(),
     descentM: nonNegative.nullable(),
   }),
-  gpx: z.string(),
+  gpx: z.string().max(ROUTE_MAX_GPX_CHARS),
 });
 
 const activitySummary = z.object({
@@ -120,12 +145,14 @@ const webToNativeSchema = z.union([
       type: z.literal("exportBinary"),
       exportId,
       name: tileFileName,
-      index: z.number().int().min(0),
-      total: z.number().int().min(1).max(EXPORT_MAX_CHUNKS),
+      index: chunkIndex,
+      total: chunkTotal.max(EXPORT_MAX_CHUNKS),
       files: z.number().int().min(1).max(EXPORT_MAX_FILES),
-      data: base64Data.max(Math.ceil(EXPORT_CHUNK_BYTES / 3) * 4),
+      data: base64Data
+        .max(Math.ceil(EXPORT_CHUNK_BYTES / 3) * 4)
+        .refine((s) => base64Bytes(s) <= EXPORT_CHUNK_BYTES, "chunk is over 1 MiB"),
     })
-    .refine((c) => c.index < c.total, "index must be less than total"),
+    .refine(indexBelowTotal, INDEX_BELOW_TOTAL),
   z.object({ v: z.literal(1), type: z.literal("backup") }),
   z.object({ v: z.literal(1), type: z.literal("restore") }),
   z.object({ v: z.literal(1), type: z.literal("settings"), json: settingsJson }),
@@ -149,11 +176,11 @@ const nativeToWebSchema = z.union([
       v: z.literal(1),
       type: z.literal("chunk"),
       fingerprint,
-      index: z.number().int().min(0),
-      total: z.number().int().min(1),
+      index: chunkIndex,
+      total: chunkTotal,
       data: base64Data,
     })
-    .refine((c) => c.index < c.total, "index must be less than total"),
+    .refine(indexBelowTotal, INDEX_BELOW_TOTAL),
   z.object({ v: z.literal(1), type: z.literal("none") }),
   z.object({ v: z.literal(1), type: z.literal("reloadSuspended"), savedAt: isoDate }),
   z.object({
@@ -196,13 +223,13 @@ const nativeToWebSchema = z.union([
       v: z.literal(1),
       type: z.literal("track"),
       activityId: uuid,
-      index: z.number().int().min(0),
-      total: z.number().int().min(1),
+      index: chunkIndex,
+      total: chunkTotal,
       points: z.array(trackPoint).max(TRACK_CHUNK_POINTS),
       // The route the activity followed; only the first chunk carries it.
       route: z.object({ coords: routeCoords }).optional(),
     })
-    .refine((c) => c.index < c.total, "index must be less than total"),
+    .refine(indexBelowTotal, INDEX_BELOW_TOTAL),
 ]);
 
 export type WebToNative = z.infer<typeof webToNativeSchema>;

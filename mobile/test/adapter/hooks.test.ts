@@ -150,7 +150,7 @@ it("window.open ignores non-http(s) URLs", () => {
 it("window.open sends openExternal for http URLs", () => {
   installLinks(window, document, send);
   window.open("http://example.com");
-  expect(sent).toEqual([{ v: 1, type: "openExternal", url: "http://example.com" }]);
+  expect(sent).toEqual([{ v: 1, type: "openExternal", url: "http://example.com/" }]);
 });
 
 it("link clicks ignore non-http(s) hrefs", () => {
