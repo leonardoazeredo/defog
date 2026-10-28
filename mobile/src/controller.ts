@@ -1,3 +1,4 @@
+import { openLink } from "./bridge/openLink.js";
 import type { NativeToWeb, WebToNative } from "./bridge/protocol.js";
 import { COPY } from "./copy.js";
 import { createImportFlow } from "./flows/importFlow.js";
@@ -219,7 +220,7 @@ export function createController(deps: ControllerDeps): Controller {
           }
           break;
         case "openExternal":
-          await deps.openExternal(msg.url);
+          await openLink(msg.url, deps.openExternal, deps.notify);
           break;
         case "openAbout":
           deps.openAbout();

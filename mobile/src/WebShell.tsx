@@ -11,6 +11,7 @@ import { createBackupFlow } from "./backup/backup.js";
 import { createRestoreFlow } from "./backup/restore.js";
 import { createSettingsChannel } from "./backup/settings.js";
 import { decideNavigation, shouldOpenWindowExternally } from "./bridge/navigationPolicy.js";
+import { openLink } from "./bridge/openLink.js";
 import { pageConfigScript } from "./bridge/pageConfig.js";
 import { isTrustedSource, ORIGIN, parseWebToNative } from "./bridge/protocol.js";
 import { createSend, scheduleTask } from "./bridge/send.js";
@@ -276,14 +277,14 @@ export function WebShell(): React.JSX.Element {
         onShouldStartLoadWithRequest={(event) => {
           const decision = decideNavigation(event.url, initialLoadDone.current);
           if (decision === "external") {
-            void Linking.openURL(event.url);
+            void openLink(event.url, Linking.openURL, notify);
           }
           return decision === "allow";
         }}
         onOpenWindow={(event) => {
           const url = event.nativeEvent.targetUrl;
           if (shouldOpenWindowExternally(url)) {
-            void Linking.openURL(url);
+            void openLink(url, Linking.openURL, notify);
           }
         }}
         onMessage={(event) => {

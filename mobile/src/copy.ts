@@ -4,6 +4,7 @@ export const COPY = {
   importFailed: "That backup couldn't be opened. Your saved fog is unchanged.",
   importing: "Importing your fog…",
   exportFailed: "Couldn't share the file.",
+  openLinkFailed: "Couldn't open that link.",
   fogExportSaved: (name: string) => `Fog of World export saved as ${name}.`,
   fogExportFailed: "Couldn't make the Fog of World export. Nothing was saved.",
   pressBackAgain: "Press back again to exit",
