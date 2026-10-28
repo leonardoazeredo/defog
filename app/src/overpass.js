@@ -131,7 +131,7 @@
   // (the caller's run was replaced) before a request goes out sends nothing and rejects at once with
   // reason "superseded", outside the list above and whatever earlier endpoints answered, releasing the
   // slot when it held one: a replaced run's posts still waiting for a slot would otherwise go out
-  // ahead of the run that replaced it.
+  // ahead of the run that replaced it. A throw from opts.stale() rejects as itself, releasing the slot if the post holds one.
   async function post(body, opts) {
     const stale = opts && opts.stale;
     const superseded = () => Object.assign(new Error("overpass: the caller's run was replaced"), { reason: "superseded" });
@@ -147,7 +147,10 @@
       if (stale && stale()) throw superseded();
       if (s.until > Overpass._now()) { heldOnly.push({ why: s.why, error: s.error }); continue; }
       await acquire(name);
-      if (stale && stale()) { release(name); throw superseded(); }
+      // the slot goes back whatever stale() does, a throw included: a lost slot is lost for the page's life
+      let gone;
+      try { gone = stale && stale(); } catch (e) { release(name); throw e; }
+      if (gone) { release(name); throw superseded(); }
       // a request that held a slot meanwhile may have put the endpoint on hold
       if (s.until > Overpass._now()) { release(name); heldOnly.push({ why: s.why, error: s.error }); continue; }
       const sent = Overpass._now();

@@ -51,6 +51,7 @@
     this.selected = -1;
     this._runId = 0;
     this._planners = {};                   // travel class -> GraphPlanner
+    this._hold = null;                     // {runId, key, planner}: the graph the running suggestion plans on
     this._onClick = (e) => this._place(e.latlng);
   }
 
@@ -100,6 +101,7 @@
 
   SuggestTool.prototype.clearResults = function () {
     this._runId++; // cancels any in-flight run
+    this._releaseGraph();
     this.lines.forEach((l) => { this.map.removeLayer(l.solid); this.map.removeLayer(l.dashed); });
     this.lines = []; this.results = []; this.selected = -1;
     if (this.onResults) this.onResults(null);
@@ -146,13 +148,13 @@
   // null when there is no street data, a point is off the network, or no path exists.
   // opts.avoid: Set of graph edge ids to discourage (a leg's `edges`).
   SuggestTool.prototype._route = async function (latlngs, profile, opts) {
-    const planner = this.plannerFor(profile);
+    const planner = this._graphFor(profile);
     return planner ? new global.LocalRouter(planner).route(latlngs, opts) : null;
   };
 
   // Explained so the error can name the pin or pieces that failed, not just fail.
   SuggestTool.prototype._noRoute = function (latlngs, profile) {
-    const planner = this.plannerFor(profile);
+    const planner = this._graphFor(profile);
     if (!planner) return { error: true, reason: "no-street-data" };
     const why = new global.LocalRouter(planner).explain(latlngs);
     return { error: true, reason: why.reason || "no-path", why };
@@ -288,9 +290,37 @@
     if (!this.streets || !global.GraphPlanner || !this.streets.ways.length) return null;
     // usableFor and onewayFor depend only on the travel class, so profiles sharing one share the graph
     const key = global.StreetIndex.MODE_CLASS[profile] || "foot";
-    if (!this._planners[key])
+    const had = this._planners[key];
+    // a held graph stays with its suggestion: once the streets or the fog outgrew it, the slot gets a
+    // fresh planner; any other one is rebuilt in place by build()
+    if (!had || (had.held && !had.isCurrent()))
       this._planners[key] = new global.GraphPlanner(this.streets, this.streets.newFrac, this.streets.usableFor(profile), this.streets.onewayFor(profile), () => this.fogMap.version || 0);
     return this._planners[key];
+  };
+
+  // A suggestion plans on one graph from its first route to its last: a tile another run merges
+  // meanwhile (the route editor's, the "Streets in fog" download's) would rebuild it in place and
+  // renumber the edges, and a leg's `edges`, the avoid set of the way home, would name other streets.
+  // A fog change waits too; the gain is still scored on the fog as it is.
+  SuggestTool.prototype._holdGraph = function (profile, runId) {
+    this._releaseGraph();
+    const planner = this.plannerFor(profile);
+    if (!planner) return null;
+    planner.build();
+    planner.held = true;
+    this._hold = { runId, key: global.StreetIndex.MODE_CLASS[profile] || "foot", planner };
+    return planner;
+  };
+  // runId: let go only of that run's graph (undefined: of whichever run holds one)
+  SuggestTool.prototype._releaseGraph = function (runId) {
+    const h = this._hold;
+    if (!h || (runId !== undefined && h.runId !== runId)) return;
+    h.planner.held = false;
+    this._hold = null;
+  };
+  SuggestTool.prototype._graphFor = function (profile) {
+    const h = this._hold;
+    return h && h.key === (global.StreetIndex.MODE_CLASS[profile] || "foot") ? h.planner : this.plannerFor(profile);
   };
 
   // Defoggable area (m²) reachable via the ways within rM of the point, or
@@ -448,11 +478,16 @@
     }));
   };
 
-  SuggestTool.prototype.suggest = function (profile, o) {
+  SuggestTool.prototype.suggest = async function (profile, o) {
     o = o || {};
     const buffer = o.buffer || DEFAULT_BUFFER;
-    if (this.mode === "loop") return this._suggestLoop(profile, o.distM, buffer);
-    return this._suggestP2P(profile, buffer, o.targetM);
+    const before = this._runId;
+    const run = this.mode === "loop" ? this._suggestLoop(profile, o.distM, buffer) : this._suggestP2P(profile, buffer, o.targetM);
+    // a run starts (clearResults) before its first await; one that never started holds nothing, and
+    // the graph it would let go of is a running suggestion's
+    const runId = this._runId;
+    if (runId === before) return run;
+    try { return await run; } finally { this._releaseGraph(runId); }
   };
 
   // ----- point-to-point ---------------------------------------------------------
@@ -576,6 +611,7 @@
       w: Math.min(sa.lng, sb.lng) - m / kx, e: Math.max(sa.lng, sb.lng) + m / kx
     }];
     if (!(await this._loadStreets(rects, profile, emit, stale))) return;
+    this._holdGraph(profile, runId);
 
     const base = await this._route([A, B], profile);
     if (stale()) return;
@@ -589,7 +625,7 @@
     // the ceiling.
     let planned = [];
     if (budget <= 12000) {
-      const planner = this.plannerFor(profile);
+      const planner = this._graphFor(profile);
       if (planner) {
         const mid = L.latLng((A.lat + B.lat) / 2, (A.lng + B.lng) / 2);
         try {
@@ -934,7 +970,7 @@
     const half = Math.min(distM * 0.45 + 800, 9000);
     const rects = [{ s: c.lat - half / ky, n: c.lat + half / ky, w: c.lng - half / kx, e: c.lng + half / kx }];
     if (!(await this._loadStreets(rects, profile, emit, stale))) return;
-    const planner = this.plannerFor(profile);
+    const planner = this._holdGraph(profile, runId);
     if (!planner) { emit({ error: true, reason: "no-street-data" }); return; }
 
     // Search the street network itself for high-defog loops (thin shapes, odd

@@ -77,16 +77,24 @@
     this.newFrac = fracCache(newFrac);
     this.fracFog = this.fogVersion(); // the fog the fraction cache is filled under
     this.builtStamp = ""; // what the graph was built from; rebuild when a fetch or the fog changed it
+    this.held = false; // true while a suggestion plans on it: build() then keeps the graph, so its edge ids stay valid
   }
+
+  // what build() would build from now: the ways, the lists a fetch changed and the fog
+  GraphPlanner.prototype.stamp = function () {
+    return this.streets.ways.length + "." + (this.streets.version || 0) + "." + this.fogVersion();
+  };
+  GraphPlanner.prototype.isCurrent = function () { return !!this.adj && this.builtStamp === this.stamp(); };
 
   // ---- graph construction --------------------------------------------------
   // Nodes: way endpoints + any OSM node shared by 2+ ways (intersections).
   // Edges: the way pieces between nodes, each with geometry, length and reward.
   GraphPlanner.prototype.build = function () {
+    if (this.held && this.adj) return;
     const ways = this.streets.ways;
     // new ways, or lists (classes, one-ways) that a fetch changed on ways we already hold
     const fog = this.fogVersion();
-    const stamp = ways.length + "." + (this.streets.version || 0) + "." + fog;
+    const stamp = this.stamp();
     if (this.builtStamp === stamp && this.adj) return;
     // the cache memoises fractions per ~10 m, so after a fog change it would hand the rebuild the old ones
     if (fog !== this.fracFog) { this.newFrac = fracCache(this.rawFrac); this.fracFog = fog; }

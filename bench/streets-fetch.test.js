@@ -896,6 +896,112 @@ async function testCase(body) {
     assert.deepEqual(facts(await fail(index(async () => { throw Object.assign(new Error("x"), { reason: "offline" }); }))), [3, 6, "offline", "offline"]);
     assert.deepEqual(await new StreetIndex({ newFrac: () => 1 }).ensureRects([], "run"), { done: 0, total: 0, missing: [] });
   });
+  await testCase(async () => { // a cache hit is not a download: an offline run in a partly cached area says offline,
+    // and one piece downloaded before the network went makes it streets-partial; both count the hits as done
+    const r = [{ s: 51.0, w: 13.7, n: 51.05, e: 13.775 }]; // 6 tiles
+    const answer = { ways: [], groups: {} };
+    const run = async (give) => {
+      const store = global.TileStore.memory();
+      for (const t of StreetIndex.tilesOf(r).slice(0, 3)) await store.put("2:run:" + t.x + ":" + t.y, { answer, fetchedAt: 0 });
+      const network = async (tiles, kind, onTile) => {
+        tiles.slice(0, give).forEach((t) => onTile(t, answer));
+        throw Object.assign(new Error("offline"), { reason: "offline" });
+      };
+      const cache = global.StreetCache.create({ store, network, now: () => 1 });
+      const s = new StreetIndex({ newFrac: () => 1, fetchStreets: cache.fetchStreets });
+      return s.ensureRects(r, "run").then(() => assert.fail("expected a rejection"), (e) => e);
+    };
+    const offline = await run(0);
+    assert.deepEqual([offline.done, offline.total, offline.reason, offline.cause.reason], [3, 6, "offline", "offline"]);
+    const partial = await run(1);
+    assert.deepEqual([partial.done, partial.total, partial.reason, partial.cause.reason], [4, 6, "streets-partial", "offline"]);
+  });
+  await testCase(async () => { // overlapping runs share a tile in flight: one request, and the second run resolves when it lands
+    withKey();
+    const srv = heldServer();
+    const one = [{ s: 51.0, w: 13.7, n: 51.02, e: 13.72 }];
+    const s = new StreetIndex({ newFrac: () => 1 });
+    const reports = [];
+    const first = s.ensureRects(one, "run");
+    const second = s.ensureRects(one, "bike", { onProgress: (p) => reports.push(p) }); // a run tile stands in for bike
+    await settle();
+    assert.equal(srv.asked.length, 1, "the second run asks nothing of its own");
+    await srv.reply(0);
+    assert.deepEqual(await within(Promise.all([first, second])), [{ done: 1, total: 1, missing: [] }, { done: 1, total: 1, missing: [] }]);
+    assert.deepEqual(reports, [{ done: 0, total: 1 }, { done: 1, total: 1 }]);
+    assert.equal(s.inFlight.size, 0, "nothing left in flight");
+    delete global.crossfogNextgisKey;
+  });
+  await testCase(async () => { // a tile in flight for a run that gives it up is asked again by the run waiting for it
+    const answer = { ways: [], groups: {} };
+    const one = [{ s: 51.0, w: 13.7, n: 51.02, e: 13.72 }];
+    const calls = [];
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    // the first call waits for the gate and then, its run replaced, sends nothing; later calls answer
+    const fetchStreets = async (tiles, kind, onTile, opts) => {
+      calls.push(tiles.length);
+      if (calls.length === 1) { await gate; if (opts.stale()) throw Object.assign(new Error("replaced"), { reason: "superseded" }); }
+      tiles.forEach((t) => onTile(t, answer));
+      return new Map();
+    };
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets });
+    let replaced = false;
+    const first = s.ensureRects(one, "run", { stale: () => replaced }).then(() => assert.fail("expected a rejection"), (e) => e);
+    const second = s.ensureRects(one, "run");
+    await settle();
+    assert.deepEqual(calls, [1], "the second run waits for the first's tile");
+    replaced = true;
+    release();
+    assert.ok(StreetIndex.isSuperseded(await within(first)));
+    assert.deepEqual(await within(second), { done: 1, total: 1, missing: [] }, "not stopped by the other run going stale");
+    assert.deepEqual(calls, [1, 1], "asked again once given up");
+    assert.equal(s.inFlight.size, 0);
+  });
+  await testCase(async () => { // a run replaced while it waits for another run's tile rejects superseded; the other run still gets the tile
+    const answer = { ways: [], groups: {} };
+    const one = [{ s: 51.0, w: 13.7, n: 51.02, e: 13.72 }];
+    let release, calls = 0;
+    const gate = new Promise((r) => { release = r; });
+    const fetchStreets = async (tiles, kind, onTile) => { calls++; await gate; tiles.forEach((t) => onTile(t, answer)); return new Map(); };
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets });
+    let replaced = false;
+    const first = s.ensureRects(one, "run");
+    const second = s.ensureRects(one, "run", { stale: () => replaced }).then(() => assert.fail("expected a rejection"), (e) => e);
+    await settle();
+    replaced = true;
+    release();
+    assert.ok(StreetIndex.isSuperseded(await within(second)));
+    assert.deepEqual(await within(first), { done: 1, total: 1, missing: [] });
+    assert.equal(calls, 1);
+    assert.equal(s.tiles.size, 1);
+  });
+  await testCase(async () => { // a shared tile counts as downloaded only when the other run did not read it from the street
+    // cache: an offline failure of the run's own call then says offline, not streets-partial
+    const answer = { ways: [], groups: {} };
+    const two = [{ s: 51.0, w: 13.7, n: 51.02, e: 13.75 }];
+    const [a] = StreetIndex.tilesOf(two);
+    const run = async (via) => {
+      let releaseA, releaseB;
+      const gateA = new Promise((r) => { releaseA = r; }), gateB = new Promise((r) => { releaseB = r; });
+      const fetchStreets = async (tiles, kind, onTile) => {
+        if (tiles[0].x === a.x) { await gateA; onTile(a, answer, via); return new Map(); }
+        await gateB;
+        throw Object.assign(new Error("offline"), { reason: "offline" });
+      };
+      const s = new StreetIndex({ newFrac: () => 1, fetchStreets });
+      const first = s.ensureRects([StreetIndex.tileBounds(a)], "run");
+      const second = s.ensureRects(two, "run").then(() => assert.fail("expected a rejection"), (e) => e);
+      await settle();
+      releaseA();
+      await within(first);
+      releaseB();
+      const e = await within(second);
+      return [e.done, e.total, e.reason, e.cause.reason];
+    };
+    assert.deepEqual(await run({ cached: true }), [1, 2, "offline", "offline"]);
+    assert.deepEqual(await run(undefined), [1, 2, "streets-partial", "offline"]);
+  });
   await testCase(async () => { // a busy wait reports the held tiles in its count too
     const clock = { t: 0 };
     const r = [{ s: 51.0, w: 13.7, n: 51.025, e: 13.75 }]; // 2 tiles
