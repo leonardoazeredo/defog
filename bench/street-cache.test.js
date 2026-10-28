@@ -354,5 +354,63 @@ const T = (x, y) => ({ x, y });
     const bike = await c.fetchStreets([T(2, 1)], "bike", null, { cacheOnly: true });
     assert.deepEqual(bike.get("2:1"), answerFor(T(2, 1), "run"), "a run tile still stands in for bike");
   }
+  { // the old unversioned keys are swept in the background, a bounded number per call, and the new ones stay
+    const { network } = fakeNetwork();
+    const store = TileStore.memory({ maxEntries: 1000 });
+    await store.put("run:1:1", { junk: 1 });
+    await store.put("bike:2:2", { junk: 2 });
+    await store.put("3:run:9:9", { newer: true });
+    await store.put("2:run:1:1", { answer: answerFor(T(1, 1), "run"), fetchedAt: 0 });
+    const c = StreetCache.create({ store, network, now: () => 0 });
+    assert.equal((await store.keys()).length, 4, "creating the cache sweeps nothing: opening the store is never held up");
+    assert.equal(await c.sweepLegacy(), 2);
+    assert.deepEqual((await store.keys()).sort(), ["2:run:1:1", "3:run:9:9"], "a versioned entry stays");
+    for (let i = 0; i < 300; i++) await store.put("run:" + i + ":0", i);
+    assert.equal(await c.sweepLegacy(), 256, "bounded: the rest waits for the next open");
+    assert.equal((await store.keys()).length, 2 + 44);
+    const dead = TileStore.memory({ maxEntries: 10 });
+    dead.keys = async () => { throw new Error("idb dead"); };
+    assert.equal(await StreetCache.create({ store: dead, network, now: () => 0 }).sweepLegacy(), 0, "a store that fails costs nothing");
+  }
+  { // a stored answer with damaged ways or groups is a miss and is removed, not served to fail every run in the area
+    const { network, calls } = fakeNetwork();
+    const store = TileStore.memory({ maxEntries: 10 });
+    await store.put("2:run:1:1", { answer: { ways: [null], groups: {} }, fetchedAt: 0 });
+    await store.put("2:run:2:1", { answer: { ways: [], groups: { a: 5 } }, fetchedAt: 0 });
+    const c = StreetCache.create({ store, network, now: () => 0 });
+    const got = await c.fetchStreets([T(1, 1), T(2, 1)], "run", null, { cacheOnly: true });
+    assert.equal(got.size, 0);
+    assert.equal(calls.length, 0);
+    assert.deepEqual(await store.keys(), [], "both damaged entries are gone");
+  }
+  { // the default age limit is 90 days: a tile 90 days old is refetched, one a millisecond younger is not
+    const { network, calls } = fakeNetwork();
+    let t = 0;
+    const c = StreetCache.create({ store: TileStore.memory({ maxEntries: 10 }), network, now: () => t });
+    await c.fetchStreets([T(1, 1)], "run");
+    t = 90 * DAY - 1;
+    await c.fetchStreets([T(1, 1)], "run");
+    assert.equal(calls.length, 1);
+    t = 90 * DAY;
+    await c.fetchStreets([T(1, 1)], "run");
+    assert.equal(calls.length, 2);
+  }
+  { // an expired bike tile does not hide a fresh run tile, and of two expired copies bike's is the one served offline
+    const store = TileStore.memory({ maxEntries: 10 });
+    await store.put("2:bike:1:1", { answer: { ways: [], groups: { tag: "bike" } }, fetchedAt: 0 });
+    await store.put("2:run:1:1", { answer: { ways: [], groups: { tag: "run" } }, fetchedAt: 100 * DAY });
+    await store.put("2:bike:2:1", { answer: { ways: [], groups: { tag: "bike" } }, fetchedAt: 0 });
+    await store.put("2:run:2:1", { answer: { ways: [], groups: { tag: "run" } }, fetchedAt: 0 });
+    const offline = async () => { throw Object.assign(new Error("offline"), { reason: "offline" }); };
+    const c = StreetCache.create({ store, network: offline, now: () => 120 * DAY });
+    const fresh = await c.fetchStreets([T(1, 1)], "bike");
+    assert.equal(fresh.get("1:1").groups.tag, "run", "served from the fresh run tile, no network");
+    const warned = [];
+    const warn = console.warn; console.warn = (...a) => warned.push(a.join(" "));
+    let old;
+    try { old = await c.fetchStreets([T(2, 1)], "bike"); } finally { console.warn = warn; }
+    assert.equal(old.get("2:1").groups.tag, "bike");
+    assert.deepEqual(warned, ["[streets] offline: serving 1 expired tile(s) from the cache (offline)"], "the fallback says so: a count and the reason, no tile data");
+  }
   console.log("street-cache.test.js ok");
 })().catch((e) => { console.error(e); process.exit(1); });
