@@ -1,7 +1,5 @@
 appId: codes.madera.crossfog
 ---
-# Leaflet's own attribution link has no target and the basemap's has one: both must leave the app and leave the bundled
-# page in place. The #138 failure is a race (a late JS answer lets the load through), so each link is tapped three times.
 # A link the page keeps (Leaflet's zoom control, href="#") must not open the browser: the origin check
 # has to leave in-app links alone.
 - runFlow: subflows/open-panel.yaml
@@ -16,6 +14,8 @@ appId: codes.madera.crossfog
 - extendedWaitUntil:
     visible: "Expand or collapse panel"
     timeout: 60000
+# Leaflet's own attribution link has no target and the basemap's has one: both must leave the app and leave the bundled
+# page in place. The #138 failure is a race (a late JS answer lets the load through), so each link is tapped three times.
 - repeat:
     times: 3
     commands:

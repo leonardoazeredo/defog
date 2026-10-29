@@ -74,7 +74,7 @@ To remake `history-walk-backup.db` (for example after a schema change), use a de
 
 `history.yaml` is not in `config.yaml`; its header says why it runs on its own. Build the debug flavour with `CROSSFOG_E2E=1 pnpm android -- --device <avd>` (Metro serves the JS, so `adb reverse tcp:8081 tcp:8081`), `adb push mobile/test/fixtures/glancemap-walk.gpx /sdcard/Download/`, import `standard.zip`, then run `maestro test .maestro/history.yaml`. Why it runs alone, and what Downloads must hold, is in the flow's header.
 
-_history.yaml tested on: Android emulator API 36 (AVD `chase-cashew-test`), debug e2e build with Metro: passed after the dev bar was pinned and the launch moved to `subflows/open-panel.yaml`._
+_history.yaml tested on: Android emulator API 36 (AVD `chase-cashew-test`), debug e2e build with Metro: passed._
 
 _Tested on: Android emulator API 36 (AVD `chase-cashew-test`): 7/7 passed in 1m 59s. iOS simulator (iPhone 17, iOS 27.0): 7/7 passed in 2m 35s; an earlier iOS run failed once in `export`, which passed on the next run._
 
