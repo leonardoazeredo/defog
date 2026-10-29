@@ -1,9 +1,10 @@
 // The warning that comes before every plaintext export: a card in the page with Continue and Cancel.
 (function (global) {
+  const ROUTE_FILE = "This file is unencrypted and shows the route you planned, point by point.";
   const TEXT = {
     fog: "This file is unencrypted and shows the places you have been. Anyone who gets it can read them.",
-    gpx: "This file is unencrypted and shows the route you planned, point by point.",
-    kml: "This file is unencrypted and shows the route you planned, point by point.",
+    gpx: ROUTE_FILE,
+    kml: ROUTE_FILE,
     maps: "Google Maps will receive the start, the end and the stops of this route.",
   };
 

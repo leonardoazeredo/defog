@@ -114,6 +114,14 @@ it("hands an unreadableActivities count to its listener without the envelope", (
   expect(fn).toHaveBeenCalledExactlyOnceWith({ count: 2 });
 });
 
+it("hands an exportStatus message to its listener without the envelope", () => {
+  const { api, crossfog } = install();
+  const fn = vi.fn();
+  crossfog.on("exportStatus", fn);
+  api.dispatch({ v: 1, type: "exportStatus", exportId: "e1", state: "saved" });
+  expect(fn).toHaveBeenCalledExactlyOnceWith({ exportId: "e1", state: "saved" });
+});
+
 it("routes each native type only to its own listeners", () => {
   const { api, crossfog } = install();
   const heard: string[] = [];

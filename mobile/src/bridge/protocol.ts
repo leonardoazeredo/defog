@@ -26,12 +26,13 @@ const INDEX_BELOW_TOTAL = "index must be less than total";
 // The page's f2m_* settings as JSON; src/backup/settings.ts checks the content, this bounds the message.
 const settingsJson = z.string().max(16_384);
 
-const EXPORT_CHUNK_BYTES = 1_048_576;
+// The page's fowExport.js CHUNK_BYTES must equal this; test/unit/bridge/exportLimits.test.ts compares them.
+export const EXPORT_CHUNK_BYTES = 1_048_576;
 // exportId and tileFileName become path segments under the cache.
 const exportId = z.string().regex(/^[A-Za-z0-9-]{1,64}$/);
 const tileFileName = z.string().regex(/^[a-z0-9]{1,32}$/);
 // 0xffff in a zip's entry count means "see the ZIP64 record", so a zip without ZIP64 holds one fewer.
-const EXPORT_MAX_FILES = 65_534;
+export const EXPORT_MAX_FILES = 65_534;
 // 1024 chunks of 1 MiB per file: far above any Sync tile.
 const EXPORT_MAX_CHUNKS = 1024;
 export const TRACK_CHUNK_POINTS = 2000;
@@ -214,6 +215,13 @@ const nativeToWebSchema = z.union([
     reason: z.enum(["notFound", "readFailed"]),
   }),
   z.object({ v: z.literal(1), type: z.literal("activities"), items: z.array(activitySummary) }),
+  // How a Fog of World export went: `saving` just before the picker opens, then one of the other three.
+  z.object({
+    v: z.literal(1),
+    type: z.literal("exportStatus"),
+    exportId,
+    state: z.enum(["saving", "saved", "cancelled", "failed"]),
+  }),
   // Activities the watch handed over that stay staged because the phone cannot read them.
   z.object({
     v: z.literal(1),
@@ -241,6 +249,7 @@ export type RouteRecord = z.infer<typeof routeRecord>;
 export type ActivitySummary = z.infer<typeof activitySummary>;
 export type TrackPoint = z.infer<typeof trackPoint>;
 export type ExportChunk = Omit<Extract<WebToNative, { type: "exportBinary" }>, "v" | "type">;
+export type ExportState = Extract<NativeToWeb, { type: "exportStatus" }>["state"];
 
 export function encode(msg: WebToNative | NativeToWeb): string {
   return JSON.stringify(msg);
@@ -253,12 +262,14 @@ export interface DroppedMessage {
   paths: string[];
   /** A dropped sendRoute's route id, when that id is itself valid, so the page can hear it failed. */
   routeId: string | null;
+  /** A dropped exportBinary's export id, when that id is itself valid, so the export can be abandoned. */
+  exportId: string | null;
 }
 
 export type WebToNativeParse = { ok: true; msg: WebToNative } | { ok: false; drop: DroppedMessage };
 
 const MAX_DROP_PATHS = 10;
-const NOTHING_TO_NAME: DroppedMessage = { type: null, paths: [], routeId: null };
+const NOTHING_TO_NAME: DroppedMessage = { type: null, paths: [], routeId: null, exportId: null };
 
 function issuePaths(issues: readonly z.core.$ZodIssue[]): string[] {
   const paths = issues.map((i) => (i.path.length > 0 ? i.path.map(String).join(".") : "(message)"));
@@ -283,13 +294,19 @@ function describeDrop(data: unknown, error: z.ZodError): DroppedMessage {
     own = error.issues;
   }
   if (own === null) return { ...NOTHING_TO_NAME };
-  const obj = data as { type: WebToNative["type"]; route?: unknown };
+  const obj = data as { type: WebToNative["type"]; route?: unknown; exportId?: unknown };
   const route = obj.type === "sendRoute" ? obj.route : null;
   const id =
     typeof route === "object" && route !== null
       ? uuid.safeParse((route as { id?: unknown }).id)
       : null;
-  return { type: obj.type, paths: issuePaths(own), routeId: id?.success ? id.data : null };
+  const exp = obj.type === "exportBinary" ? exportId.safeParse(obj.exportId) : null;
+  return {
+    type: obj.type,
+    paths: issuePaths(own),
+    routeId: id?.success ? id.data : null,
+    exportId: exp?.success ? exp.data : null,
+  };
 }
 
 export function inspectWebToNative(raw: string): WebToNativeParse {

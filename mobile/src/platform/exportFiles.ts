@@ -1,7 +1,15 @@
 import { Directory, File, Paths } from "expo-file-system";
-import type { ExportFs } from "../flows/exportFlow.js";
+import { EXPORT_DIR_PREFIX, type ExportFs } from "../flows/exportFlow.js";
 
-const segments = (path: string) => path.split("/");
+// The protocol's id and name patterns already keep these paths inside the cache; this is the second lock,
+// so a path built wrongly elsewhere cannot reach the cache root or above it.
+const segments = (path: string) => {
+  const parts = path.split("/");
+  if (parts.some((p) => p === "" || p === "." || p === "..")) {
+    throw new Error("unsafe cache path");
+  }
+  return parts;
+};
 const baseName = (uri: string) => {
   const last = uri.replace(/\/$/, "").split("/").pop() ?? "";
   // A stray % in an entry name must not stop the sweep.
@@ -34,18 +42,18 @@ export function createExportFs(): ExportFs {
       const file = fileAt(path);
       if (file.exists) file.delete();
     },
-    async removeMatching(prefix) {
-      let failed = 0;
+    async removeExportDirs() {
+      let failure: { error: unknown } | null = null;
       for (const item of new Directory(Paths.cache).list()) {
-        if (!baseName(item.uri).startsWith(prefix)) continue;
+        if (!baseName(item.uri).startsWith(EXPORT_DIR_PREFIX)) continue;
         // One entry that will not go must not leave the rest, which hold plaintext tiles.
         try {
           item.delete();
-        } catch {
-          failed++;
+        } catch (e) {
+          failure ??= { error: e };
         }
       }
-      if (failed > 0) throw new Error(`${failed} cache entries not removed`);
+      if (failure !== null) throw failure.error;
     },
     absolute: (path) => decodeURIComponent(fileAt(path).uri.replace(/^file:\/\//, "")),
   };

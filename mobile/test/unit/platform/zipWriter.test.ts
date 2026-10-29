@@ -82,3 +82,23 @@ it("zips a Fog of World export that re-imports to the same fog", () => {
   expect(fogMap.isVisitedCell(2000, 3010)).toBe(false);
   expect(fogMap.totalVisited()).toBe(original.totalVisited());
 });
+
+it("refuses an entry name that an unzip could place outside its folder, or a repeated one", () => {
+  const one = (name: string) => [{ name, bytes: bytes(1) }];
+  for (const name of ["", "/Sync/a", "Sync/../a", "..", "Sync/a/.."]) {
+    expect(() => writeZip(one(name)), name).toThrow(/zip entry name/);
+  }
+  expect(() =>
+    writeZip([
+      { name: "Sync/a", bytes: bytes(1) },
+      { name: "Sync/a", bytes: bytes(2) },
+    ]),
+  ).toThrow(/zip entry name/);
+});
+
+it("refuses a name longer than its 16-bit length field", () => {
+  expect(() => writeZip([{ name: "a".repeat(0x10000), bytes: bytes(1) }])).toThrow(
+    /zip entry name too long/,
+  );
+  expect(writeZip([{ name: "a".repeat(0xffff), bytes: bytes(1) }]).length).toBeGreaterThan(0);
+});

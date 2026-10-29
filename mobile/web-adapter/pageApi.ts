@@ -11,6 +11,7 @@ const PAGE_EVENTS = [
   "track",
   "trackUnavailable",
   "unreadableActivities",
+  "exportStatus",
 ] as const;
 
 type PageEvent = (typeof PAGE_EVENTS)[number];

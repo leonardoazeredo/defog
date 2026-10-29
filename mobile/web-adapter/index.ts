@@ -67,6 +67,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   // `trackUnavailable` goes to the History panel (here) and to the history sync (above).
   window.crossfog?.on("routeStatus", (msg) => window.CrossfogPage?.routeStatus?.(msg));
   window.crossfog?.on("linkStatus", (msg) => window.CrossfogPage?.linkStatus?.(msg));
+  window.crossfog?.on("exportStatus", (msg) => window.CrossfogPage?.exportStatus?.(msg));
   window.crossfog?.on("trackUnavailable", ({ activityId, reason }) =>
     window.CrossfogPage?.history?.trackUnavailable?.(activityId, reason),
   );

@@ -133,7 +133,8 @@ const settle = () => new Promise((r) => setImmediate(r));
   assert.match(ExportWarning.TEXT.kml, /unencrypted and shows the route/);
   assert.match(ExportWarning.TEXT.maps, /Google/);
 
-  // main.js reaches each plaintext sink only through a guard
+  // main.js reaches each plaintext sink only through a guard. A tripwire, not a proof: it matches text, so a sink
+  // reached through an alias, or called outside the guard on the guard's own line, passes unseen.
   const root = path.join(__dirname, "..", "app");
   const main = fs.readFileSync(path.join(root, "src", "main.js"), "utf8").split("\n");
   for (const [sink, kind] of [["route.downloadGPX(", "gpx"], ["route.downloadKML(", "kml"], ["window.open(", "maps"], ["FowExport.run(", "fog"]]) {
@@ -153,7 +154,8 @@ const settle = () => new Promise((r) => setImmediate(r));
     assert.ok(html.includes('id="' + id + '"'), "index.html has #" + id);
   }
 
-  // no console call in the page prints a reason's `why`, an explanation of a failed route, or a position
+  // no console call in the page prints a reason's `why`, an explanation of a failed route, or a position.
+  // Also a tripwire: it reads only the console call's own line, so a value renamed first or a call split over lines passes.
   const srcDir = path.join(root, "src");
   const risky = /\b(why|explain|latlng|lat|lng|lon|coords|wps|bounds)\b/;
   for (const file of fs.readdirSync(srcDir).filter((f) => f.endsWith(".js"))) {

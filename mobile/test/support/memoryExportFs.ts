@@ -21,8 +21,8 @@ export function createMemoryExportFs(): MemoryExportFs {
         if (key === path || key.startsWith(`${path}/`)) files.delete(key);
       }
     },
-    async removeMatching(prefix) {
-      for (const key of [...files.keys()]) if (key.startsWith(prefix)) files.delete(key);
+    async removeExportDirs() {
+      for (const key of [...files.keys()]) if (key.startsWith("export-")) files.delete(key);
     },
     absolute: (path) => `/cache/${path}`,
   };
