@@ -212,8 +212,9 @@
   };
 
   // A tile counts as covered when it was fetched for the same kind AND fetched at
-  // least the streets asked for now: the walking set is a superset of the bike
-  // set, so a "run" fetch satisfies a later "bike" request but not vice versa.
+  // least the streets asked for now: a "run" fetch stands in for a later "bike" request but not vice
+  // versa. An approximation: rectQuery drops foot=no ways from "run" only, so a cycleway tagged
+  // foot=no is in a bike fetch and not in the run fetch that stands in for it.
   // withStale also counts the expired tiles already drawn from, so a cache-only read skips them.
   StreetIndex.prototype._uncovered = function (rects, kind, withStale) {
     return StreetIndex.tilesOf(rects).filter((t) => !(holds(this.tiles, kind, t) || (withStale && holds(this.staleTiles, kind, t))));
@@ -277,7 +278,7 @@
   StreetIndex.prototype.ensureRects = function (rects, kind, opts) {
     let under;
     // a bad rect rejects rather than throwing at the call, so a .then caller hears of it
-    try { under = new Set(StreetIndex.tilesOf(rects).map((t) => t.x + ":" + t.y)); } catch (e) { return Promise.reject(e); }
+    try { under = new Set(StreetIndex.tilesOf(rects).map(StreetIndex.tileId)); } catch (e) { return Promise.reject(e); }
     for (const pos of under) this._use(pos);
     if (opts && opts.holdAs) this.holds.set(opts.holdAs, under);
     this.runs.add(under);
@@ -306,7 +307,7 @@
     StreetIndex.nearestFirst(todo, rects);
     const deadlineMs = opts.deadlineMs == null ? RUN_DEADLINE_MS : opts.deadlineMs;
     const started = this.now();
-    const tid = (t) => t.x + ":" + t.y;
+    const tid = StreetIndex.tileId;
     const read = new Set(), want = new Set(todo.map(tid));
     // tiles read here that were not a fresh street-cache answer (onTile's {cached: true}): what
     // downloadError takes as `arrived`
@@ -548,7 +549,7 @@
     // a read with no tile could neither replace an expired way nor say which piece holds what it brings
     if (!from) throw new TypeError("streets: _read needs the tile it reads");
     const epoch = this.wayEpoch, stale = !!from.stale, key = StreetIndex.tileKey(from.kind, from.x, from.y);
-    const pos = from.x + ":" + from.y;
+    const pos = StreetIndex.tileId(from);
     // _dropWays below discards each replaced way's entry, so the expired copies that still list it are
     // carried into the rebuilt one: an eviction of this piece then leaves the way to them
     const carry = new Map(), freshHeld = new Set();
@@ -683,19 +684,22 @@
   StreetIndex.tilesOf = (rects) => {
     const seen = new Set();
     return rects.flatMap((r) => StreetIndex.tilesCovering(r)).filter((t) => {
-      const k = t.x + ":" + t.y;
+      const k = StreetIndex.tileId(t);
       return !seen.has(k) && seen.add(k);
     });
   };
   StreetIndex.tileBounds = ({ x, y }) => ({ s: y * TILE_DEG, w: x * TILE_DEG, n: (y + 1) * TILE_DEG, e: (x + 1) * TILE_DEG });
+  // "x:y", the key of a piece in every Map and Set keyed by tile; tileKey must build "kind:" + tileId
+  // (change both together)
+  StreetIndex.tileId = (t) => t.x + ":" + t.y;
   StreetIndex.tileKey = (kind, x, y) => kind + ":" + x + ":" + y;
 
   // The Overpass query for the given boxes ([{s,w,n,e}]). The bench cache is keyed on this
   // text, with its [timeout:25] read as [timeout:60] (bench/lib/fetch-cache.js), so any edit
   // but a return to [timeout:60] makes every saved rectQuery answer miss. [timeout:25]
   // caps the server's run once the query leaves its queue. overpass-api.de sends nothing until the
-  // run ends, so the client guard that binds is the 90 s first byte (FIRST_BYTE_MS in overpass.js):
-  // a 39-68 s queue plus a 25 s run can still overrun it, and that request counts as a stall.
+  // run ends, so the client guard that binds is FIRST_BYTE_MS in overpass.js, whose comment holds the
+  // queue measurement: a queue plus a 25 s run can still overrun it, and that request counts as a stall.
   StreetIndex.rectQuery = function (boxes, kind) {
     const bb = (r) => [r.s, r.w, r.n, r.e].map((x) => x.toFixed(4)).join(",");
     // access filter: planned and routed trips must not cross ways the person can't
@@ -724,12 +728,10 @@
   };
 
   // A request asks for at most one street block, a 2x2 group of tiles starting at even tile indices
-  // (not Fog of World's bitmap block). On the phone every request took about 5 s to its first byte
-  // from NextGIS (4.8-6.1 s, of which the server ran a dense street block in about 4.5 s) and waited
-  // 39-68 s in overpass-api.de's queue (#185), whatever its size, so requests open at once
-  // (Overpass.cap()) share that wait where requests in a row add it up; a street block runs well inside
-  // [timeout:25], and a failure loses only its street block. Splits tiles (nearest first) by street
-  // block, street blocks in the order of their nearest tile.
+  // (not Fog of World's bitmap block). overpass-api.de queues even a one-tile request for tens of
+  // seconds (measurements in overpass.js, #185), so requests open at once (Overpass.cap()) share that
+  // wait where requests in a row add it up, and a failure loses only its street block. Splits tiles (nearest
+  // first) by street block, street blocks in the order of their nearest tile.
   function batches(tiles) {
     const blocks = new Map();
     for (const t of tiles) {
@@ -752,7 +754,7 @@
     return batch.concat(block.filter((t) => !batch.some((b) => b.x === t.x && b.y === t.y)));
   }
 
-  // The boxes a request's query asks for: one, the bounds of the tiles it brings (batchTiles).
+  // One box over the tiles a request brings (batchTiles), so the query has one area clause per highway list.
   function batchBoxes(tiles) {
     const xs = tiles.map((t) => t.x), ys = tiles.map((t) => t.y);
     return [{ s: Math.min(...ys) * TILE_DEG, w: Math.min(...xs) * TILE_DEG, n: (Math.max(...ys) + 1) * TILE_DEG, e: (Math.max(...xs) + 1) * TILE_DEG }];
@@ -785,7 +787,7 @@
     const now = opts.now || Date.now;
     const wait = opts.wait || ((until) => new Promise((resolve) => setTimeout(() => resolve(true), Math.max(0, until - now()))));
     const queue = batches(tiles).map((batch, rank) => ({ batch, rank }));
-    const got = () => tiles.filter((t) => out.has(t.x + ":" + t.y)).length;
+    const got = () => tiles.filter((t) => out.has(StreetIndex.tileId(t))).length;
     return new Promise((resolve, reject) => {
       // last: the wait set is the step past the schedule, ending the run unless recovered (a request
       // was answered while it was set) by the time the requests open with it have finished
@@ -838,8 +840,8 @@
           try { answers = StreetIndex.splitAnswer(json, ask); } catch (e) { fail(e, false); return pump(); }
           // the whole answer is in: every tile of it is handed over, whatever the caller throws
           for (const t of ask) {
-            const answer = answers.get(t.x + ":" + t.y);
-            out.set(t.x + ":" + t.y, answer);
+            const id = StreetIndex.tileId(t), answer = answers.get(id);
+            out.set(id, answer);
             try { if (onTile) onTile(t, answer); } catch (e) { fail(e, true); }
           }
           pump();
@@ -945,8 +947,8 @@
     if (group + 1 < GROUP_ORDER.length) throw unusable("the answer is incomplete");
     // a way goes to every requested tile one of its segments touches (a long segment can cross a tile
     // with no vertex in it), to the first when none does
-    const answers = new Map(tiles.map((t) => [t.x + ":" + t.y, { ways: [], groups: Object.fromEntries(GROUP_ORDER.map((n) => [n, []])) }]));
-    const boxes = tiles.map((t) => [answers.get(t.x + ":" + t.y), StreetIndex.tileBounds(t)]);
+    const answers = new Map(tiles.map((t) => [StreetIndex.tileId(t), { ways: [], groups: Object.fromEntries(GROUP_ORDER.map((n) => [n, []])) }]));
+    const boxes = tiles.map((t) => [answers.get(StreetIndex.tileId(t)), StreetIndex.tileBounds(t)]);
     const home = new Map(); // way id -> the answers it went to
     for (const w of ways) {
       const hit = new Set(), g = w.geometry || [];
@@ -955,7 +957,7 @@
         if (!a) break;
         for (const [answer, box] of boxes) if (!hit.has(answer) && segmentTouches(a, b, box)) hit.add(answer);
       }
-      const into = hit.size ? [...hit] : [answers.get(tiles[0].x + ":" + tiles[0].y)];
+      const into = hit.size ? [...hit] : [answers.get(StreetIndex.tileId(tiles[0]))];
       for (const a of into) a.ways.push(w);
       home.set(w.id, into);
     }

@@ -5,7 +5,7 @@
   const GENERIC = "Couldn't download the street map. Try again in a minute.";
   const BLOCKED_ADVICE = "Try another network, or try again tomorrow";
 
-  // " in about 30 s" from retryAt, or null without a retry time or a clock. Rounded up to 10 s because
+  // " in about 30 s" from a time on the clock of `now` (retryAt, or progress's waitUntil), or null without a time or a clock. Rounded up to 10 s because
   // the text is read a while after it is set and an exact count would promise too early; a wait past
   // two minutes reads better in minutes.
   function wait(retryAt, now) {

@@ -820,7 +820,7 @@ async function testCase(body) {
     assert.equal(asked.length, 2, "the two sent together, none for the third block");
     assert.deepEqual([err.done, err.total, err.reason, err.cause.reason], [8, 12, "streets-partial", "stalled"]);
   });
-  await testCase(async () => { // every tile in, though the run stopped on the way (its deadline, here): the run is whole
+  await testCase(async () => { // every tile in, though the deadline passed while the requests were open: the run is whole
     const clock = { t: 0 };
     tileServer();
     const serve = global.fetch;

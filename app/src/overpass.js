@@ -16,18 +16,19 @@
   const ENDPOINTS = {
     main: "https://overpass-api.de/api/interpreter"
   };
-  // On the phone a four-tile request took 41-65 s from overpass-api.de and 5-17 s from NextGIS
-  // (#185); with no key NextGIS drops out and overpass-api.de is asked alone.
+  // NextGIS first: on the phone it answers in seconds where overpass-api.de queued for tens of seconds
+  // (FIRST_BYTE_MS, #185). When the page holds no credential for it, it drops out and overpass-api.de is asked alone.
   const DEFAULT_ORDER = ["nextgis", "main"];
   // Requests in flight per endpoint, every caller's together. NextGIS's /api/status reports no
   // limit ("Rate limit: 0"), so its 4 is our own choice, not the server's. overpass-api.de's
-  // reports "Rate limit: 2" per IP, where a third request would wait 15 s and get a 429. A post
+  // /api/status reports "Rate limit: 2" per IP, where a third request would wait 15 s and get a 429. A post
   // falling back from NextGIS takes one of overpass-api.de's slots.
   const CAPS = { nextgis: 4, main: 2 };
   const MIN_BACKOFF_MS = 30000;
   // overpass-api.de sends nothing until a query has waited out its queue and run. On the phone a
   // one-tile request got its first byte after 39-68 s (#185), even a tile of 1 KB, so that is the
-  // queue, and the first-byte guard must outlast it. The price is 90 s per dead connection, which
+  // queue plus the run, and the first-byte guard must outlast it; a long queue and a full run can
+  // still overrun it (see StreetIndex.rectQuery). The price is 90 s per dead connection, which
   // is why one stall holds only briefly and the count resets whenever an answer ends.
   const FIRST_BYTE_MS = 90000;
   const REQUEST_TIMEOUT_MS = 120000;
@@ -44,7 +45,7 @@
   // Read at each use: window.crossfogNextgisKey is set by the script mobile/src/bridge/pageConfig.ts
   // builds and WebShell.tsx injects, and on Android that can land after this file has run.
   function urlOf(name) {
-    if (name !== "nextgis") return ENDPOINTS[name];
+    if (name !== "nextgis") return Object.hasOwn(ENDPOINTS, name) ? ENDPOINTS[name] : undefined;
     const key = global.crossfogNextgisKey;
     return typeof key === "string" && key ? "https://overpass.nextgis.com/" + encodeURIComponent(key) + "/api/interpreter" : undefined;
   }
@@ -144,15 +145,15 @@
 
   // Resolves with the JSON of the first endpoint, in order, whose body parses. Rejects with a fresh
   // error that copies the message and name of the error that earned the reason (kept as `cause`),
-  // carrying `reason` and `retryAt`. When the endpoints disagree the first reason in this list wins, most actionable first. The reasons: blocked, a 406 was seen or an
-  // endpoint is held after one; busy, 429, 502 or 504; stalled, no answer or a body that stopped;
-  // offline, the browser says so, or every fetch failed and no status was seen; server, anything
-  // else. The endpoints this post asked speak first: an endpoint skipped as held gives the reason
-  // only when none was asked, so a NextGIS 502 during overpass-api.de's 406 hour is busy, which a run waits
-  // out, rather than a block that ends it. `retryAt` (on the Overpass._now clock) is set only when every
-  // endpoint is on hold: the end of the first hold, before which no post goes out; when the reason is
-  // blocked, the end of the earliest block instead, which can come after another endpoint's hold ends:
-  // a post in between still goes out.
+  // carrying `reason` and `retryAt`. The reasons are ranked by REASONS, most actionable first, and glossed here: blocked is a
+  // 406 seen or an endpoint held after one; busy, 429, 502 or 504; stalled, no answer or a body that
+  // stopped; offline, the browser says so, or every fetch failed and no status was seen; server,
+  // anything else. The endpoints this post asked speak first: an endpoint skipped as held gives the
+  // reason only when none was asked, so a NextGIS 502 during overpass-api.de's 406 hour is busy, which
+  // a run waits out, rather than a block that ends it. `retryAt` (on the Overpass._now clock) is set
+  // only when every endpoint is on hold: the earliest hold's end, before which no post goes out; when
+  // the reason is blocked, the earliest block's end instead, which can come after another endpoint's
+  // hold ends: a post in between still goes out.
   //
   // A post waits for a free slot on the endpoint it is about to ask, and a fallback for one on the
   // next; one that waited is not sent where a request finished meanwhile set a hold. opts.stale() true
@@ -229,9 +230,9 @@
     const err = cause ? Object.assign(new Error(cause.message), { name: cause.name, cause }) : new Error("overpass: no endpoint to ask");
     err.reason = reason;
     const held = urls.map(stateOf).filter((s) => s.until > Overpass._now());
-    // a 406 is this network's daily cap and BLOCKED_ADVICE tells the person to try tomorrow, so a
-    // blocked retryAt is the block's own end, even when another endpoint's hold ends sooner; the
-    // streets layer waits for it
+    // a 406 is this network's daily cap and streetMessages.js's BLOCKED_ADVICE tells the person to try
+    // tomorrow, so a blocked retryAt is the block's own end, even when another endpoint's hold ends
+    // sooner; nothing waits for it, since no caller sleeps on a blocked retryAt
     const until = held.filter((s) => reason !== "blocked" || s.why === "blocked").map((s) => s.until);
     if (held.length === urls.length) err.retryAt = Math.min(...until);
     throw err;
@@ -252,8 +253,8 @@
     // order naming an endpoint not in DEFAULT_ORDER is a stale choice, so it reads as the default
     // whole rather than promoting whatever follows the unknown name.
     setOrder(keys) {
-      const known = keys.every((k) => DEFAULT_ORDER.includes(k)) ? keys.filter((k, i) => keys.indexOf(k) === i) : [];
-      order = known.concat(DEFAULT_ORDER.filter((k) => !known.includes(k)));
+      const known = keys.every((k) => DEFAULT_ORDER.includes(k)) ? keys : [];
+      order = [...new Set([...known, ...DEFAULT_ORDER])];
     },
     // whether a post can reach this endpoint: false for an unknown name, and for nextgis while the
     // page holds no key
