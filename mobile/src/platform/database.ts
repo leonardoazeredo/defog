@@ -56,7 +56,7 @@ export function createDatabase(): Promise<HistoryDatabase> {
         keyState,
         getDatabaseKeyHex,
         // expo-sqlite's default directory is `SQLite` under the document directory. The replaced copy
-        // counts too, as in the native resetKeys check.
+        // counts too, as in the native resetKeys check, which also leaves out RESTORING_DB.
         databaseExists: () =>
           [LIVE_DB, REPLACED_DB].some((name) => new File(Paths.document, "SQLite", name).exists),
         resetKeys,

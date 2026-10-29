@@ -38,9 +38,9 @@ class KeyRefusedException(message: String) : IllegalStateException(message)
 
 /**
  * FRESH: neither the Keystore key nor the file. LOST: exactly one of them, or both with no key
- * behind the alias. UNREADABLE: both, but
- * the key can never be read (bad tag, invalidated Keystore key, wrong length). EXISTING: both, and
- * a read just now did not fail for good (a later one may still fail, e.g. on a busy Keystore).
+ * behind the alias. UNREADABLE: both, but the key can never be read (bad tag, invalidated
+ * Keystore key, wrong length). EXISTING: both, and a read just now did not fail for good (a later
+ * one may still fail, e.g. on a busy Keystore).
  */
 enum class KeyState(val wire: String) {
   FRESH("fresh"),

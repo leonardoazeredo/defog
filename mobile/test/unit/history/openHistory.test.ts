@@ -149,6 +149,47 @@ describe("openHistory", () => {
     });
   });
 
+  it("reports a lost key when the read still fails after a reset of a lost presence", async () => {
+    const d = deps({
+      keyPresence: async () => "lost",
+      databaseExists: () => false,
+      getDatabaseKeyHex: async () => {
+        throw keyLost();
+      },
+    });
+    expect((await openHistory(d)).kind).toBe("keyLost");
+    expect(d.resetKeys).toHaveBeenCalledOnce();
+    expect(d.openDriver).not.toHaveBeenCalled();
+  });
+
+  it("passes a refused reset on when the read failed and the state says unreadable", async () => {
+    const d = deps({
+      keyState: vi.fn(async () => "unreadable" as const),
+      databaseExists: () => false,
+      getDatabaseKeyHex: async () => {
+        throw keyLost();
+      },
+      resetKeys: async () => {
+        throw Object.assign(new Error("a database exists"), { code: "ERR_INVALID_STATE" });
+      },
+    });
+    await expect(openHistory(d)).rejects.toThrow("a database exists");
+    expect(d.openDriver).not.toHaveBeenCalled();
+  });
+
+  it("passes a failing state read on instead of reporting a lost key", async () => {
+    const d = deps({
+      keyState: vi.fn(async () => {
+        throw new Error("keystore busy");
+      }),
+      getDatabaseKeyHex: async () => {
+        throw keyLost();
+      },
+    });
+    await expect(openHistory(d)).rejects.toThrow("keystore busy");
+    expect(d.resetKeys).not.toHaveBeenCalled();
+  });
+
   it("passes a refused reset on without opening anything", async () => {
     const d = deps({
       keyPresence: async () => "lost",
