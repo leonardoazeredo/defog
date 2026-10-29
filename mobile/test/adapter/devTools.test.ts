@@ -33,3 +33,12 @@ it("asks native to add an activity when its button is tapped", () => {
   expect(send).toHaveBeenCalledExactlyOnceWith({ v: 1, type: "devAddActivity" });
   expect(cache.clearAll).not.toHaveBeenCalled();
 });
+
+it("wraps the dev buttons in one fixed bar on the document body", () => {
+  const { buttons } = setup();
+  const bar = buttons[0]?.parentElement;
+  expect(bar?.dataset.crossfogDevBar).toBe("");
+  expect(bar?.style.position).toBe("fixed");
+  expect(bar?.parentElement).toBe(document.body);
+  expect(buttons.every((b) => b.parentElement === bar)).toBe(true);
+});

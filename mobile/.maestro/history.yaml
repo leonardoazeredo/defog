@@ -1,31 +1,12 @@
 appId: codes.madera.crossfog
 ---
-# Needs mobile/test/fixtures/glancemap-walk.gpx pushed to the device's Downloads (adb push), the fog
-# that import.yaml saves, and a debug build made with CROSSFOG_E2E=1: the Release e2e build shows the
-# button, but there the handler is not wired (the message is accepted and ignored) and the native
-# stageForTest exists only in the debug source set.
-# Relaunch so the flow does not depend on the screen the previous flow left; no clearState, because
-# the saved fog must survive.
-- stopApp
-- launchApp
-- extendedWaitUntil:
-    visible: "Expand or collapse panel"
-    timeout: 60000
-- tapOn: "Expand or collapse panel"
-- extendedWaitUntil:
-    visible: "2 tiles loaded ✓"
-    timeout: 30000
-# The dev buttons sit at the foot of the page, below the fold; Maestro reports off-screen web view
-# text as visible, so scroll a fixed distance instead of guarding the swipe. The first swipes scroll
-# the panel to its end; only then does the page move, so an extra swipe is harmless.
-- repeat:
-    times: 4
-    commands:
-      - swipe:
-          start: "50%, 90%"
-          end: "50%, 30%"
-- waitForAnimationToEnd:
-    timeout: 5000
+# Runs on its own, not from config.yaml: it needs the developer-only add-activity action, whose
+# native half (stageForTest) exists only in a debug build, and the debug build's launches are too slow
+# for the other flows' clearState-then-tap. Needs a debug build made with CROSSFOG_E2E=1 (the Release
+# e2e build shows the button but ignores its message), mobile/test/fixtures/glancemap-walk.gpx pushed to
+# the device's Downloads (adb push) with nothing else in there that could push it below the picker's
+# fold, and the fog that import.yaml saves. No clearState: the saved fog must survive.
+- runFlow: subflows/open-panel.yaml
 - tapOn: "Dev: add activity from GPX"
 - extendedWaitUntil:
     visible: "glancemap-walk.gpx"
