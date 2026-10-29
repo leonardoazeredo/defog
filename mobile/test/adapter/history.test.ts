@@ -145,7 +145,7 @@ async function setup(
     version: options.rulesVersion ?? Reveal.RULES.version,
     halfWidthM: options.halfWidthM ?? Reveal.RULES.halfWidthM,
   };
-  const history = { setActivities: vi.fn(), setTrack: vi.fn() };
+  const history = { setActivities: vi.fn(), setTrack: vi.fn(), trackUnavailable: vi.fn() };
   const page: CrossfogPageApi = {
     fogMap,
     fogChanged,

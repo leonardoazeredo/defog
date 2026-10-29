@@ -4,6 +4,7 @@ import type { Send } from "./bridge.js";
 type PageMessage<E extends PageEvent> = Extract<NativeToWeb, { type: E }>;
 
 // The one list of native-to-page events: the listener table, `isPageMessage` and the session's routing all follow it.
+// `satisfies` makes a name that is not a NativeToWeb type a compile error rather than a silent no-op.
 const PAGE_EVENTS = [
   "routeStatus",
   "linkStatus",
@@ -12,9 +13,9 @@ const PAGE_EVENTS = [
   "trackUnavailable",
   "unreadableActivities",
   "exportStatus",
-] as const;
+] as const satisfies readonly NativeToWeb["type"][];
 
-type PageEvent = (typeof PAGE_EVENTS)[number];
+type PageEvent = Extract<NativeToWeb["type"], (typeof PAGE_EVENTS)[number]>;
 
 // True for a message the page API delivers to `window.crossfog.on` listeners.
 export function isPageMessage(msg: NativeToWeb): msg is PageMessage<PageEvent> {

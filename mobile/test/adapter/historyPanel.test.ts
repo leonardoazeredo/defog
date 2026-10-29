@@ -5,10 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type ActivitySummary,
   encode,
-  parseWebToNative,
+  type TrackUnavailableReason,
   type WebToNative,
 } from "../../src/bridge/protocol.js";
 import { installPageApi } from "../../web-adapter/pageApi.js";
+import { parseWebToNative } from "../support/parseWebToNative.js";
 import { loadUpstreamDom } from "./support/upstreamDom.js";
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), "../../../app");
@@ -35,7 +36,7 @@ interface Route {
 interface Panel {
   setActivities(items: ActivitySummary[]): void;
   setTrack(id: string, points: unknown[], route?: { coords: number[][] }): void;
-  trackUnavailable(id: string, reason: "notFound" | "readFailed"): void;
+  trackUnavailable(id: string, reason: TrackUnavailableReason): void;
   setUnreadable(count: number): void;
   refresh(): void;
 }

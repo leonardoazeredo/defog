@@ -255,58 +255,92 @@ export function encode(msg: WebToNative | NativeToWeb): string {
   return JSON.stringify(msg);
 }
 
-export interface DroppedMessage {
-  /** The message's `type` when the app knows it, else null: an unknown one is any text the page wrote. */
-  type: WebToNative["type"] | null;
-  /** Where it broke the schema, as dotted key paths; never a value. */
-  paths: string[];
-  /** A dropped sendRoute's route id, when that id is itself valid, so the page can hear it failed. */
-  routeId: string | null;
-  /** A dropped exportBinary's export id, when that id is itself valid, so the export can be abandoned. */
-  exportId: string | null;
+export type TrackUnavailableReason = Extract<NativeToWeb, { type: "trackUnavailable" }>["reason"];
+
+/** Why a message with no known type was dropped. A tag only, never a value from the message. */
+type DropReason = "json" | "not-object" | "unknown-type";
+
+// `paths` is where the message broke the schema, as dotted keys; never a value.
+interface DropPaths {
+  readonly paths: readonly string[];
 }
+
+// Each id is set only when that id is itself valid, so the page is never answered about an id nobody checked.
+export type DroppedMessage =
+  // An unknown type is any text the page wrote, so it is not repeated: `reason` says what was unreadable.
+  | { readonly type: null; readonly reason: DropReason; readonly paths: readonly [] }
+  | (DropPaths & { readonly type: "sendRoute"; readonly routeId: string | null })
+  | (DropPaths & { readonly type: "exportBinary"; readonly exportId: string | null })
+  | (DropPaths & { readonly type: "needTrack"; readonly activityId: string | null })
+  | (DropPaths & { readonly type: "deleteActivity"; readonly activityId: string | null })
+  | (DropPaths & {
+      readonly type: Exclude<
+        WebToNative["type"],
+        "sendRoute" | "exportBinary" | "needTrack" | "deleteActivity"
+      >;
+    });
 
 export type WebToNativeParse = { ok: true; msg: WebToNative } | { ok: false; drop: DroppedMessage };
 
 const MAX_DROP_PATHS = 10;
-const NOTHING_TO_NAME: DroppedMessage = { type: null, paths: [], routeId: null, exportId: null };
+
+function unnamed(reason: DropReason): DroppedMessage {
+  return { type: null, reason, paths: [] };
+}
 
 function issuePaths(issues: readonly z.core.$ZodIssue[]): string[] {
   const paths = issues.map((i) => (i.path.length > 0 ? i.path.map(String).join(".") : "(message)"));
   return [...new Set(paths)].slice(0, MAX_DROP_PATHS);
 }
 
-const namesType = (issues: readonly z.core.$ZodIssue[]) => issues.some((i) => i.path[0] === "type");
+const typeMismatched = (issues: readonly z.core.$ZodIssue[]) =>
+  issues.some((i) => i.path[0] === "type");
 
 // Zod hands back the issues of the one branch that got past its literals, or else an invalid_union
 // with an issue list per branch: then a branch whose `type` matched is the message's own, and the one
 // with the fewest issues is the closest it came, as one type can have several branches.
 function describeDrop(data: unknown, error: z.ZodError): DroppedMessage {
-  if (typeof data !== "object" || data === null) return { ...NOTHING_TO_NAME };
+  if (typeof data !== "object" || data === null || Array.isArray(data))
+    return unnamed("not-object");
   let own: readonly z.core.$ZodIssue[] | null = null;
   const [first] = error.issues;
   if (error.issues.length === 1 && first?.code === "invalid_union" && first.path.length === 0) {
     for (const branch of first.errors) {
-      if (namesType(branch)) continue;
+      if (typeMismatched(branch)) continue;
       if (own === null || branch.length < own.length) own = branch;
     }
-  } else if (!namesType(error.issues)) {
+  } else if (!typeMismatched(error.issues)) {
     own = error.issues;
   }
-  if (own === null) return { ...NOTHING_TO_NAME };
-  const obj = data as { type: WebToNative["type"]; route?: unknown; exportId?: unknown };
-  const route = obj.type === "sendRoute" ? obj.route : null;
-  const id =
-    typeof route === "object" && route !== null
-      ? uuid.safeParse((route as { id?: unknown }).id)
-      : null;
-  const exp = obj.type === "exportBinary" ? exportId.safeParse(obj.exportId) : null;
-  return {
-    type: obj.type,
-    paths: issuePaths(own),
-    routeId: id?.success ? id.data : null,
-    exportId: exp?.success ? exp.data : null,
+  if (own === null) return unnamed("unknown-type");
+  const obj = data as {
+    type: WebToNative["type"];
+    route?: unknown;
+    exportId?: unknown;
+    activityId?: unknown;
   };
+  const paths = issuePaths(own);
+  switch (obj.type) {
+    case "sendRoute": {
+      const route = obj.route;
+      const id =
+        typeof route === "object" && route !== null
+          ? uuid.safeParse((route as { id?: unknown }).id)
+          : null;
+      return { type: "sendRoute", paths, routeId: id?.success ? id.data : null };
+    }
+    case "exportBinary": {
+      const id = exportId.safeParse(obj.exportId);
+      return { type: "exportBinary", paths, exportId: id.success ? id.data : null };
+    }
+    case "needTrack":
+    case "deleteActivity": {
+      const id = uuid.safeParse(obj.activityId);
+      return { type: obj.type, paths, activityId: id.success ? id.data : null };
+    }
+    default:
+      return { type: obj.type, paths };
+  }
 }
 
 export function inspectWebToNative(raw: string): WebToNativeParse {
@@ -314,17 +348,12 @@ export function inspectWebToNative(raw: string): WebToNativeParse {
   try {
     data = JSON.parse(raw);
   } catch {
-    return { ok: false, drop: { ...NOTHING_TO_NAME } };
+    return { ok: false, drop: unnamed("json") };
   }
   const result = webToNativeSchema.safeParse(data);
   return result.success
     ? { ok: true, msg: result.data }
     : { ok: false, drop: describeDrop(data, result.error) };
-}
-
-export function parseWebToNative(raw: string): WebToNative | null {
-  const result = inspectWebToNative(raw);
-  return result.ok ? result.msg : null;
 }
 
 export function parseNativeToWeb(raw: string): NativeToWeb | null {
