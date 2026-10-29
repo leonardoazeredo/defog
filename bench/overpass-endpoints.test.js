@@ -694,7 +694,7 @@ const realFetch = global.fetch;
     reset({ key: null, order: null });
     assert.equal(Overpass.has("nextgis"), false);
     assert.equal(Overpass.has("main"), true);
-    // inherited names are no endpoints
+    // inherited names are not endpoints
     for (const n of ["toString", "constructor", "__proto__"]) assert.equal(Overpass.has(n), false, n);
     replies[M] = [{ status: 500 }];
     assert.equal((await rejection(Overpass.post("data=x"))).reason, "server");
@@ -732,7 +732,7 @@ const realFetch = global.fetch;
       await Overpass.post("data=x");
       assert.deepEqual(calls, [N, M], JSON.stringify(stored));
     }
-    for (const [stored, want] of [[["nextgis"], [N, M]], [["main"], [M, N]]]) {
+    for (const [stored, want] of [[["main", "main"], [M, N]], [["nextgis"], [N, M]], [["main"], [M, N]]]) {
       reset();
       Overpass.setOrder(stored);
       replies[want[0]] = [{ status: 500 }];

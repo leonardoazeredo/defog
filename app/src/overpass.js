@@ -16,7 +16,8 @@
   const ENDPOINTS = {
     main: "https://overpass-api.de/api/interpreter"
   };
-  // NextGIS first; when the page holds no credential for it, it drops out and overpass-api.de is asked alone.
+  // NextGIS first: on the phone it answers in seconds where overpass-api.de queued for tens of seconds
+  // (FIRST_BYTE_MS, #185). When the page holds no credential for it, it drops out and overpass-api.de is asked alone.
   const DEFAULT_ORDER = ["nextgis", "main"];
   // Requests in flight per endpoint, every caller's together. NextGIS's /api/status reports no
   // limit ("Rate limit: 0"), so its 4 is our own choice, not the server's. overpass-api.de's

@@ -689,9 +689,10 @@
     });
   };
   StreetIndex.tileBounds = ({ x, y }) => ({ s: y * TILE_DEG, w: x * TILE_DEG, n: (y + 1) * TILE_DEG, e: (x + 1) * TILE_DEG });
-  // "x:y", the key of a piece in every Map and Set keyed by tile; tileKey puts the kind in front
+  // "x:y", the key of a piece in every Map and Set keyed by tile; tileKey must build "kind:" + tileId
+  // (change both together)
   StreetIndex.tileId = (t) => t.x + ":" + t.y;
-  StreetIndex.tileKey = (kind, x, y) => kind + ":" + StreetIndex.tileId({ x, y });
+  StreetIndex.tileKey = (kind, x, y) => kind + ":" + x + ":" + y;
 
   // The Overpass query for the given boxes ([{s,w,n,e}]). The bench cache is keyed on this
   // text, with its [timeout:25] read as [timeout:60] (bench/lib/fetch-cache.js), so any edit
@@ -753,7 +754,7 @@
     return batch.concat(block.filter((t) => !batch.some((b) => b.x === t.x && b.y === t.y)));
   }
 
-  // The boxes a request's query asks for: one, the bounds of the tiles it brings (batchTiles).
+  // One box over the tiles a request brings (batchTiles), so the query has one area clause per highway list.
   function batchBoxes(tiles) {
     const xs = tiles.map((t) => t.x), ys = tiles.map((t) => t.y);
     return [{ s: Math.min(...ys) * TILE_DEG, w: Math.min(...xs) * TILE_DEG, n: (Math.max(...ys) + 1) * TILE_DEG, e: (Math.max(...xs) + 1) * TILE_DEG }];
@@ -839,8 +840,8 @@
           try { answers = StreetIndex.splitAnswer(json, ask); } catch (e) { fail(e, false); return pump(); }
           // the whole answer is in: every tile of it is handed over, whatever the caller throws
           for (const t of ask) {
-            const answer = answers.get(StreetIndex.tileId(t));
-            out.set(StreetIndex.tileId(t), answer);
+            const id = StreetIndex.tileId(t), answer = answers.get(id);
+            out.set(id, answer);
             try { if (onTile) onTile(t, answer); } catch (e) { fail(e, true); }
           }
           pump();
