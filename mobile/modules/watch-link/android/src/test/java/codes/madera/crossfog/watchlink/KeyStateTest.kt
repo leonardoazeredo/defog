@@ -36,8 +36,8 @@ class KeyStateTest {
   }
 
   @Test
-  fun aMissingKeystoreKeyBehindItsAliasIsNotUnreadable() {
-    assertEquals(KeyState.EXISTING, stateOfPresentKey { readKekOrLost({}) { null } })
+  fun anAliasWithNoKeyBehindItIsLost() {
+    assertEquals(KeyState.LOST, stateOfPresentKey { readKekOrLost({}) { null } })
   }
 
   @Test
@@ -78,5 +78,14 @@ class KeyStateTest {
   fun aLostKeystoreKeyIsNotPermanent() {
     val e = assertThrows(KeyLostException::class.java) { readKekOrLost({}) { null } }
     assertFalse(e.permanent)
+    assertTrue(e.absent)
+  }
+
+  @Test
+  fun aRepeatedUnrecoverableKeyExceptionIsNotAbsent() {
+    val e = assertThrows(KeyLostException::class.java) {
+      readKekOrLost({}) { throw UnrecoverableKeyException("key damaged") }
+    }
+    assertFalse(e.absent)
   }
 }

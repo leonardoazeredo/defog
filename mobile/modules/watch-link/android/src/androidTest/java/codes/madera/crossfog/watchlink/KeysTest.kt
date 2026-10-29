@@ -10,6 +10,7 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -84,11 +85,12 @@ class KeysTest {
   }
 
   @Test
-  fun aDamagedFileIsALostKey() {
+  fun aDamagedFileFailsTheReadAndIsUnreadable() {
     val keys = Keys(context)
     keys.databaseKey()
     keys.databaseKeyFile.writeBytes(ByteArray(60))
     assertThrows(KeyLostException::class.java) { Keys(context).databaseKey() }
+    assertEquals(KeyState.UNREADABLE, Keys(context).keyState())
   }
 
   @Test
@@ -161,6 +163,47 @@ class KeysTest {
   }
 
   @Test
+  fun resetIsRefusedForAnUnreadableKeyWhileADatabaseFileExists() {
+    for (name in listOf("crossfog.db", "crossfog.replaced.db")) {
+      reset()
+      val keys = keys()
+      keys.databaseKey()
+      keys.databaseKeyFile.writeBytes(ByteArray(60))
+      File(sqliteDir, name).writeBytes(ByteArray(16))
+      assertThrows(name, KeyRefusedException::class.java) { keys.resetKeys() }
+      assertEquals(name, KeyState.UNREADABLE, keys.keyState())
+      assertTrue(name, aliasPresent())
+    }
+  }
+
+  @Test
+  fun resetOnAFreshStateDropsAStrayNewFile() {
+    val keys = keys()
+    val stray = File(keys.databaseKeyFile.path + ".new")
+    stray.parentFile!!.mkdirs()
+    stray.writeBytes(ByteArray(8))
+    assertEquals(KeyState.FRESH, keys.keyState())
+    keys.resetKeys()
+    assertFalse(stray.exists())
+    assertEquals(KeyState.FRESH, keys.keyState())
+  }
+
+  @Test
+  fun resetKeepsTheKeystoreFailureWhenTheEntryCannotBeDropped() {
+    val busy = java.security.KeyStoreException("keystore busy")
+    val keys = Keys(context, sqliteDir) { throw busy }
+    keys.databaseKey()
+    assertTrue(keys.databaseKeyFile.delete())
+    assertEquals(KeyState.LOST, keys.keyState())
+    val e = assertThrows(IllegalStateException::class.java) { keys.resetKeys() }
+    assertEquals("the old database key could not be dropped", e.message)
+    assertSame(busy, e.cause)
+    // The failure is not a KeyRefusedException: JS reads it as an unavailable key, never as a refusal.
+    assertFalse(e is KeyRefusedException)
+    assertTrue(aliasPresent())
+  }
+
+  @Test
   fun resetIsRefusedForAKeyThatStillWorks() {
     val keys = keys()
     val key = keys.databaseKey()
@@ -181,12 +224,13 @@ class KeysTest {
   }
 
   @Test
-  fun anEmptyOrTruncatedFileIsALostKey() {
+  fun anEmptyOrTruncatedFileFailsTheReadAndIsUnreadable() {
     val keys = Keys(context)
     keys.databaseKey()
     for (size in listOf(0, 10)) {
       keys.databaseKeyFile.writeBytes(ByteArray(size))
       assertThrows("size $size", KeyLostException::class.java) { Keys(context).databaseKey() }
+      assertEquals("size $size", KeyState.UNREADABLE, Keys(context).keyState())
     }
   }
 
@@ -236,6 +280,20 @@ class KeysTest {
     keys.replaceLostDatabaseKey(fresh.copyOf())
     assertEquals(KeyState.EXISTING, keys.keyState())
     assertArrayEquals(fresh, Keys(context).databaseKey())
+  }
+
+  @Test
+  fun presenceReadsWithoutUnwrappingTheKey() {
+    val keys = keys()
+    assertEquals(KeyState.FRESH, keys.keyPresence())
+    keys.databaseKey()
+    assertEquals(KeyState.EXISTING, keys.keyPresence())
+    // An unreadable key still has both halves, which is why a caller reads the key and asks keyState on failure.
+    keys.databaseKeyFile.writeBytes(ByteArray(60))
+    assertEquals(KeyState.EXISTING, keys.keyPresence())
+    assertEquals(KeyState.UNREADABLE, keys.keyState())
+    assertTrue(keys.databaseKeyFile.delete())
+    assertEquals(KeyState.LOST, keys.keyPresence())
   }
 
   @Test

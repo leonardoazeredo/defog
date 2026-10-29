@@ -4,6 +4,7 @@ import { checkedKeyHex, type DatabaseKeyHex } from "../../../src/db/keyHex.js";
 const native = {
   getDatabaseKeyHex: vi.fn(),
   keyState: vi.fn(),
+  keyPresence: vi.fn(),
   replaceLostDatabaseKey: vi.fn(),
   resetKeys: vi.fn(),
   createDocument: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock("../../../modules/watch-link", () => ({ default: native }));
 const {
   getDatabaseKeyHex,
   keyState,
+  keyPresence,
   replaceLostDatabaseKey,
   resetKeys,
   createDocument,
@@ -86,6 +88,7 @@ describe("a key the native side cannot reach now", () => {
   it.each([
     ["getDatabaseKeyHex", () => getDatabaseKeyHex(), native.getDatabaseKeyHex],
     ["keyState", () => keyState(), native.keyState],
+    ["keyPresence", () => keyPresence(), native.keyPresence],
     ["resetKeys", () => resetKeys(), native.resetKeys],
     [
       "replaceLostDatabaseKey",
@@ -118,6 +121,18 @@ describe("keyState", () => {
   it("rejects a state it does not know", async () => {
     native.keyState.mockResolvedValue("maybe");
     await expect(keyState()).rejects.toThrow("unknown key state");
+  });
+});
+
+describe("keyPresence", () => {
+  it.each(["fresh", "existing", "lost"])("returns %s", async (state) => {
+    native.keyPresence.mockResolvedValue(state);
+    await expect(keyPresence()).resolves.toBe(state);
+  });
+
+  it.each(["unreadable", "maybe"])("rejects %s, which it cannot tell", async (state) => {
+    native.keyPresence.mockResolvedValue(state);
+    await expect(keyPresence()).rejects.toThrow("unknown key state");
   });
 });
 

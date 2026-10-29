@@ -18,13 +18,15 @@ import javax.crypto.SecretKey
 /**
  * The database key was created once but its wrapped file or Keystore key is gone or unreadable.
  * `permanent` is set only for a failure no later read can fix (a bad tag, an invalidated Keystore
- * key, a key of the wrong length): of the keys whose two halves are present, only such a key may be
- * replaced by a restore or a reset.
+ * key, a key of the wrong length), and `keyState()` reads it as unreadable. `absent` is set when the
+ * alias is there but the Keystore holds no key under it, which `keyState()` reads as lost. A restore
+ * or a reset may replace a key in either state, never one that only failed to read this time.
  */
 class KeyLostException(
   message: String,
   cause: Throwable? = null,
   val permanent: Boolean = false,
+  val absent: Boolean = false,
 ) : Exception(message, cause)
 
 /**
@@ -35,9 +37,10 @@ class KeyLostException(
 class KeyRefusedException(message: String) : IllegalStateException(message)
 
 /**
- * FRESH: neither the Keystore key nor the file. LOST: exactly one of them. UNREADABLE: both, but
- * the key can never be read (bad tag, invalidated Keystore key, wrong length). EXISTING: both, and
- * a read just now did not fail for good (a later one may still fail, e.g. on a busy Keystore).
+ * FRESH: neither the Keystore key nor the file. LOST: exactly one of them, or both with no key
+ * behind the alias. UNREADABLE: both, but the key can never be read (bad tag, invalidated
+ * Keystore key, wrong length). EXISTING: both, and a read just now did not fail for good (a later
+ * one may still fail, e.g. on a busy Keystore).
  */
 enum class KeyState(val wire: String) {
   FRESH("fresh"),
@@ -55,6 +58,8 @@ class Keys(
   context: Context,
   // expo-sqlite's default directory; the history database lives there as crossfog.db.
   private val sqliteDir: File = File(context.filesDir, "SQLite"),
+  // A seam for the test of a Keystore that refuses to drop its entry.
+  private val deleteAlias: ((String) -> Unit)? = null,
 ) {
   // noBackupFilesDir is outside Auto Backup and device transfer; a restored file would be undecryptable.
   internal val databaseKeyFile = File(File(context.noBackupFilesDir, "keys"), "db.key.v1")
@@ -67,6 +72,13 @@ class Keys(
       else -> present
     }
   }
+
+  /**
+   * Which halves are present, with no read of the key: FRESH, LOST or (both present) EXISTING, which
+   * may still be unreadable. A caller that is about to read the key anyway uses this and asks
+   * `keyState()` only when that read fails, so a start unwraps the key once.
+   */
+  fun keyPresence(): KeyState = synchronized(LOCK) { presence() }
 
   // Only the committed file counts: AtomicFile's `db.key.v1.new` left by a kill before its rename
   // was never a usable key.
@@ -118,19 +130,25 @@ class Keys(
     refuseUnless(state.replaceable || state == KeyState.FRESH) {
       "the database key is in the existing state"
     }
-    discardDatabaseKey()
-    check(presence() == KeyState.FRESH) { "the old database key could not be dropped" }
+    val dropFailure = discardDatabaseKey()
+    if (presence() != KeyState.FRESH) {
+      throw IllegalStateException("the old database key could not be dropped", dropFailure)
+    }
   }
 
-  private fun discardDatabaseKey() {
+  // Returns the Keystore's failure instead of throwing: replaceLostDatabaseKey generates under the
+  // same alias next, which replaces a surviving entry, and resetKeys checks that nothing is left
+  // and attaches the failure to what it throws.
+  private fun discardDatabaseKey(): Exception? {
+    var failure: Exception? = null
     try {
-      keyStore.deleteEntry(KEK_ALIAS)
+      (deleteAlias ?: keyStore::deleteEntry)(KEK_ALIAS)
     } catch (e: Exception) {
-      // Tolerated here: replaceLostDatabaseKey generates under the same alias next, which fails
-      // loudly if that cannot work, and resetKeys checks that nothing is left.
+      failure = e
     }
     databaseKeyFile.delete()
     File(databaseKeyFile.path + ".new").delete()
+    return failure
   }
 
   /**
@@ -222,7 +240,9 @@ class Keys(
     const val KEK_ALIAS = "crossfog.kek.v1"
     const val STAGING_ALIAS = "crossfog.staging.v1"
     const val DATABASE_KEY_BYTES = 32
-    // The live file and the copy a restore keeps until the new one opens (src/backup/replace.ts).
+    // The live file and the copy a restore keeps until the new one opens, matching
+    // LIVE_DB and REPLACED_DB in src/backup/replace.ts. crossfog.restoring.db is left
+    // out on purpose: a restore deletes and rebuilds it, and a half-built one protects nothing.
     private val DATABASE_FILES = listOf("crossfog.db", "crossfog.replaced.db")
   }
 }
@@ -235,15 +255,20 @@ private val KeyState.replaceable get() = this == KeyState.LOST || this == KeySta
 
 /**
  * The state of a key whose file and Keystore key are both present, from one `read` of it. Only a
- * failure for good is UNREADABLE; anything that may pass on a later read (a repeated
- * UnrecoverableKeyException, a busy Keystore) stays EXISTING, so it never lets the key be replaced.
+ * failure for good is UNREADABLE and an alias with no Keystore key behind it LOST; anything that may
+ * pass on a later read (a repeated UnrecoverableKeyException, a busy Keystore) stays EXISTING, so it
+ * never lets the key be replaced.
  */
 internal fun stateOfPresentKey(read: () -> Unit): KeyState =
   try {
     read()
     KeyState.EXISTING
   } catch (e: KeyLostException) {
-    if (e.permanent) KeyState.UNREADABLE else KeyState.EXISTING
+    when {
+      e.permanent -> KeyState.UNREADABLE
+      e.absent -> KeyState.LOST
+      else -> KeyState.EXISTING
+    }
   } catch (e: Exception) {
     KeyState.EXISTING
   }
@@ -275,6 +300,8 @@ private const val KEK_RETRY_PAUSE_MS = 200L
  * be transient, so that failure is read once more after `pause` before it is reported as
  * KeyLostException. That exception is never permanent, so `keyState()` still reads EXISTING and
  * nothing replaces the key: replacing one that still works would make the database unreadable.
+ * A null from `read` (an alias with no Keystore key behind it) is KeyLostException with `absent`
+ * set, which `keyState()` reads as LOST.
  * Only `unwrapDatabaseKey` marks a failure permanent. Any other failure propagates unchanged; one
  * on the retry carries the first UnrecoverableKeyException as suppressed.
  */
@@ -296,5 +323,5 @@ internal fun readKekOrLost(
       throw e
     }
   }
-  return kek ?: throw KeyLostException("Keystore key is missing")
+  return kek ?: throw KeyLostException("Keystore key is missing", absent = true)
 }

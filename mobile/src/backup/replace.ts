@@ -1,6 +1,10 @@
 import type { AttachedBackup, SqlDriver } from "../db/driver.js";
 import type { DatabaseKeyHex } from "../db/keyHex.js";
+import { keyIsLostOrUnreadable } from "../db/keyState.js";
+import type { KeyState } from "../platform/watchLinkModule.js";
 
+// The native DATABASE_FILES (Keys.kt) lists LIVE_DB and REPLACED_DB. RESTORING_DB is not in it: a
+// restore deletes and rebuilds it, so no state worth guarding ever lives there.
 export const LIVE_DB = "crossfog.db";
 export const RESTORING_DB = "crossfog.restoring.db";
 export const REPLACED_DB = "crossfog.replaced.db";
@@ -61,7 +65,7 @@ export interface ReplaceDeps {
    */
   databaseKeyHex(): Promise<DatabaseKeyHex>;
   /** The native key state; only `lost` and `unreadable` let `replaceLostDatabaseKey` keep a new key. */
-  keyState(): Promise<"fresh" | "existing" | "lost" | "unreadable">;
+  keyState(): Promise<KeyState>;
   /** A new random device key as hex; nothing is kept until `replaceLostDatabaseKey`. */
   newDatabaseKeyHex(): DatabaseKeyHex;
   /** Keeps `keyHex` as the device key in place of a lost or unreadable one. */
@@ -114,7 +118,7 @@ export function createDatabaseReplacer(
       const state = await deps.keyState().catch(() => {
         throw e;
       });
-      if (state !== "lost" && state !== "unreadable") throw e;
+      if (!keyIsLostOrUnreadable(state)) throw e;
       return { kind: "replacement", hex: deps.newDatabaseKeyHex() };
     }
   }

@@ -119,41 +119,46 @@ describe("database replacer", () => {
     expect(at).toEqual([{ live: true, replaced: true, restoring: false }]);
   });
 
-  it("leaves the old key and file untouched when a lost-key restore cannot build the new file", async () => {
-    await createActivityStore(target.db).add(
-      activity({ id: "33333333-3333-4333-8333-333333333333" }),
-    );
-    const { deps, kept } = lostKeyDeps();
-    const backup = await openedBackup();
-    backup.exportTo = async () => {
-      throw new Error("no space");
-    };
-    await expect(createDatabaseReplacer(deps)(backup)).rejects.toThrow("no space");
-    expect(kept).toEqual([]);
-    expect((await createActivityStore(target.db).list()).map((a) => a.id)).toEqual([
-      "33333333-3333-4333-8333-333333333333",
-    ]);
-    expect(target.files.exists(RESTORING_DB)).toBe(false);
-  });
-
-  it("puts the old file back when the new key cannot be kept", async () => {
-    await createActivityStore(target.db).add(
-      activity({ id: "33333333-3333-4333-8333-333333333333" }),
-    );
-    const { deps } = lostKeyDeps({
-      replaceLostDatabaseKey: async () => {
-        throw new Error("keystore refused");
-      },
+  for (const state of ["lost", "unreadable"] as const) {
+    it(`leaves the old key and file untouched when a restore over a ${state} key cannot build the new file`, async () => {
+      await createActivityStore(target.db).add(
+        activity({ id: "33333333-3333-4333-8333-333333333333" }),
+      );
+      const { deps, kept } = lostKeyDeps({ keyState: async () => state });
+      const backup = await openedBackup();
+      backup.exportTo = async () => {
+        throw new Error("no space");
+      };
+      await expect(createDatabaseReplacer(deps)(backup)).rejects.toThrow("no space");
+      expect(kept).toEqual([]);
+      expect((await createActivityStore(target.db).list()).map((a) => a.id)).toEqual([
+        "33333333-3333-4333-8333-333333333333",
+      ]);
+      expect(target.files.exists(RESTORING_DB)).toBe(false);
     });
-    await expect(createDatabaseReplacer(deps)(await openedBackup())).rejects.toThrow(
-      "keystore refused",
-    );
-    expect((await createActivityStore(target.db).list()).map((a) => a.id)).toEqual([
-      "33333333-3333-4333-8333-333333333333",
-    ]);
-    expect(target.files.exists(REPLACED_DB)).toBe(false);
-    expect(target.files.exists(RESTORING_DB)).toBe(false);
-  });
+  }
+
+  for (const state of ["lost", "unreadable"] as const) {
+    it(`puts the old file back when the new key cannot be kept over a ${state} key`, async () => {
+      await createActivityStore(target.db).add(
+        activity({ id: "33333333-3333-4333-8333-333333333333" }),
+      );
+      const { deps } = lostKeyDeps({
+        keyState: async () => state,
+        replaceLostDatabaseKey: async () => {
+          throw new Error("keystore refused");
+        },
+      });
+      await expect(createDatabaseReplacer(deps)(await openedBackup())).rejects.toThrow(
+        "keystore refused",
+      );
+      expect((await createActivityStore(target.db).list()).map((a) => a.id)).toEqual([
+        "33333333-3333-4333-8333-333333333333",
+      ]);
+      expect(target.files.exists(REPLACED_DB)).toBe(false);
+      expect(target.files.exists(RESTORING_DB)).toBe(false);
+    });
+  }
 
   it("leaves the old file untouched when the key cannot be read but is not one a restore may replace", async () => {
     await createActivityStore(target.db).add(
