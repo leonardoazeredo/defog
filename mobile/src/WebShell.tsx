@@ -10,16 +10,11 @@ import { WEB_HTML } from "../../generated/web.js";
 import { createBackupFlow } from "./backup/backup.js";
 import { createRestoreFlow } from "./backup/restore.js";
 import { createSettingsChannel } from "./backup/settings.js";
-import { reportDropped } from "./bridge/dropped.js";
 import { createLinkHandlers } from "./bridge/linkHandlers.js";
 import { pageConfigScript } from "./bridge/pageConfig.js";
-import {
-  inspectWebToNative,
-  isTrustedSource,
-  type NativeToWeb,
-  ORIGIN,
-} from "./bridge/protocol.js";
+import { type NativeToWeb, ORIGIN } from "./bridge/protocol.js";
 import { createSend, scheduleTask } from "./bridge/send.js";
+import { createWebMessageHandler } from "./bridge/webMessage.js";
 import { type Controller, createController } from "./controller.js";
 import { COPY } from "./copy.js";
 import { pickE2eFixture } from "./e2e/fixturePicker.js";
@@ -266,6 +261,12 @@ export function WebShell(): React.JSX.Element {
     return subscribeIncoming((file) => void controller.onIncoming(file));
   }, [controller]);
 
+  const onWebMessage = createWebMessageHandler({
+    send,
+    abandonExport: (id) => void exportFlow.abandon(id),
+    onMessage: controller.onWebMessage,
+  });
+
   const linkHandlers = createLinkHandlers({
     initialLoadDone: () => initialLoadDone.current,
     open: (u: string) => Linking.openURL(u),
@@ -293,15 +294,7 @@ export function WebShell(): React.JSX.Element {
         }}
         onShouldStartLoadWithRequest={linkHandlers.onShouldStartLoad}
         onOpenWindow={linkHandlers.onOpenWindow}
-        onMessage={(event) => {
-          if (!isTrustedSource(event.nativeEvent.url)) return;
-          const parsed = inspectWebToNative(event.nativeEvent.data);
-          if (!parsed.ok) {
-            reportDropped(parsed.drop, send, (id) => void exportFlow.abandon(id));
-            return;
-          }
-          void controller.onWebMessage(parsed.msg);
-        }}
+        onMessage={(event) => onWebMessage(event.nativeEvent)}
         onContentProcessDidTerminate={() => {
           void controller.onProcessGone();
         }}

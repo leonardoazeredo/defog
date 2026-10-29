@@ -2,8 +2,9 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
-import { parseWebToNative, type WebToNative } from "../../src/bridge/protocol.js";
+import type { WebToNative } from "../../src/bridge/protocol.js";
 import { installPageApi } from "../../web-adapter/pageApi.js";
+import { parseWebToNative } from "../support/parseWebToNative.js";
 import { loadUpstreamDom } from "./support/upstreamDom.js";
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), "../../../app");

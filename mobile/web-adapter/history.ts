@@ -3,6 +3,7 @@ import type {
   ExportState,
   RouteRecord,
   TrackPoint,
+  TrackUnavailableReason,
 } from "../src/bridge/protocol.js";
 import type { FogCache, RevealStamp } from "./fogCache.js";
 
@@ -49,7 +50,7 @@ export interface CrossfogPageApi {
   history?: {
     setActivities(items: ActivitySummary[]): void;
     setTrack(activityId: string, points: TrackPoint[], route?: RouteGeometry): void;
-    trackUnavailable?(activityId: string, reason: "notFound" | "readFailed"): void;
+    trackUnavailable(activityId: string, reason: TrackUnavailableReason): void;
     setUnreadable?(count: number): void;
   };
   /** The Send button's answers from the phone. */

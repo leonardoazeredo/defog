@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { chromium } from "playwright";
 import { encodeBase64 } from "../../src/bridge/base64.js";
 import type { NativeToWeb } from "../../src/bridge/protocol.js";
-import { encode, ORIGIN, parseWebToNative } from "../../src/bridge/protocol.js";
+import { encode, ORIGIN } from "../../src/bridge/protocol.js";
+import { parseWebToNative } from "../../test/support/parseWebToNative.js";
 
 const ELEMENTS = ["zip", "folder", "loadStatus", "sidebar", "brandName", "hint"];
 const GLOBALS = ["FogZip.unzip", "FogParser.FogMap.prototype.addTile"];

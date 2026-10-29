@@ -69,7 +69,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.crossfog?.on("linkStatus", (msg) => window.CrossfogPage?.linkStatus?.(msg));
   window.crossfog?.on("exportStatus", (msg) => window.CrossfogPage?.exportStatus?.(msg));
   window.crossfog?.on("trackUnavailable", ({ activityId, reason }) =>
-    window.CrossfogPage?.history?.trackUnavailable?.(activityId, reason),
+    window.CrossfogPage?.history?.trackUnavailable(activityId, reason),
   );
   window.crossfog?.on("unreadableActivities", ({ count }) =>
     window.CrossfogPage?.history?.setUnreadable?.(count),

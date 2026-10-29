@@ -4,10 +4,10 @@ import {
   isTrustedSource,
   ORIGIN,
   parseNativeToWeb,
-  parseWebToNative,
   type RouteRecord,
 } from "../../../src/bridge/protocol.js";
 import { loadUpstream } from "../../support/loadUpstream.js";
+import { parseWebToNative } from "../../support/parseWebToNative.js";
 
 const fp = "a".repeat(64);
 const routeId = "6f1c1a52-3f1e-4c55-9d52-0a1d6c2b7e10";

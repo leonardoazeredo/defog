@@ -6,6 +6,7 @@ import {
   type NativeToWeb,
   parseNativeToWeb,
 } from "../../../src/bridge/protocol.js";
+import { COPY } from "../../../src/copy.js";
 
 const routeId = "6f1c1a52-3f1e-4c55-9d52-0a1d6c2b7e10";
 const activityId = "0b9d8c1e-7a44-4f0b-8f3e-2d5c9a6b1f77";
@@ -44,43 +45,48 @@ describe("inspectWebToNative", () => {
   it("names the type and where a known message broke the schema", () => {
     const bad = { ...route, coords: [[11.5, SECRET_LAT, "high"], [11.51]] };
     const drop = dropOf(JSON.stringify({ v: 1, type: "sendRoute", route: bad }));
-    expect(drop.type).toBe("sendRoute");
+    expect(drop).toMatchObject({ type: "sendRoute", routeId });
     expect(drop.paths).toContain("route.coords.0.2");
     expect(drop.paths).toContain("route.coords.1");
-    expect(drop.routeId).toBe(routeId);
   });
 
   it("gives no route id when the id itself is unreadable", () => {
     const drop = dropOf(
       JSON.stringify({ v: 1, type: "sendRoute", route: { ...route, id: "not-a-uuid" } }),
     );
-    expect(drop.routeId).toBeNull();
+    expect(drop).toMatchObject({ type: "sendRoute", routeId: null });
     expect(drop.paths).toContain("route.id");
   });
 
   it("gives no route id for a message that is not a sendRoute", () => {
     const drop = dropOf(JSON.stringify({ v: 1, type: "needTrack", activityId: 7, route }));
-    expect(drop).toEqual({
-      type: "needTrack",
-      paths: ["activityId"],
-      routeId: null,
-      exportId: null,
-    });
+    expect(drop).toEqual({ type: "needTrack", paths: ["activityId"], activityId: null });
   });
 
   it("does not repeat a type the app does not know, since it could be any text", () => {
     expect(dropOf(JSON.stringify({ v: 1, type: `at ${SECRET_LAT}` }))).toEqual({
       type: null,
+      reason: "unknown-type",
       paths: [],
-      routeId: null,
-      exportId: null,
     });
   });
 
-  it("drops text that is not JSON with nothing to name", () => {
-    const nothing = { type: null, paths: [], routeId: null, exportId: null };
-    expect(dropOf("{not json")).toEqual(nothing);
-    expect(dropOf("null")).toEqual(nothing);
+  it("tells apart text that is not JSON, JSON that is not an object and an unknown type", () => {
+    expect(dropOf("{not json")).toEqual({ type: null, reason: "json", paths: [] });
+    expect(dropOf("null")).toEqual({ type: null, reason: "not-object", paths: [] });
+    expect(dropOf("7")).toEqual({ type: null, reason: "not-object", paths: [] });
+    expect(dropOf("[1]")).toEqual({ type: null, reason: "not-object", paths: [] });
+    expect(dropOf("{}")).toEqual({ type: null, reason: "unknown-type", paths: [] });
+  });
+
+  it("gives the activity id of a dropped deleteActivity or needTrack when the id itself is valid", () => {
+    for (const type of ["deleteActivity", "needTrack"] as const) {
+      expect(dropOf(JSON.stringify({ v: 2, type, activityId }))).toEqual({
+        type,
+        paths: ["v"],
+        activityId,
+      });
+    }
   });
 
   it("names a broken cross-field check by the message", () => {
@@ -96,12 +102,7 @@ describe("inspectWebToNative", () => {
         data: "",
       }),
     );
-    expect(drop).toEqual({
-      type: "exportBinary",
-      paths: ["(message)"],
-      routeId: null,
-      exportId: "e",
-    });
+    expect(drop).toEqual({ type: "exportBinary", paths: ["(message)"], exportId: "e" });
   });
 
   it("gives no export id when the id itself would not be a safe path segment", () => {
@@ -117,7 +118,7 @@ describe("inspectWebToNative", () => {
         data: "",
       }),
     );
-    expect(drop.exportId).toBeNull();
+    expect(drop).toMatchObject({ type: "exportBinary", exportId: null });
     expect(drop.paths).toContain("exportId");
   });
 });
@@ -176,12 +177,65 @@ describe("reportDropped", () => {
     expect(abandoned).toEqual(["e-1"]);
   });
 
+  it("tells the page a dropped delete failed, so the activity that stays in the list is explained", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sent: NativeToWeb[] = [];
+    reportDropped(
+      dropOf(JSON.stringify({ v: 2, type: "deleteActivity", activityId })),
+      (m) => sent.push(m),
+      () => {},
+    );
+    expect(sent).toEqual([{ v: 1, type: "notice", text: COPY.activityDeleteFailed }]);
+    for (const m of sent) expect(parseNativeToWeb(encode(m))).toEqual(m);
+  });
+
+  it("answers a dropped track request with trackUnavailable, so the detail stops waiting", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sent: NativeToWeb[] = [];
+    reportDropped(
+      dropOf(JSON.stringify({ v: 2, type: "needTrack", activityId })),
+      (m) => sent.push(m),
+      () => {},
+    );
+    expect(sent).toEqual([{ v: 1, type: "trackUnavailable", activityId, reason: "readFailed" }]);
+    for (const m of sent) expect(parseNativeToWeb(encode(m))).toEqual(m);
+  });
+
+  it("logs why a message with no known type was dropped, still without a value", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    reportDropped(
+      dropOf("{not json"),
+      () => {},
+      () => {},
+    );
+    reportDropped(
+      dropOf("[1]"),
+      () => {},
+      () => {},
+    );
+    reportDropped(
+      dropOf(JSON.stringify({ type: `at ${SECRET_LAT}` })),
+      () => {},
+      () => {},
+    );
+    const lines = warn.mock.calls.map((c) => c.join(" "));
+    expect(lines[0]).toContain("unknown:json");
+    expect(lines[1]).toContain("unknown:not-object");
+    expect(lines[2]).toContain("unknown:unknown-type");
+    expect(lines.join("\n")).not.toContain(String(SECRET_LAT));
+  });
+
   it("answers nothing when there is no route id to answer", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const send = vi.fn();
     const abandon = vi.fn();
     reportDropped(
       dropOf(JSON.stringify({ v: 1, type: "needTrack", activityId: "x" })),
+      send,
+      abandon,
+    );
+    reportDropped(
+      dropOf(JSON.stringify({ v: 1, type: "deleteActivity", activityId: "x" })),
       send,
       abandon,
     );
