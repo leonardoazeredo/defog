@@ -193,6 +193,7 @@
 
   RouteTool.prototype.clear = function () {
     ++this._reqId; // a reply still in flight must not bring the route back
+    if (this.routeWaypoints && this.routeWaypoints.release) this.routeWaypoints.release();
     this.wps.forEach((w) => this.map.removeLayer(w.marker));
     this.wps = [];
     this.routeCoords = [];

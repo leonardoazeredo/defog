@@ -26,6 +26,12 @@ function setup(over) {
 }
 
 (async () => {
+  { // release() lets the route's held pieces go; routeWaypoints carries it for route.js's clear
+    const released = [];
+    const { route } = setup({ streets: { ensureRects: async () => {}, release: (n) => released.push(n) } });
+    route.release();
+    assert.deepEqual(released, ["route"]);
+  }
   { // two pins on the street: coords along it with z, stats from the estimates
     const { route, calls } = setup();
     const r = await route([pt(0, 0), pt(1000, 0)], "hiking-mountain");

@@ -80,6 +80,10 @@
     this.held = false; // true while a suggestion plans on it: build() then keeps the graph, so its edge ids stay valid
   }
 
+  // A held graph keeps its edge ids through build(); the holder releases it when its run ends.
+  GraphPlanner.prototype.hold = function () { this.held = true; };
+  GraphPlanner.prototype.release = function () { this.held = false; };
+
   // what build() would build from now: the ways, the lists a fetch changed and the fog
   GraphPlanner.prototype.stamp = function () {
     return this.streets.ways.length + "." + (this.streets.version || 0) + "." + this.fogVersion();

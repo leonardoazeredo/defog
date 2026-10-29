@@ -101,11 +101,34 @@
     this.pieceWays = new Map();
     this.used = new Map();       // "x:y" of every piece read or under a run's rects, least recently used first
     this.runs = new Set();       // the "x:y" under the rects of each ensureRects still running: never evicted
-    this.holds = new Map();      // opts.holdAs -> the "x:y" under that caller's latest run: never evicted until its next one
+    this.holds = new Map();      // opts.holdAs -> the "x:y" under that caller's latest run: never evicted until its next one or release(name)
     this.version = 0;            // bumped by every tile read into the index, so graphs built from this notice list changes
-    this.inFlight = new Map();   // StreetIndex.tileKey -> {key, promise, done}: a tile a running ensureRects is asking for, which a later run waits for
+    this.inFlight = new InFlight(); // the tiles a running ensureRects is asking for, which a later run waits for
     this.kx = null; this.ky = 110540; // metre frame, anchored on first fetch
   }
+
+  // the kinds a fetched tile is held under: a run tile also stands in for bike (see _uncovered)
+  const KINDS = ["run", "bike"];
+
+  // The tiles a running ensureRects is asking for, by StreetIndex.tileKey: a later run that needs one waits
+  // on its promise instead of asking again. An entry leaves when its run reads the tile or gives it up.
+  function InFlight() { this.entries = new Map(); }
+  Object.defineProperty(InFlight.prototype, "size", { get() { return this.entries.size; } });
+  InFlight.prototype.claim = function (key) {
+    const entry = { key };
+    entry.promise = new Promise((resolve) => { entry.done = resolve; });
+    this.entries.set(key, entry);
+    return entry;
+  };
+  // resolves the entry's promise with `via`; a newer claim of the same key is left in place
+  InFlight.prototype.settle = function (entry, via) {
+    if (this.entries.get(entry.key) === entry) this.entries.delete(entry.key);
+    entry.done(via);
+  };
+  // the entry bringing this tile for `kind` (a run tile stands in for bike), if any
+  InFlight.prototype.sharedFor = function (kind, t) {
+    return this.entries.get(StreetIndex.tileKey(kind, t.x, t.y)) || this.entries.get(StreetIndex.tileKey("run", t.x, t.y));
+  };
 
   const holds = (set, kind, t) => set.has(StreetIndex.tileKey(kind, t.x, t.y)) ||
     set.has(StreetIndex.tileKey("run", t.x, t.y));
@@ -117,7 +140,7 @@
 
   StreetIndex.prototype.covered = function (lat, lng) {
     const t = StreetIndex.tileOf(lng, lat);
-    return ["run", "bike"].some((k) => this.tiles.has(StreetIndex.tileKey(k, t.x, t.y)));
+    return KINDS.some((k) => this.tiles.has(StreetIndex.tileKey(k, t.x, t.y)));
   };
 
   // entry, when given, is the way's wayFrom entry made beforehand (one an expired copy brought is in
@@ -193,7 +216,8 @@
       if (left <= this.maxSegs * EVICT_TO) break;
       if (kept.some((under) => under.has(pos))) continue;
       evicted.push(pos);
-      const keys = ["run", "bike"].map((k) => k + ":" + pos);
+      const [x, y] = pos.split(":");
+      const keys = KINDS.map((k) => StreetIndex.tileKey(k, x, y));
       for (const k of keys) { this.tiles.delete(k); this.staleTiles.delete(k); }
       for (const id of this.pieceWays.get(pos) || []) {
         const entry = this.wayFrom.get(id);
@@ -294,6 +318,9 @@
     return run;
   };
 
+  // Lets go of the pieces a caller's holdAs kept; they are evictable again from the next read.
+  StreetIndex.prototype.release = function (name) { this.holds.delete(name); };
+
   StreetIndex.prototype._ensureRects = async function (rects, kind, opts) {
     opts = opts || {};
     const cacheOnly = !!opts.cacheOnly;
@@ -320,7 +347,7 @@
     const stale = () => !cacheOnly && !!opts.stale && opts.stale();
     const superseded = () => Object.assign(new Error("streets: a newer run replaced this one"), { reason: "superseded" });
     const deadlinePassed = () => Object.assign(new Error("streets: run deadline passed"), { reason: "stalled" });
-    const short = (cause) => StreetIndex.downloadError(held + read.size, total, cause, downloaded);
+    const asDownloadError = (cause) => StreetIndex.downloadError(held + read.size, total, cause, downloaded);
     // the source's wait before asking again: false when it would end past the deadline
     const wait = async (until) => {
       if (stale()) throw superseded();
@@ -352,12 +379,7 @@
     // waits only for runs that started before it, so two runs never wait on each other.
     const claims = new Map(); // "x:y" -> this run's in-flight entry for it
     const claim = (tiles) => {
-      for (const t of tiles) {
-        const entry = { key: StreetIndex.tileKey(kind, t.x, t.y) };
-        entry.promise = new Promise((resolve) => { entry.done = resolve; });
-        claims.set(tid(t), entry);
-        this.inFlight.set(entry.key, entry);
-      }
+      for (const t of tiles) claims.set(tid(t), this.inFlight.claim(StreetIndex.tileKey(kind, t.x, t.y)));
     };
     // via: what the source said of the tile it read ({cached: true} from the street cache), or
     // nothing when the run gave the tile up
@@ -365,8 +387,7 @@
       const entry = claims.get(id);
       if (!entry) return;
       claims.delete(id);
-      if (this.inFlight.get(entry.key) === entry) this.inFlight.delete(entry.key);
-      entry.done(via);
+      this.inFlight.settle(entry, via);
     };
     const take = (t, answer, via) => {
       const id = tid(t);
@@ -410,7 +431,7 @@
           // a deadline raised on an earlier answer while the open requests landed the rest loses
           // nothing: the call is whole. A replaced run still rejects, so its caller does no more work.
           // the source keeps its first stop, so a replacement that came after a failure is told here
-          if (tiles.some((t) => !read.has(tid(t))) || (e && e.reason === "superseded")) throw short(stale() ? superseded() : e);
+          if (tiles.some((t) => !read.has(tid(t))) || (e && e.reason === "superseded")) throw asDownloadError(stale() ? superseded() : e);
           // nothing this call asked for is missing, so its failure is not the run's to show, but a source that
           // fails after handing every tile is worth seeing; not for a replaced run (never logged). The class
           // and the street reason (download errors are all Error) only, as a message can name a tile
@@ -431,8 +452,7 @@
     const split = (tiles) => {
       const shared = [], ask = [];
       for (const t of tiles) {
-        const entry = !cacheOnly && (this.inFlight.get(StreetIndex.tileKey(kind, t.x, t.y)) ||
-          this.inFlight.get(StreetIndex.tileKey("run", t.x, t.y)));
+        const entry = !cacheOnly && this.inFlight.sharedFor(kind, t);
         if (entry) shared.push({ t, entry }); else ask.push(t);
       }
       return { shared, ask };
@@ -448,8 +468,8 @@
       const stop = this.every(() => {
         if (settled) return stop();
         try {
-          if (stale()) reject(short(superseded()));
-          else if (this.now() - started >= deadlineMs) reject(short(deadlinePassed()));
+          if (stale()) reject(asDownloadError(superseded()));
+          else if (this.now() - started >= deadlineMs) reject(asDownloadError(deadlinePassed()));
         } catch (e) {
           if (!broke) broke = e;
           reject(e);
@@ -466,7 +486,7 @@
             if (via && !via.cached) downloaded++;
             progress();
           }
-          if (stale()) reject(short(superseded()));
+          if (stale()) reject(asDownloadError(superseded()));
           else if (!--left) resolve();
         } catch (e) {
           if (!broke) broke = e;
@@ -494,8 +514,8 @@
         // so of several runs waiting for it one asks and the rest wait for that one
         const left = shared.map((x) => x.t).filter((t) => !read.has(tid(t)));
         if (!left.length) break;
-        if (stale()) throw short(superseded());
-        if (this.now() - started >= deadlineMs) throw short(deadlinePassed());
+        if (stale()) throw asDownloadError(superseded());
+        if (this.now() - started >= deadlineMs) throw asDownloadError(deadlinePassed());
         // a run that waited beside this one may have asked and read it already; not counted as
         // downloaded, as this run cannot tell whether the street cache answered that run
         for (const t of left) if (holds(this.tiles, kind, t)) { read.add(tid(t)); progress(); }
@@ -508,7 +528,7 @@
     if (broke) throw broke;
     // replaced while its last request was open (onTile stops checking once every tile is read): it
     // still rejects, so its caller does no more work
-    if (stale()) throw short(superseded());
+    if (stale()) throw asDownloadError(superseded());
     if (cacheOnly) {
       // an answer in the Map alone is an expired copy: drawn from, but left uncovered so a
       // suggestion's run still asks for it; that run's fresh answer then replaces the ways read here
@@ -527,7 +547,7 @@
     }
     const lost = todo.find((t) => !read.has(tid(t)));
     // the source answered but left a tile out: a server's fault, not the network's, worded generically
-    if (lost) throw short(Object.assign(new Error(`street source: no answer for tile ${lost.x}:${lost.y} (${kind})`), { reason: "server" }));
+    if (lost) throw asDownloadError(Object.assign(new Error(`street source: no answer for tile ${lost.x}:${lost.y} (${kind})`), { reason: "server" }));
     return { done: total, total, missing: [] };
   };
 
@@ -559,7 +579,7 @@
       this._use(pos);
       this._makeRoom();
       if (!stale) {
-        const kinds = from.kind === "run" ? ["run", "bike"] : [from.kind];
+        const kinds = from.kind === "run" ? KINDS : [from.kind];
         const mine = kinds.map((k) => StreetIndex.tileKey(k, from.x, from.y));
         const listed = new Set(answer.ways.map((w) => w.id)), out = new Set();
         for (const id of listed) {
@@ -583,7 +603,7 @@
         }
         for (const id of listed) this.goneWays.delete(id);
       }
-      this._addAnswer(answer, stale, key, freshHeld, from.kind);
+      this._addAnswer(answer, stale, key, pos, freshHeld, from.kind);
       // the evictions above cleared every evicted piece from these lists, so each tile carried is still held
       for (const [id, keys] of carry) {
         const entry = this.wayFrom.get(id);
@@ -603,8 +623,7 @@
   };
 
   // the per-way part of _read; freshHeld collects what an expired copy must not add classes to
-  StreetIndex.prototype._addAnswer = function (answer, stale, key, freshHeld, kind) {
-    const pos = key.slice(key.indexOf(":") + 1); // the piece's "x:y"
+  StreetIndex.prototype._addAnswer = function (answer, stale, key, pos, freshHeld, kind) {
     for (const w of answer.ways) {
       const gone = stale && this.goneWays.get(w.id);
       if (gone && gone.has(kind)) { freshHeld.add(w.id); continue; } // nor its classes, below
@@ -966,5 +985,6 @@
   };
 
   StreetIndex.MODE_CLASS = MODE_CLASS;
+  StreetIndex.InFlight = InFlight;
   global.StreetIndex = StreetIndex;
 })(window);
