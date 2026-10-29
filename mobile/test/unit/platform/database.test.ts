@@ -41,6 +41,7 @@ const { resetKeys, KeyUnavailableError } = vi.hoisted(() => ({
 vi.mock("../../../src/platform/watchLinkModule.js", () => ({
   KeyLostError: class extends Error {},
   KeyUnavailableError,
+  keyPresence: async () => "existing",
   keyState: async () => "existing",
   getDatabaseKeyHex: () => readKey(),
   resetKeys,

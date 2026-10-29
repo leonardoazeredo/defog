@@ -13,7 +13,13 @@ import { migrate, NewerSchemaError } from "../db/schema.js";
 import { warnClass } from "../flows/warn.js";
 import { createDatabaseFiles } from "./backupPlatform.js";
 import { createExpoSqliteDriver } from "./expoSqliteDriver.js";
-import { getDatabaseKeyHex, KeyLostError, keyState, resetKeys } from "./watchLinkModule.js";
+import {
+  getDatabaseKeyHex,
+  KeyLostError,
+  keyPresence,
+  keyState,
+  resetKeys,
+} from "./watchLinkModule.js";
 
 let opened: Promise<HistoryDatabase> | undefined;
 // Only the first open of the process keeps, puts back or discards a replaced copy; a missing live file is recovered on every open.
@@ -46,6 +52,7 @@ export function createDatabase(): Promise<HistoryDatabase> {
     recoverInterruptedReplace(files);
     const open = () =>
       openHistory({
+        keyPresence,
         keyState,
         getDatabaseKeyHex,
         // expo-sqlite's default directory is `SQLite` under the document directory. The replaced copy

@@ -1,5 +1,6 @@
 import WatchLink, { type KeyState, type WatchLinkNativeEvents } from "../../modules/watch-link";
 import { checkedKeyHex, type DatabaseKeyHex } from "../db/keyHex.js";
+import type { KeyPresence } from "../db/keyState.js";
 
 export type { KeyState, WatchLinkNativeEvents };
 
@@ -20,7 +21,12 @@ export class KeyUnavailableError extends Error {
 const ERR_KEY_LOST = "ERR_KEY_LOST";
 const ERR_KEY_UNAVAILABLE = "ERR_KEY_UNAVAILABLE";
 
-const KEY_STATES: readonly string[] = ["fresh", "existing", "lost", "unreadable"];
+const KEY_STATES = [
+  "fresh",
+  "existing",
+  "lost",
+  "unreadable",
+] as const satisfies readonly KeyState[];
 
 async function keyCall<T>(call: () => Promise<T>): Promise<T> {
   try {
@@ -88,9 +94,19 @@ export async function copyFromUri(
   return { size: r.size, head: r.head };
 }
 
-export async function keyState(): Promise<KeyState> {
-  const state = await keyCall(() => WatchLink.keyState());
+function checkedState(state: KeyState): KeyState {
   if (!KEY_STATES.includes(state)) throw new Error("watch link returned an unknown key state");
+  return state;
+}
+
+export async function keyState(): Promise<KeyState> {
+  return checkedState(await keyCall(() => WatchLink.keyState()));
+}
+
+/** Which halves are present, without unwrapping the key; `unreadable` needs `keyState`. */
+export async function keyPresence(): Promise<KeyPresence> {
+  const state = checkedState(await keyCall(() => WatchLink.keyPresence()));
+  if (state === "unreadable") throw new Error("watch link returned an unknown key state");
   return state;
 }
 

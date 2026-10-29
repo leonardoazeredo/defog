@@ -77,6 +77,8 @@ class WatchLinkModule : Module() {
 
     AsyncFunction("keyState") { keyCall { keys.keyState().wire } }
 
+    AsyncFunction("keyPresence") { keyCall { keys.keyPresence().wire } }
+
     // The watch transport is not built yet, so the link is never paired and never reachable.
     AsyncFunction("status") { mapOf("paired" to false, "reachable" to false) }
 
