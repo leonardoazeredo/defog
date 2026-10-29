@@ -47,7 +47,36 @@ const street = [[1, [1, 2], [0, 0], [500, 0]], [2, [2, 3], [500, 0], [1000, 0]],
   after.build();
   assert.equal(after.edges.length, seen[0][2] + 1, "once the suggestion ends, its graph is current again");
   assert.equal(after.held, false);
+  assert.ok(s.holds.has("suggest"), "its pieces stay held while the result is shown");
+  tool.clearResults();
+  assert.ok(!s.holds.has("suggest"), "clearing the result releases them");
+  await tool.suggest("hiking-mountain", { buffer: 0.15 });
+  assert.ok(s.holds.has("suggest"), "a new run holds its pieces again");
 
+  { // an eviction of unrelated ways while a suggestion holds its graph leaves the graph and its routes as they were
+    const run = async (evict) => {
+      const st = streetsWith(street.concat([[8, [20, 21], [3000, 0], [3200, 0]]]));
+      const t = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0, hasFog: () => false }, computeGain: () => ({ area: 1, newPct: 1 }), streets: st });
+      t.mode = "p2p"; t.a = pin(0, 0); t.b = pin(1000, 0);
+      const orig = global.LocalRouter.prototype.route;
+      const legs = [], edgeIds = [];
+      let planner = null, n = 0;
+      global.LocalRouter.prototype.route = function (...a) {
+        const out = orig.apply(this, a);
+        planner = planner || this.planner;
+        if (out) { legs.push(JSON.stringify(out.legs.map((l) => l.edges))); edgeIds.push(...out.legs.flatMap((l) => l.edges || [])); }
+        if (evict && ++n === 1) st._dropWays([8]);
+        assert.equal(this.planner, planner, "one graph throughout");
+        return out;
+      };
+      try { await t.suggest("hiking-mountain", { buffer: 0.15 }); } finally { global.LocalRouter.prototype.route = orig; }
+      assert.ok(legs.length > 1, "several routes planned");
+      if (evict) assert.ok(!st.wayIds.has(8), "the unrelated way was evicted mid-run");
+      assert.ok(edgeIds.length > 0 && edgeIds.every((id) => planner.edges[id]), "every leg edge is still an edge of the held planner");
+      return legs;
+    };
+    assert.deepEqual(await run(true), await run(false), "the same routes with and without the eviction");
+  }
   { // a run cancelled while it holds a graph lets go of it
     const t = new SuggestTool(global.fakeMap(), { fogMap: { tileCount: 0, hasFog: () => false }, computeGain: () => ({ area: 1, newPct: 1 }), streets: streetsWith(street) });
     t.mode = "p2p"; t.a = pin(0, 0); t.b = pin(1000, 0);

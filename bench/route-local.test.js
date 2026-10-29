@@ -26,6 +26,16 @@ function tool(routeWaypoints, profile) {
     for (const f of require("node:fs").readdirSync(dir))
       assert.ok(!/brouter\.de/.test(require("node:fs").readFileSync(require("node:path").join(dir, f), "utf8")), `${f} names brouter.de`);
   }
+  { // clear() releases the route's held street pieces through the routeWaypoints it was given
+    let released = 0;
+    const rw = async () => ({ coords: line, stats });
+    rw.release = () => { released++; };
+    const { t } = tool(rw);
+    t.clear();
+    assert.equal(released, 1);
+    const { t: bare } = tool(async () => ({ coords: line, stats }));
+    bare.clear(); // a routeWaypoints without release is fine
+  }
   { // two pins: routed through routeWaypoints with the pins and the travel mode, stats emitted as given
     const calls = [];
     const { t, last } = tool(async (pts, mode) => { calls.push([pts, mode]); return { coords: line, stats }; }, "hiking-mountain");

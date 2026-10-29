@@ -33,7 +33,7 @@
     // onProgress({done, total, waitUntil?}) hears the street download, if one is needed; stale()
     // true means a newer request replaced this one, so the download asks for nothing further.
     // -> {coords, stats: {km, seconds, ascent, descent}} or {error: true, why}
-    return async function routeWaypoints(points, travelMode, onProgress, stale) {
+    const routeWaypoints = async function (points, travelMode, onProgress, stale) {
       const rects = [];
       for (let i = 1; i < points.length; i++) {
         if (legM(points[i - 1], points[i]) > MAX_LEG_M) return TOO_FAR;
@@ -68,6 +68,9 @@
       // no height arrived: keep the 2D route.coords (routeStats gives the null climb), not a profile that claims flat ground
       return { coords: est.elevationKnown > 0 ? est.coords : route.coords, stats: estimates.routeStats(est) };
     };
+    // route.js calls this when the route is cleared: the pieces held for it may be evicted again
+    routeWaypoints.release = () => streets.release("route");
+    return routeWaypoints;
   }
 
   global.RouteLocal = { create };

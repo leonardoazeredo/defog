@@ -102,6 +102,7 @@
   SuggestTool.prototype.clearResults = function () {
     this._runId++; // cancels any in-flight run
     this._releaseGraph();
+    if (this.streets) this.streets.release("suggest"); // the shown result is gone, so its pieces may be evicted
     this.lines.forEach((l) => { this.map.removeLayer(l.solid); this.map.removeLayer(l.dashed); });
     this.lines = []; this.results = []; this.selected = -1;
     if (this.onResults) this.onResults(null);
@@ -309,7 +310,7 @@
     const planner = this.plannerFor(profile);
     if (!planner) return null;
     planner.build();
-    planner.held = true;
+    planner.hold();
     this._hold = { runId, key: travelClass(profile), planner };
     return planner;
   };
@@ -317,7 +318,7 @@
   SuggestTool.prototype._releaseGraph = function (runId) {
     const h = this._hold;
     if (!h || (runId !== undefined && h.runId !== runId)) return;
-    h.planner.held = false;
+    h.planner.release();
     this._hold = null;
   };
   SuggestTool.prototype._graphFor = function (profile) {

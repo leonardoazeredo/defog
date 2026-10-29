@@ -89,6 +89,25 @@ const held = (s, i) => s.tiles.has("run:" + pos(i));
     assert.deepEqual([0, 1, 2, 3].map((i) => held(t, i)), [true, true, true, true], "nothing it covers is evicted: the cap cuts in instead");
     consistent(s); consistent(t);
   }
+  { // release(name) lets a caller's held pieces go again; an unknown name is a no-op
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: source({ fresh: four }).fetchStreets, maxSegs: MAX });
+    await s.ensureRects([rect(0)], "run", { holdAs: "suggest" });
+    s.release("route");
+    s.release("suggest");
+    for (const i of [1, 2, 3]) await s.ensureRects([rect(i)], "run");
+    assert.deepEqual([0, 1, 2, 3].map((i) => held(s, i)), [false, true, true, true], "the released piece is the oldest and goes");
+    consistent(s);
+  }
+  { // releasing one caller leaves another caller's hold, and the evicted piece loses its bike copy too
+    const s = new StreetIndex({ newFrac: () => 1, fetchStreets: source({ fresh: four }).fetchStreets, maxSegs: MAX });
+    await s.ensureRects([rect(0)], "run", { holdAs: "suggest" });
+    await s.ensureRects([rect(1)], "run", { holdAs: "route" });
+    s.release("suggest");
+    assert.ok(!s.holds.has("suggest") && s.holds.has("route"));
+    for (const i of [2, 3]) await s.ensureRects([rect(i)], "run");
+    assert.deepEqual([0, 1, 2, 3].map((i) => held(s, i)), [false, true, true, true], "the route's piece is kept, the released one goes");
+    assert.ok(!s.tiles.has("bike:" + pos(0)), "every kind of an evicted piece goes");
+  }
   { // a piece under a run still running is not evicted by another run's read
     let release;
     const gate = new Promise((r) => { release = r; });
