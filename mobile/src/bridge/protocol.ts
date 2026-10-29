@@ -260,12 +260,12 @@ export type TrackUnavailableReason = Extract<NativeToWeb, { type: "trackUnavaila
 /** Why a message with no known type was dropped. A tag only, never a value from the message. */
 type DropReason = "json" | "not-object" | "unknown-type";
 
-// `paths` is where the message broke the schema, as dotted keys; never a value. Each id is set only when
-// that id is itself valid, so the page is never answered about an id nobody checked.
+// `paths` is where the message broke the schema, as dotted keys; never a value.
 interface DropPaths {
   readonly paths: readonly string[];
 }
 
+// Each id is set only when that id is itself valid, so the page is never answered about an id nobody checked.
 export type DroppedMessage =
   // An unknown type is any text the page wrote, so it is not repeated: `reason` says what was unreadable.
   | { readonly type: null; readonly reason: DropReason; readonly paths: readonly [] }
