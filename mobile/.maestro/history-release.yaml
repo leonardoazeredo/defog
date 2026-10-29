@@ -41,7 +41,12 @@ appId: codes.madera.crossfog
       - tapOn: "Expand or collapse panel"
       - waitForAnimationToEnd:
           timeout: 3000
-- assertVisible: "2 tiles loaded ✓"
+# Fail here, with a clear name, if the expand taps ran out and left the panel closed; otherwise the
+# History tap would fail for a reason unrelated to #139.
+- extendedWaitUntil:
+    label: "Panel open, fog loaded"
+    visible: "2 tiles loaded ✓"
+    timeout: 5000
 - tapOn: "History"
 - extendedWaitUntil:
     visible: ".*47 steps.*"
@@ -57,7 +62,9 @@ appId: codes.madera.crossfog
 # make the figure non-zero.
 - tapOn: "Show on map"
 - extendedWaitUntil:
-    visible: "(0\\.0*[1-9]|[1-9])[0-9.]*%"
+    visible:
+      id: "defogPct"
+      text: "(0\\.0*[1-9]|[1-9])[0-9.]*%"
     timeout: 15000
 - tapOn: "Expand or collapse panel"
 - tapOn: "Delete"
@@ -67,6 +74,9 @@ appId: codes.madera.crossfog
     visible: "No activities yet.*"
     timeout: 15000
 # Same view, walk deleted: the fog was rebuilt without it.
+# The street figure also reads 0% when it shows, so match the defog figure by its page id (Android exposes it to Maestro).
 - extendedWaitUntil:
-    visible: "0%"
+    visible:
+      id: "defogPct"
+      text: "0%"
     timeout: 15000

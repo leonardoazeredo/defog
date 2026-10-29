@@ -1,0 +1,14 @@
+appId: codes.madera.crossfog
+---
+# A cold start with the panel open and the saved fog loaded, whatever screen the previous flow left.
+# The WebView can take 30+ s from cold start; wait for the grabber before tapping.
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible: "Expand or collapse panel"
+    timeout: 60000
+- tapOn: "Expand or collapse panel"
+- extendedWaitUntil:
+    label: "Panel open, fog loaded"
+    visible: "2 tiles loaded ✓"
+    timeout: 30000

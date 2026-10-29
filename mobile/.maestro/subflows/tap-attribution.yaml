@@ -1,9 +1,23 @@
 appId: codes.madera.crossfog
 ---
+# Taps ${LINK} on the screen it is shown on, leaves for the browser and comes back. The panel
+# disappearing alone would also pass on a crash or a page reload, so on Android Chrome's URL bar must
+# be in front too (the flow assumes Chrome is the test device's default browser); iOS checks only that
+# the app was left and came back.
 - tapOn: ${LINK}
 - extendedWaitUntil:
     notVisible: "Expand or collapse panel"
     timeout: 15000
+# Android only: iOS puts Safari in front, which exposes no such id.
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - extendedWaitUntil:
+          label: "Chrome is in front"
+          visible:
+            id: ".*:id/url_bar"
+          timeout: 15000
 - launchApp:
     stopApp: false
 - extendedWaitUntil:

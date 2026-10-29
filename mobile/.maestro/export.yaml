@@ -1,15 +1,7 @@
 appId: codes.madera.crossfog
 ---
 # Fresh start avoids inheriting animation state from the prior flow
-- stopApp
-- launchApp
-- extendedWaitUntil:
-    visible: "Expand or collapse panel"
-    timeout: 60000
-- tapOn: "Expand or collapse panel"
-- extendedWaitUntil:
-    visible: "2 tiles loaded ✓"
-    timeout: 30000
+- runFlow: subflows/open-panel.yaml
 - tapOn: "Plan"
 # Wait for the Plan pane content to finish rendering after tapping Plan
 - extendedWaitUntil:
